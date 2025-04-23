@@ -10,7 +10,9 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = os.environ["TOKEN"]
+TOKEN = os.environ.get("TOKEN")
+if not TOKEN:
+    logger.error("TOKEN environment variable is not set. Please set it before running the bot.")
 
 # Store emoji-role mappings per guild
 emoji_role_map = {}  # {guild_id: {emoji: role_id}}
@@ -20,7 +22,7 @@ class AnimeImageBot(discord.Client):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.guilds = True
-        intents.members = True
+        intents.members = True  # Make sure this intent is enabled in the Discord developer portal as well
         intents.reactions = True
         super().__init__(intents=intents)
         self.tree = app_commands.CommandTree(self)
@@ -35,7 +37,18 @@ class AnimeImageBot(discord.Client):
 
     async def on_raw_reaction_add(self, payload):
         guild = self.get_guild(payload.guild_id)
-        if not guild or payload.member.bot:
+        if not guild:
+            logger.warning(f"Guild not found for guild_id: {payload.guild_id}")
+            return
+
+        member = payload.member
+        if member is None:
+            member = guild.get_member(payload.user_id)
+            if member is None:
+                logger.warning(f"Member not found for user_id: {payload.user_id} in guild_id: {payload.guild_id}")
+                return
+
+        if member.bot:
             return
 
         emoji = str(payload.emoji)
@@ -43,12 +56,23 @@ class AnimeImageBot(discord.Client):
         if role_id:
             role = guild.get_role(role_id)
             if role:
-                await payload.member.add_roles(role)
+                try:
+                    await member.add_roles(role)
+                except Exception as e:
+                    logger.error(f"Failed to add role {role.name} to member {member.display_name}: {e}")
 
     async def on_raw_reaction_remove(self, payload):
         guild = self.get_guild(payload.guild_id)
+        if not guild:
+            logger.warning(f"Guild not found for guild_id: {payload.guild_id}")
+            return
+
         member = guild.get_member(payload.user_id)
-        if not guild or member.bot:
+        if member is None:
+            logger.warning(f"Member not found for user_id: {payload.user_id} in guild_id: {payload.guild_id}")
+            return
+
+        if member.bot:
             return
 
         emoji = str(payload.emoji)
@@ -56,7 +80,10 @@ class AnimeImageBot(discord.Client):
         if role_id:
             role = guild.get_role(role_id)
             if role:
-                await member.remove_roles(role)
+                try:
+                    await member.remove_roles(role)
+                except Exception as e:
+                    logger.error(f"Failed to remove role {role.name} from member {member.display_name}: {e}")
 
 client = AnimeImageBot()
 
