@@ -109,6 +109,63 @@ async def setemojirole(interaction: discord.Interaction, message_id: str, emoji:
     emoji_role_map.setdefault(guild_id, {}).setdefault(message_id, {})[emoji] = role.id
     await interaction.response.send_message(f"Linked emoji {emoji} with role {role.name} on message ID {message_id}.", ephemeral=True)
 
+@client.tree.command(name="msg", description="Send a message (with optional mentions and embed) to a specific channel")
+@app_commands.describe(
+    channel_id="The ID of the channel to send the message to",
+    message="The message content (plain text or embed description)",
+    mention_user="User to mention (optional)",
+    mention_role="Role to mention (optional)",
+    embed_title="Embed title (optional)",
+    embed_color="Embed color in HEX, e.g. #ff5733 (optional)"
+)
+async def send_message(
+    interaction: discord.Interaction,
+    channel_id: str,
+    message: str,
+    mention_user: discord.User = None,
+    mention_role: discord.Role = None,
+    embed_title: str = None,
+    embed_color: str = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+        return
+
+    try:
+        channel = client.get_channel(int(channel_id))
+        if channel is None:
+            await interaction.response.send_message("Invalid channel ID.", ephemeral=True)
+            return
+
+        # Build message content with mentions
+        mention_text = ""
+        if mention_user:
+            mention_text += mention_user.mention + " "
+        if mention_role:
+            mention_text += mention_role.mention + " "
+
+        # If embed is specified
+        if embed_title or embed_color:
+            color = discord.Color.default()
+            if embed_color:
+                try:
+                    color = discord.Color(int(embed_color.lstrip("#"), 16))
+                except ValueError:
+                    await interaction.response.send_message("Invalid color format. Use HEX like #ff5733.", ephemeral=True)
+                    return
+
+            embed = discord.Embed(title=embed_title or "Message", description=message, color=color)
+            await channel.send(content=mention_text or None, embed=embed)
+        else:
+            await channel.send(content=f"{mention_text}{message}".strip())
+
+        await interaction.response.send_message(f"Message sent to <#{channel_id}>.", ephemeral=True)
+
+    except Exception as e:
+        logger.error(f"Error sending message: {e}")
+        await interaction.response.send_message("Failed to send the message. Make sure the bot has access to the channel.", ephemeral=True)
+
+
 # Flask server for uptime
 app = Flask('')
 
