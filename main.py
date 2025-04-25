@@ -77,26 +77,27 @@ async def danbooru_tag_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> list[app_commands.Choice[str]]:
+    logger.info(f"Autocomplete triggered for: {current}")
     try:
         if not current:
             return []
 
         url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
-        headers = {
-            "User-Agent": "DiscordBot (by Azura)"
-        }
-
-        response = requests.get(url, headers=headers, timeout=5)
+        response = requests.get(url, headers={"User-Agent": "DiscordBot (by Azura)"}, timeout=5)
         response.raise_for_status()
         data = response.json()
 
-        return [
+        choices = [
             app_commands.Choice(name=tag["name"], value=tag["name"])
             for tag in data if not tag["name"].startswith("rating:")
         ]
+        logger.info(f"Autocomplete results: {choices}")
+        return choices
+
     except Exception as e:
         logger.error(f"Danbooru autocomplete failed for '{current}': {e}")
         return []
+
 
 
 # Define a Discord UI view with button
