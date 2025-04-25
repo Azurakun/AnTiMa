@@ -67,6 +67,9 @@ client = AnimeImageBot()
 
 
 # Helper function to fetch random Danbooru image by tag
+import math
+import random
+
 def get_danbooru_autocomplete_tag(user_input: str):
     try:
         url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={user_input}*"
@@ -75,38 +78,56 @@ def get_danbooru_autocomplete_tag(user_input: str):
         data = response.json()
 
         if data:
-            return data[0]['name']  # Return the top autocomplete match
+            return data[0]['name']
     except Exception as e:
         logger.error(f"Autocomplete tag fetch failed: {e}")
 
-    # fallback to original input formatted
     return user_input.lower().replace(" ", "_")
 
-def get_random_danbooru_image(tag: str):
-    query_tag = get_danbooru_autocomplete_tag(tag)
-    url = f"https://danbooru.donmai.us/posts.json?tags={query_tag}+rating:safe&limit=50"
-    response = requests.get(url)
-    response.raise_for_status()
-    data = response.json()
-
-    # Try without +rating:safe if safe images not found
-    if not data:
-        fallback_url = f"https://danbooru.donmai.us/posts.json?tags={query_tag}&limit=50"
-        response = requests.get(fallback_url)
+def get_danbooru_post_count(tag: str) -> int:
+    try:
+        url = f"https://danbooru.donmai.us/counts/posts.json?tags={tag}+rating:safe"
+        response = requests.get(url)
         response.raise_for_status()
         data = response.json()
+        return data.get("counts", {}).get("posts", 0)
+    except Exception as e:
+        logger.error(f"Post count fetch failed: {e}")
+        return 0
 
-    if not data:
+
+def get_random_danbooru_image(tag: str):
+    actual_tag = get_danbooru_autocomplete_tag(tag)
+    total_posts = get_danbooru_post_count(actual_tag)
+
+    if total_posts == 0:
         return None
 
-    post = random.choice(data)
-    return {
-        "image_url": post.get("file_url"),
-        "character": post.get("tag_string_character", "Unknown Character"),
-        "artist": post.get("tag_string_artist", "Unknown Artist"),
-        "source": post.get("source", None),
-        "actual_tag": query_tag
-    }
+    posts_per_page = 20
+    max_page = min(1000, math.ceil(total_posts / posts_per_page))  # Danbooru’s limit
+    random_page = random.randint(1, max_page)
+
+    try:
+        url = f"https://danbooru.donmai.us/posts.json?tags={actual_tag}+rating:safe&limit={posts_per_page}&page={random_page}"
+        response = requests.get(url)
+        response.raise_for_status()
+        posts = response.json()
+
+        if not posts:
+            return None
+
+        post = random.choice(posts)
+        return {
+            "image_url": post.get("file_url"),
+            "character": post.get("tag_string_character", "Unknown Character"),
+            "artist": post.get("tag_string_artist", "Unknown Artist"),
+            "source": post.get("source", None),
+            "actual_tag": actual_tag
+        }
+    except Exception as e:
+        logger.error(f"Random image fetch failed: {e}")
+        return None
+
 
 
 
