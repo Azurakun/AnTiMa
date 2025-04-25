@@ -5,12 +5,10 @@ import os
 from flask import Flask
 from threading import Thread
 import logging
-import random
-import discord
-from discord import app_commands
 import math
 import random
 import traceback
+import aiohttp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,6 +48,26 @@ class AnimeImageBot(discord.Client):
                 role = guild.get_role(role_id)
                 if member and role:
                     await member.add_roles(role)
+                    
+    async def setup_hook(self):
+        await self.load_tags_from_danbooru()
+        self.tree.add_command(animeimage)
+        await self.tree.sync()
+
+    async def load_tags_from_danbooru(self):
+        print("Fetching tags from Danbooru...")
+        url = "https://danbooru.donmai.us/tags.json?limit=1000&order=count"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        self.tags = [tag["name"] for tag in data if tag.get("name")]
+                        print(f"Loaded {len(self.tags)} tags.")
+                    else:
+                        print(f"Failed to fetch tags: {resp.status}")
+        except Exception as e:
+            print("Error fetching tags from Danbooru:", e)
 
     async def on_raw_reaction_remove(self, payload):
         guild_id = payload.guild_id
@@ -75,7 +93,7 @@ client = AnimeImageBot()
 
 
 
-import aiohttp
+
 
 
 
