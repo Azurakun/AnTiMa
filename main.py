@@ -169,40 +169,6 @@ TAGS = ["asuna", "azur_lane", "azusa", "aqua", "aki", "akira"]
 @app_commands.autocomplete(tags=danbooru_tag_autocomplete)
 @app_commands.describe(tags="Character or tag (autocomplete)")
 
-@client.tree.command(name="animeimages_nsfw", description="Fetch a random NSFW anime image with artist and character info")
-@app_commands.describe(tags="Character or tag to search for (NSFW)")
-@app_commands.autocomplete(tags=danbooru_tag_autocomplete)
-async def animeimages_nsfw(interaction: discord.Interaction, tags: str = None):
-    if not interaction.channel.is_nsfw():
-        await interaction.response.send_message("This command can only be used in NSFW channels.", ephemeral=True)
-        return
-
-    try:
-        await interaction.response.defer()
-
-        result = get_random_danbooru_image(tags, nsfw=True)
-        if not result:
-            await interaction.followup.send(f"No NSFW results found for `{tags}`.", ephemeral=True)
-            return
-
-        embed = discord.Embed(
-            title=f"Here's your `{tags or 'Random'}` NSFW image!",
-            description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}\n**Tag used**: `{result['actual_tag']}`",
-            color=discord.Color.red()
-        )
-        embed.set_image(url=result['image_url'])
-
-        if result['source']:
-            embed.add_field(name="Source", value=result['source'], inline=False)
-
-        view = AnotherOneButton(tags=result['actual_tag'], nsfw=True)
-        await interaction.followup.send(embed=embed, view=view)
-
-    except Exception as e:
-        logger.error(f"NSFW Command error: {e}")
-        await interaction.followup.send("Oops! Something went wrong.", ephemeral=True)
-
-
 async def animeimage(interaction: discord.Interaction, tags: str = None):
     try:
         await interaction.response.defer()
@@ -289,7 +255,39 @@ def get_random_danbooru_image(tag: str = None, nsfw: bool = False):
         logger.error(f"Random image fetch failed: {e}")
         return None
 
+@client.tree.command(name="animeimages_nsfw", description="Fetch a random NSFW anime image with artist and character info")
+@app_commands.describe(tags="Character or tag to search for (NSFW)")
+@app_commands.autocomplete(tags=danbooru_tag_autocomplete)
 
+async def animeimages_nsfw(interaction: discord.Interaction, tags: str = None):
+    if not interaction.channel.is_nsfw():
+        await interaction.response.send_message("This command can only be used in NSFW channels.", ephemeral=True)
+        return
+
+    try:
+        await interaction.response.defer()
+
+        result = get_random_danbooru_image(tags, nsfw=True)
+        if not result:
+            await interaction.followup.send(f"No NSFW results found for `{tags}`.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=f"Here's your `{tags or 'Random'}` NSFW image!",
+            description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}\n**Tag used**: `{result['actual_tag']}`",
+            color=discord.Color.red()
+        )
+        embed.set_image(url=result['image_url'])
+
+        if result['source']:
+            embed.add_field(name="Source", value=result['source'], inline=False)
+
+        view = AnotherOneButton(tags=result['actual_tag'], nsfw=True)
+        await interaction.followup.send(embed=embed, view=view)
+
+    except Exception as e:
+        logger.error(f"NSFW Command error: {e}")
+        await interaction.followup.send("Oops! Something went wrong.", ephemeral=True)
 
 
 
