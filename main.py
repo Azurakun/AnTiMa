@@ -70,6 +70,71 @@ client = AnimeImageBot()
 
 # Helper function to fetch random Danbooru image by tag
 
+
+
+
+async def danbooru_tag_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+) -> list[app_commands.Choice[str]]:
+    try:
+        if not current:
+            return []
+
+        url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
+        headers = {
+            "User-Agent": "DiscordBot (by Azura)"
+        }
+
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
+        data = response.json()
+
+        return [
+            app_commands.Choice(name=tag["name"], value=tag["name"])
+            for tag in data if not tag["name"].startswith("rating:")
+        ]
+    except Exception as e:
+        logger.error(f"Danbooru autocomplete failed for '{current}': {e}")
+        return []
+
+
+# Define a Discord UI view with button
+class AnotherOneButton(discord.ui.View):
+    def __init__(self, tags: str, timeout: int = 60):
+        super().__init__(timeout=timeout)
+        self.tags = tags
+
+    @discord.ui.button(label="🔁 Another One!", style=discord.ButtonStyle.primary)
+    async def another_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            result = get_random_danbooru_image(self.tags)
+            if not result:
+                await interaction.response.send_message(f"No results found for `{self.tags}`.", ephemeral=True)
+                return
+
+            embed = discord.Embed(
+                title=f"Here's your random `{self.tags}` image!",
+                description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}",
+                color=discord.Color.purple()
+            )
+            embed.set_image(url=result['image_url'])
+
+            if result['source']:
+                embed.add_field(name="Source", value=result['source'], inline=False)
+
+            await interaction.response.send_message(embed=embed, view=AnotherOneButton(self.tags))
+        except Exception as e:
+            logger.error(f"Error in button callback: {e}")
+            await interaction.response.send_message("Error fetching new image.", ephemeral=True)
+
+@client.tree.command(name="animeimage", description="Fetch a random anime image with artist and character info")
+@app_commands.describe(
+    tags="Character or tag to search for"
+)
+@app_commands.autocomplete(tags=danbooru_tag_autocomplete)
+@app_commands.describe(tags="Character or tag (autocomplete)")
+
 async def animeimage(interaction: discord.Interaction, tags: str = None):
     try:
         await interaction.response.defer()
@@ -159,70 +224,6 @@ def get_random_danbooru_image(tag: str = None):
     except Exception as e:
         logger.error(f"Random image fetch failed: {e}")
         return None
-
-
-async def danbooru_tag_autocomplete(
-    interaction: discord.Interaction,
-    current: str
-) -> list[app_commands.Choice[str]]:
-    try:
-        if not current:
-            return []
-
-        url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
-        headers = {
-            "User-Agent": "DiscordBot (by Azura)"
-        }
-
-        response = requests.get(url, headers=headers, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-
-        return [
-            app_commands.Choice(name=tag["name"], value=tag["name"])
-            for tag in data if not tag["name"].startswith("rating:")
-        ]
-    except Exception as e:
-        logger.error(f"Danbooru autocomplete failed for '{current}': {e}")
-        return []
-
-
-# Define a Discord UI view with button
-class AnotherOneButton(discord.ui.View):
-    def __init__(self, tags: str, timeout: int = 60):
-        super().__init__(timeout=timeout)
-        self.tags = tags
-
-    @discord.ui.button(label="🔁 Another One!", style=discord.ButtonStyle.primary)
-    async def another_one(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            result = get_random_danbooru_image(self.tags)
-            if not result:
-                await interaction.response.send_message(f"No results found for `{self.tags}`.", ephemeral=True)
-                return
-
-            embed = discord.Embed(
-                title=f"Here's your random `{self.tags}` image!",
-                description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}",
-                color=discord.Color.purple()
-            )
-            embed.set_image(url=result['image_url'])
-
-            if result['source']:
-                embed.add_field(name="Source", value=result['source'], inline=False)
-
-            await interaction.response.send_message(embed=embed, view=AnotherOneButton(self.tags))
-        except Exception as e:
-            logger.error(f"Error in button callback: {e}")
-            await interaction.response.send_message("Error fetching new image.", ephemeral=True)
-
-@client.tree.command(name="animeimage", description="Fetch a random anime image with artist and character info")
-@app_commands.describe(
-    tags="Character or tag to search for"
-)
-@app_commands.autocomplete(tags=danbooru_tag_autocomplete)
-@app_commands.describe(tags="Character or tag (autocomplete)")
-
 
 
 
