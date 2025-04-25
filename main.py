@@ -103,7 +103,7 @@ async def danbooru_tag_autocomplete(
     if not current:
         return []
 
-    url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
+    url = f"https://danbooru.donmai.us/autocomplete.json?search[name]={current}&limit=10"
     headers = {"User-Agent": "DiscordBot (by Azura)"}
 
     try:
@@ -193,7 +193,7 @@ async def animeimage(interaction: discord.Interaction, tags: str = None):
 
 def get_danbooru_autocomplete_tag(user_input: str):
     try:
-        url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={user_input}*"
+        url = f"https://danbooru.donmai.us/autocomplete.json?search[name]={user_input}&limit=1"
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
