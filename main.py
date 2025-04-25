@@ -134,6 +134,23 @@ def get_random_danbooru_image(tag: str = None):
         logger.error(f"Random image fetch failed: {e}")
         return None
 
+async def danbooru_tag_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+) -> list[app_commands.Choice[str]]:
+    try:
+        url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+        return [
+            app_commands.Choice(name=tag["name"], value=tag["name"])
+            for tag in data if not tag["name"].startswith("rating:")
+        ]
+    except Exception as e:
+        logger.error(f"Autocomplete error: {e}")
+        return []
 
 
 
@@ -171,6 +188,7 @@ class AnotherOneButton(discord.ui.View):
 @app_commands.describe(
     tags="Character or tag to search for"
 )
+@app_commands.autocomplete(tags=danbooru_tag_autocomplete)
 async def animeimage(interaction: discord.Interaction, tags: str = None):
     try:
         await interaction.response.defer()
