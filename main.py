@@ -5,6 +5,9 @@ import os
 from flask import Flask
 from threading import Thread
 import logging
+import random
+import discord
+from discord import app_commands
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -61,51 +64,91 @@ class AnimeImageBot(discord.Client):
 
 client = AnimeImageBot()
 
-import random
 
-# Updated slash command for anime images with metadata
+
+# Helper function to fetch random Danbooru image by tag
+def get_random_danbooru_image(tags: str):
+    query = "+".join(tags.split())
+    url = f"https://danbooru.donmai.us/posts.json?tags={query}+rating:safe&limit=50"
+    response = requests.get(url)
+    response.raise_for_status()
+    data = response.json()
+
+    if not data:
+        return None
+
+    post = random.choice(data)
+    image_url = post.get("file_url")
+    character = post.get("tag_string_character", "Unknown Character")
+    artist = post.get("tag_string_artist", "Unknown Artist")
+    source = post.get("source", None)
+
+    return {
+        "image_url": image_url,
+        "character": character,
+        "artist": artist,
+        "source": source
+    }
+
+# Define a Discord UI view with button
+class AnotherOneButton(discord.ui.View):
+    def __init__(self, tags: str, timeout: int = 60):
+        super().__init__(timeout=timeout)
+        self.tags = tags
+
+    @discord.ui.button(label="🔁 Another One!", style=discord.ButtonStyle.primary)
+    async def another_one(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            result = get_random_danbooru_image(self.tags)
+            if not result:
+                await interaction.response.send_message(f"No results found for `{self.tags}`.", ephemeral=True)
+                return
+
+            embed = discord.Embed(
+                title=f"Here's your random `{self.tags}` image!",
+                description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}",
+                color=discord.Color.purple()
+            )
+            embed.set_image(url=result['image_url'])
+
+            if result['source']:
+                embed.add_field(name="Source", value=result['source'], inline=False)
+
+            await interaction.response.send_message(embed=embed, view=AnotherOneButton(self.tags))
+        except Exception as e:
+            logger.error(f"Error in button callback: {e}")
+            await interaction.response.send_message("Error fetching new image.", ephemeral=True)
+
+# Slash command with button support
 @client.tree.command(name="animeimage", description="Fetch a random anime image with artist and character info")
 @app_commands.describe(
     tags="Tags to filter images (e.g., 'waifu', 'neko', 'maid', 'sfw')"
 )
 async def animeimage(interaction: discord.Interaction, tags: str = "waifu"):
     try:
-        await interaction.response.defer()  # Defer if request takes a bit long
+        await interaction.response.defer()
 
-        # Query Danbooru with tags
-        query = "+".join(tags.split())
-        url = f"https://danbooru.donmai.us/posts.json?tags={query}+rating:safe&limit=50"
-
-        response = requests.get(url)
-        response.raise_for_status()
-        data = response.json()
-
-        if not data:
+        result = get_random_danbooru_image(tags)
+        if not result:
             await interaction.followup.send(f"No results found for `{tags}`.", ephemeral=True)
             return
 
-        post = random.choice(data)  # Pick a random post
-        image_url = post.get("file_url")
-        character = post.get("tag_string_character", "Unknown Character")
-        artist = post.get("tag_string_artist", "Unknown Artist")
-        source = post.get("source", None)
-
         embed = discord.Embed(
             title=f"Here's your random `{tags}` image!",
-            description=f"**Character**: {character}\n**Artist**: {artist}",
+            description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}",
             color=discord.Color.purple()
         )
-        embed.set_image(url=image_url)
+        embed.set_image(url=result['image_url'])
 
-        if source:
-            embed.add_field(name="Source", value=source, inline=False)
+        if result['source']:
+            embed.add_field(name="Source", value=result['source'], inline=False)
 
-        await interaction.followup.send(embed=embed)
+        view = AnotherOneButton(tags=tags)
+        await interaction.followup.send(embed=embed, view=view)
 
     except requests.RequestException as e:
         logger.error(f"API request error: {e}")
-        error_message = f"Error: Failed to fetch image from the API. Status code: {e.response.status_code if hasattr(e, 'response') else 'N/A'}"
-        await interaction.followup.send(error_message, ephemeral=True)
+        await interaction.followup.send("Failed to fetch image from the API.", ephemeral=True)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
         await interaction.followup.send("Oops! Something unexpected went wrong.", ephemeral=True)
