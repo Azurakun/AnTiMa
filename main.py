@@ -255,11 +255,6 @@ def get_random_danbooru_image(tag: str = None):
         logger.error(f"Random image fetch failed: {e}")
         return None
 
-@animeimage.autocomplete("tags")
-async def tag_autocomplete(interaction: discord.Interaction, current: str):
-    matches = [app_commands.Choice(name=tag, value=tag) for tag in TAGS if current.lower() in tag.lower()]
-    await interaction.response.autocomplete(matches[:25])  # 25 max
-
 
 
 
