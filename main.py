@@ -8,6 +8,8 @@ import logging
 import random
 import discord
 from discord import app_commands
+import math
+import random
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -67,8 +69,32 @@ client = AnimeImageBot()
 
 
 # Helper function to fetch random Danbooru image by tag
-import math
-import random
+
+async def animeimage(interaction: discord.Interaction, tags: str = None):
+    try:
+        await interaction.response.defer()
+
+        result = get_random_danbooru_image(tags)
+        if not result:
+            await interaction.followup.send(f"No results found for `{tags}`.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=f"Here's your `{tags or 'Random'}` image!",
+            description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}\n**Tag used**: `{result['actual_tag']}`",
+            color=discord.Color.purple()
+        )
+        embed.set_image(url=result['image_url'])
+
+        if result['source']:
+            embed.add_field(name="Source", value=result['source'], inline=False)
+
+        view = AnotherOneButton(tags=result['actual_tag'])
+        await interaction.followup.send(embed=embed, view=view)
+
+    except Exception as e:
+        logger.error(f"Command error: {e}")
+        await interaction.followup.send("Oops! Something unexpected went wrong.", ephemeral=True)
 
 def get_danbooru_autocomplete_tag(user_input: str):
     try:
@@ -134,7 +160,7 @@ def get_random_danbooru_image(tag: str = None):
         logger.error(f"Random image fetch failed: {e}")
         return None
 
-@animeimage.autocomplete("tags")
+
 async def danbooru_tag_autocomplete(
     interaction: discord.Interaction,
     current: str
@@ -145,7 +171,7 @@ async def danbooru_tag_autocomplete(
 
         url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
         headers = {
-            "User-Agent": "DiscordBot (by YOUR_USERNAME or GITHUB_LINK)"
+            "User-Agent": "DiscordBot (by yourname)"
         }
 
         response = requests.get(url, headers=headers, timeout=5)
@@ -159,9 +185,6 @@ async def danbooru_tag_autocomplete(
     except Exception as e:
         logger.error(f"Danbooru autocomplete failed for '{current}': {e}")
         return []
-
-
-
 
 
 # Define a Discord UI view with button
@@ -198,31 +221,31 @@ class AnotherOneButton(discord.ui.View):
     tags="Character or tag to search for"
 )
 @app_commands.autocomplete(tags=danbooru_tag_autocomplete)
-async def animeimage(interaction: discord.Interaction, tags: str = None):
-    try:
-        await interaction.response.defer()
+@app_commands.describe(tags="Character or tag (autocomplete)")
 
-        result = get_random_danbooru_image(tags)
-        if not result:
-            await interaction.followup.send(f"No results found for `{tags}`.", ephemeral=True)
-            return
 
-        embed = discord.Embed(
-            title=f"Here's your `{tags or 'Random'}` image!",
-            description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}\n**Tag used**: `{result['actual_tag']}`",
-            color=discord.Color.purple()
-        )
-        embed.set_image(url=result['image_url'])
 
-        if result['source']:
-            embed.add_field(name="Source", value=result['source'], inline=False)
 
-        view = AnotherOneButton(tags=result['actual_tag'])
-        await interaction.followup.send(embed=embed, view=view)
 
-    except Exception as e:
-        logger.error(f"Command error: {e}")
-        await interaction.followup.send("Oops! Something unexpected went wrong.", ephemeral=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
