@@ -96,19 +96,25 @@ def get_danbooru_post_count(tag: str) -> int:
         return 0
 
 
-def get_random_danbooru_image(tag: str):
-    actual_tag = get_danbooru_autocomplete_tag(tag)
-    total_posts = get_danbooru_post_count(actual_tag)
+def get_random_danbooru_image(tag: str = None):
+    if tag:
+        actual_tag = get_danbooru_autocomplete_tag(tag)
+        search_tags = f"{actual_tag}+rating:safe"
+    else:
+        actual_tag = None
+        search_tags = "rating:safe"  # no tag — truly random safe image
+
+    total_posts = get_danbooru_post_count(search_tags)
 
     if total_posts == 0:
         return None
 
     posts_per_page = 20
-    max_page = min(1000, math.ceil(total_posts / posts_per_page))  # Danbooru’s limit
+    max_page = min(1000, math.ceil(total_posts / posts_per_page))  # API limits
     random_page = random.randint(1, max_page)
 
     try:
-        url = f"https://danbooru.donmai.us/posts.json?tags={actual_tag}+rating:safe&limit={posts_per_page}&page={random_page}"
+        url = f"https://danbooru.donmai.us/posts.json?tags={search_tags}&limit={posts_per_page}&page={random_page}"
         response = requests.get(url)
         response.raise_for_status()
         posts = response.json()
@@ -122,11 +128,12 @@ def get_random_danbooru_image(tag: str):
             "character": post.get("tag_string_character", "Unknown Character"),
             "artist": post.get("tag_string_artist", "Unknown Artist"),
             "source": post.get("source", None),
-            "actual_tag": actual_tag
+            "actual_tag": actual_tag or "Completely random"
         }
     except Exception as e:
         logger.error(f"Random image fetch failed: {e}")
         return None
+
 
 
 
@@ -164,7 +171,7 @@ class AnotherOneButton(discord.ui.View):
 @app_commands.describe(
     tags="Character or tag to search for"
 )
-async def animeimage(interaction: discord.Interaction, tags: str = "waifu"):
+async def animeimage(interaction: discord.Interaction, tags: str = None):
     try:
         await interaction.response.defer()
 
