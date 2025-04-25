@@ -74,7 +74,10 @@ client = AnimeImageBot()
 
 
 
+
 import aiohttp
+
+
 
 async def danbooru_tag_autocomplete(
     interaction: discord.Interaction,
@@ -135,12 +138,15 @@ class AnotherOneButton(discord.ui.View):
             logger.error(f"Error in button callback: {e}")
             await interaction.response.send_message("Error fetching new image.", ephemeral=True)
 
+TAGS = ["asuna", "azur_lane", "azusa", "aqua", "aki", "akira"]
+
 @client.tree.command(name="animeimage", description="Fetch a random anime image with artist and character info")
 @app_commands.describe(
     tags="Character or tag to search for"
 )
 @app_commands.autocomplete(tags=danbooru_tag_autocomplete)
 @app_commands.describe(tags="Character or tag (autocomplete)")
+
 
 async def animeimage(interaction: discord.Interaction, tags: str = None):
     try:
@@ -232,7 +238,10 @@ def get_random_danbooru_image(tag: str = None):
         logger.error(f"Random image fetch failed: {e}")
         return None
 
-
+@animeimage.autocomplete("tags")
+async def tag_autocomplete(interaction: discord.Interaction, current: str):
+    matches = [app_commands.Choice(name=tag, value=tag) for tag in TAGS if current.lower() in tag.lower()]
+    await interaction.response.send_autocomplete(matches[:25])  # 25 max
 
 
 
