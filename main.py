@@ -132,6 +132,9 @@ async def send_message(
         return
 
     try:
+        # Convert literal "\n" into real newlines
+        message = message.replace("\\n", "\n")
+        
         channel = client.get_channel(int(channel_id))
         if channel is None:
             await interaction.response.send_message("Invalid channel ID.", ephemeral=True)
