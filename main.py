@@ -67,9 +67,24 @@ client = AnimeImageBot()
 
 
 # Helper function to fetch random Danbooru image by tag
-def get_random_danbooru_image(tags: str):
-    query = "+".join(tags.split())
-    url = f"https://danbooru.donmai.us/posts.json?tags={query}+rating:safe&limit=50"
+def get_danbooru_autocomplete_tag(user_input: str):
+    try:
+        url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={user_input}*"
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+
+        if data:
+            return data[0]['name']  # Return the top autocomplete match
+    except Exception as e:
+        logger.error(f"Autocomplete tag fetch failed: {e}")
+
+    # fallback to original input formatted
+    return user_input.lower().replace(" ", "_")
+
+def get_random_danbooru_image(tag: str):
+    query_tag = get_danbooru_autocomplete_tag(tag)
+    url = f"https://danbooru.donmai.us/posts.json?tags={query_tag}+rating:safe&limit=50"
     response = requests.get(url)
     response.raise_for_status()
     data = response.json()
@@ -78,17 +93,14 @@ def get_random_danbooru_image(tags: str):
         return None
 
     post = random.choice(data)
-    image_url = post.get("file_url")
-    character = post.get("tag_string_character", "Unknown Character")
-    artist = post.get("tag_string_artist", "Unknown Artist")
-    source = post.get("source", None)
-
     return {
-        "image_url": image_url,
-        "character": character,
-        "artist": artist,
-        "source": source
+        "image_url": post.get("file_url"),
+        "character": post.get("tag_string_character", "Unknown Character"),
+        "artist": post.get("tag_string_artist", "Unknown Artist"),
+        "source": post.get("source", None),
+        "actual_tag": query_tag
     }
+
 
 # Define a Discord UI view with button
 class AnotherOneButton(discord.ui.View):
@@ -119,10 +131,9 @@ class AnotherOneButton(discord.ui.View):
             logger.error(f"Error in button callback: {e}")
             await interaction.response.send_message("Error fetching new image.", ephemeral=True)
 
-# Slash command with button support
 @client.tree.command(name="animeimage", description="Fetch a random anime image with artist and character info")
 @app_commands.describe(
-    tags="Tags to filter images (e.g., 'waifu', 'neko', 'maid', 'sfw')"
+    tags="Character or tag to search for"
 )
 async def animeimage(interaction: discord.Interaction, tags: str = "waifu"):
     try:
@@ -134,8 +145,8 @@ async def animeimage(interaction: discord.Interaction, tags: str = "waifu"):
             return
 
         embed = discord.Embed(
-            title=f"Here's your random `{tags}` image!",
-            description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}",
+            title=f"Here's your `{tags}` image!",
+            description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}\n**Tag used**: `{result['actual_tag']}`",
             color=discord.Color.purple()
         )
         embed.set_image(url=result['image_url'])
@@ -143,15 +154,13 @@ async def animeimage(interaction: discord.Interaction, tags: str = "waifu"):
         if result['source']:
             embed.add_field(name="Source", value=result['source'], inline=False)
 
-        view = AnotherOneButton(tags=tags)
+        view = AnotherOneButton(tags=result['actual_tag'])
         await interaction.followup.send(embed=embed, view=view)
 
-    except requests.RequestException as e:
-        logger.error(f"API request error: {e}")
-        await interaction.followup.send("Failed to fetch image from the API.", ephemeral=True)
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Command error: {e}")
         await interaction.followup.send("Oops! Something unexpected went wrong.", ephemeral=True)
+
 
 
 
