@@ -181,7 +181,7 @@ async def animeimage(interaction: discord.Interaction, tags: str = None):
             return
 
         embed = discord.Embed(
-            title=f"Here's your `{tags}` image!",
+            title=f"Here's your `{tags or 'Random'}` image!",
             description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}\n**Tag used**: `{result['actual_tag']}`",
             color=discord.Color.purple()
         )
