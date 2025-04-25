@@ -19,6 +19,7 @@ TOKEN = os.environ["TOKEN"]
 # Store emoji-role-message mappings per guild: {guild_id: {message_id: {emoji: role_id}}}
 emoji_role_map = {}
 
+
 class AnimeImageBot(discord.Client):
     def __init__(self):
         intents = discord.Intents.default()
@@ -53,20 +54,8 @@ class AnimeImageBot(discord.Client):
         await self.load_tags_from_danbooru()
         await self.tree.sync()
 
-    async def load_tags_from_danbooru(self):
-        print("Fetching tags from Danbooru...")
-        url = "https://danbooru.donmai.us/tags.json?limit=1000&order=count"
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        self.tags = [tag["name"] for tag in data if tag.get("name")]
-                        print(f"Loaded {len(self.tags)} tags.")
-                    else:
-                        print(f"Failed to fetch tags: {resp.status}")
-        except Exception as e:
-            print("Error fetching tags from Danbooru:", e)
+    
+
 
     async def on_raw_reaction_remove(self, payload):
         guild_id = payload.guild_id
@@ -123,7 +112,21 @@ async def danbooru_tag_autocomplete(
         traceback.print_exc()
         return []
 
-
+async def load_tags_from_danbooru(self):
+        print("Fetching tags from Danbooru...")
+        url = "https://danbooru.donmai.us/tags.json?limit=1000&order=count"
+        try:
+            async with aiohttp.ClientSession() as session:
+                
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        self.tags = [tag["name"] for tag in data if tag.get("name")]
+                        print(f"Loaded {len(self.tags)} tags.")
+                    else:
+                        print(f"Failed to fetch tags: {resp.status}")
+        except Exception as e:
+            print("Error fetching tags from Danbooru:", e)
 
 
 # Define a Discord UI view with button
@@ -163,6 +166,7 @@ TAGS = ["asuna", "azur_lane", "azusa", "aqua", "aki", "akira"]
 )
 @app_commands.autocomplete(tags=danbooru_tag_autocomplete)
 @app_commands.describe(tags="Character or tag (autocomplete)")
+
 
 
 async def animeimage(interaction: discord.Interaction, tags: str = None):
