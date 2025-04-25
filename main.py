@@ -171,7 +171,7 @@ async def danbooru_tag_autocomplete(
 
         url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
         headers = {
-            "User-Agent": "DiscordBot (by yourname)"
+            "User-Agent": "DiscordBot (by Azura)"
         }
 
         response = requests.get(url, headers=headers, timeout=5)
