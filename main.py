@@ -73,30 +73,34 @@ client = AnimeImageBot()
 
 
 
+import aiohttp
+
 async def danbooru_tag_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> list[app_commands.Choice[str]]:
-    logger.info(f"Autocomplete triggered for: {current}")
-    try:
-        if not current:
-            return []
-
-        url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
-        response = requests.get(url, headers={"User-Agent": "DiscordBot (by Azura)"}, timeout=5)
-        response.raise_for_status()
-        data = response.json()
-
-        choices = [
-            app_commands.Choice(name=tag["name"], value=tag["name"])
-            for tag in data if not tag["name"].startswith("rating:")
-        ]
-        logger.info(f"Autocomplete results: {choices}")
-        return choices
-
-    except Exception as e:
-        logger.error(f"Danbooru autocomplete failed for '{current}': {e}")
+    if not current:
         return []
+
+    url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
+    headers = {"User-Agent": "DiscordBot (by Azura)"}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=2)) as response:
+                if response.status != 200:
+                    return []
+                data = await response.json()
+
+                return [
+                    app_commands.Choice(name=tag["name"], value=tag["name"])
+                    for tag in data
+                    if not tag["name"].startswith("rating:")
+                ]
+    except Exception as e:
+        print(f"[Autocomplete Error] {e}")
+        return []
+
 
 
 
