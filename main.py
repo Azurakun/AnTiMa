@@ -61,31 +61,55 @@ class AnimeImageBot(discord.Client):
 
 client = AnimeImageBot()
 
-# Slash command to fetch anime image
-@client.tree.command(name="animeimage", description="Fetch a random anime image")
+import random
+
+# Updated slash command for anime images with metadata
+@client.tree.command(name="animeimage", description="Fetch a random anime image with artist and character info")
 @app_commands.describe(
-    category="Choose a category like 'sfw' or 'nsfw'",
-    type="Type of image, e.g., waifu, neko, shinobu, bully, etc."
+    tags="Tags to filter images (e.g., 'waifu', 'neko', 'maid', 'sfw')"
 )
-async def animeimage(interaction: discord.Interaction, category: str = "sfw", type: str = "waifu"):
+async def animeimage(interaction: discord.Interaction, tags: str = "waifu"):
     try:
-        url = f"https://api.waifu.pics/{category}/{type}"
+        await interaction.response.defer()  # Defer if request takes a bit long
+
+        # Query Danbooru with tags
+        query = "+".join(tags.split())
+        url = f"https://danbooru.donmai.us/posts.json?tags={query}+rating:safe&limit=50"
+
         response = requests.get(url)
         response.raise_for_status()
         data = response.json()
-        image_url = data["url"]
 
-        embed = discord.Embed(title=f"Here's your random {type}!", color=discord.Color.purple())
+        if not data:
+            await interaction.followup.send(f"No results found for `{tags}`.", ephemeral=True)
+            return
+
+        post = random.choice(data)  # Pick a random post
+        image_url = post.get("file_url")
+        character = post.get("tag_string_character", "Unknown Character")
+        artist = post.get("tag_string_artist", "Unknown Artist")
+        source = post.get("source", None)
+
+        embed = discord.Embed(
+            title=f"Here's your random `{tags}` image!",
+            description=f"**Character**: {character}\n**Artist**: {artist}",
+            color=discord.Color.purple()
+        )
         embed.set_image(url=image_url)
 
-        await interaction.response.send_message(embed=embed)
+        if source:
+            embed.add_field(name="Source", value=source, inline=False)
+
+        await interaction.followup.send(embed=embed)
+
     except requests.RequestException as e:
         logger.error(f"API request error: {e}")
         error_message = f"Error: Failed to fetch image from the API. Status code: {e.response.status_code if hasattr(e, 'response') else 'N/A'}"
-        await interaction.response.send_message(error_message)
+        await interaction.followup.send(error_message, ephemeral=True)
     except Exception as e:
         logger.error(f"Unexpected error: {e}")
-        await interaction.response.send_message("Oops! Something unexpected went wrong.")
+        await interaction.followup.send("Oops! Something unexpected went wrong.", ephemeral=True)
+
 
 # Slash command for admins to set emoji-role pairing on a specific message
 @client.tree.command(name="setemojirole", description="Admin command to link an emoji with a role on a specific message")
