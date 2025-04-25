@@ -51,7 +51,6 @@ class AnimeImageBot(discord.Client):
                     
     async def setup_hook(self):
         await self.load_tags_from_danbooru()
-        self.tree.add_command(animeimage)
         await self.tree.sync()
 
     async def load_tags_from_danbooru(self):
