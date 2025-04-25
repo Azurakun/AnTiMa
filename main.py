@@ -89,6 +89,13 @@ def get_random_danbooru_image(tag: str):
     response.raise_for_status()
     data = response.json()
 
+    # Try without +rating:safe if safe images not found
+    if not data:
+        fallback_url = f"https://danbooru.donmai.us/posts.json?tags={query_tag}&limit=50"
+        response = requests.get(fallback_url)
+        response.raise_for_status()
+        data = response.json()
+
     if not data:
         return None
 
@@ -100,6 +107,7 @@ def get_random_danbooru_image(tag: str):
         "source": post.get("source", None),
         "actual_tag": query_tag
     }
+
 
 
 # Define a Discord UI view with button
