@@ -50,9 +50,9 @@ class AnimeImageBot(discord.Client):
                 if member and role:
                     await member.add_roles(role)
                     
-    async def setup_hook(self):
-        await self.load_tags_from_danbooru()
-        await self.tree.sync()
+    # async def setup_hook(self):
+    #     await self.load_tags_from_danbooru()
+    #     await self.tree.sync()
 
     
 
