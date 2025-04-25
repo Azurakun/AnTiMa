@@ -134,13 +134,21 @@ def get_random_danbooru_image(tag: str = None):
         logger.error(f"Random image fetch failed: {e}")
         return None
 
+@animeimage.autocomplete("tags")
 async def danbooru_tag_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> list[app_commands.Choice[str]]:
     try:
+        if not current:
+            return []
+
         url = f"https://danbooru.donmai.us/tags/autocomplete.json?search[name_matches]={current}*&limit=10"
-        response = requests.get(url)
+        headers = {
+            "User-Agent": "DiscordBot (by YOUR_USERNAME or GITHUB_LINK)"
+        }
+
+        response = requests.get(url, headers=headers, timeout=5)
         response.raise_for_status()
         data = response.json()
 
@@ -149,8 +157,9 @@ async def danbooru_tag_autocomplete(
             for tag in data if not tag["name"].startswith("rating:")
         ]
     except Exception as e:
-        logger.error(f"Autocomplete error: {e}")
+        logger.error(f"Danbooru autocomplete failed for '{current}': {e}")
         return []
+
 
 
 
