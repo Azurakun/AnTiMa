@@ -10,6 +10,7 @@ import discord
 from discord import app_commands
 import math
 import random
+import traceback
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -98,7 +99,8 @@ async def danbooru_tag_autocomplete(
                     if not tag["name"].startswith("rating:")
                 ]
     except Exception as e:
-        print(f"[Autocomplete Error] {e}")
+        print("[Autocomplete Error]", e)
+        traceback.print_exc()
         return []
 
 
