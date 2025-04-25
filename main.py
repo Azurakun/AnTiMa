@@ -131,32 +131,34 @@ async def load_tags_from_danbooru(self):
 
 # Define a Discord UI view with button
 class AnotherOneButton(discord.ui.View):
-    def __init__(self, tags: str, timeout: int = 60):
+    def __init__(self, tags: str, nsfw: bool = False, timeout: int = 60):
         super().__init__(timeout=timeout)
         self.tags = tags
+        self.nsfw = nsfw
 
     @discord.ui.button(label="🔁 Another One!", style=discord.ButtonStyle.primary)
     async def another_one(self, interaction: discord.Interaction, button: discord.ui.Button):
         try:
-            result = get_random_danbooru_image(self.tags)
+            result = get_random_danbooru_image(self.tags, nsfw=self.nsfw)
             if not result:
                 await interaction.response.send_message(f"No results found for `{self.tags}`.", ephemeral=True)
                 return
 
             embed = discord.Embed(
-                title=f"Here's your random `{self.tags}` image!",
+                title=f"Here's your `{self.tags or 'Random'}` {'NSFW' if self.nsfw else ''} image!",
                 description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}",
-                color=discord.Color.purple()
+                color=discord.Color.red() if self.nsfw else discord.Color.purple()
             )
             embed.set_image(url=result['image_url'])
 
             if result['source']:
                 embed.add_field(name="Source", value=result['source'], inline=False)
 
-            await interaction.response.send_message(embed=embed, view=AnotherOneButton(self.tags))
+            await interaction.response.send_message(embed=embed, view=AnotherOneButton(self.tags, nsfw=self.nsfw))
         except Exception as e:
-            logger.error(f"Error in button callback: {e}")
+            logger.error(f"Button error: {e}")
             await interaction.response.send_message("Error fetching new image.", ephemeral=True)
+
 
 TAGS = ["asuna", "azur_lane", "azusa", "aqua", "aki", "akira"]
 
@@ -167,6 +169,38 @@ TAGS = ["asuna", "azur_lane", "azusa", "aqua", "aki", "akira"]
 @app_commands.autocomplete(tags=danbooru_tag_autocomplete)
 @app_commands.describe(tags="Character or tag (autocomplete)")
 
+@client.tree.command(name="animeimages_nsfw", description="Fetch a random NSFW anime image with artist and character info")
+@app_commands.describe(tags="Character or tag to search for (NSFW)")
+@app_commands.autocomplete(tags=danbooru_tag_autocomplete)
+async def animeimages_nsfw(interaction: discord.Interaction, tags: str = None):
+    if not interaction.channel.is_nsfw():
+        await interaction.response.send_message("This command can only be used in NSFW channels.", ephemeral=True)
+        return
+
+    try:
+        await interaction.response.defer()
+
+        result = get_random_danbooru_image(tags, nsfw=True)
+        if not result:
+            await interaction.followup.send(f"No NSFW results found for `{tags}`.", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title=f"Here's your `{tags or 'Random'}` NSFW image!",
+            description=f"**Character**: {result['character']}\n**Artist**: {result['artist']}\n**Tag used**: `{result['actual_tag']}`",
+            color=discord.Color.red()
+        )
+        embed.set_image(url=result['image_url'])
+
+        if result['source']:
+            embed.add_field(name="Source", value=result['source'], inline=False)
+
+        view = AnotherOneButton(tags=result['actual_tag'], nsfw=True)
+        await interaction.followup.send(embed=embed, view=view)
+
+    except Exception as e:
+        logger.error(f"NSFW Command error: {e}")
+        await interaction.followup.send("Oops! Something went wrong.", ephemeral=True)
 
 
 async def animeimage(interaction: discord.Interaction, tags: str = None):
@@ -221,21 +255,17 @@ def get_danbooru_post_count(tag: str) -> int:
         return 0
 
 
-def get_random_danbooru_image(tag: str = None):
-    if tag:
-        actual_tag = get_danbooru_autocomplete_tag(tag)
-        search_tags = f"{actual_tag}+rating:safe"
-    else:
-        actual_tag = None
-        search_tags = "rating:safe"  # no tag — truly random safe image
+def get_random_danbooru_image(tag: str = None, nsfw: bool = False):
+    rating_tag = "rating:explicit" if nsfw else "rating:safe"
+    actual_tag = get_danbooru_autocomplete_tag(tag) if tag else None
+    search_tags = f"{actual_tag}+{rating_tag}" if actual_tag else rating_tag
 
     total_posts = get_danbooru_post_count(search_tags)
-
     if total_posts == 0:
         return None
 
     posts_per_page = 20
-    max_page = min(1000, math.ceil(total_posts / posts_per_page))  # API limits
+    max_page = min(1000, math.ceil(total_posts / posts_per_page))
     random_page = random.randint(1, max_page)
 
     try:
@@ -258,6 +288,7 @@ def get_random_danbooru_image(tag: str = None):
     except Exception as e:
         logger.error(f"Random image fetch failed: {e}")
         return None
+
 
 
 
