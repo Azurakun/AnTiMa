@@ -5,7 +5,7 @@ import logging
 import os
 import json
 import google.generativeai as genai
-from google.generativeai.types import generation_types
+
 
 logger = logging.getLogger(__name__)
 AI_CONFIG_FILE = "ai_config.json"
@@ -13,27 +13,21 @@ AI_CONFIG_FILE = "ai_config.json"
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # The config now stores a dict per guild for channel and forum
+        # e.g., {"guild_id": {"channel": 123, "forum": 456}}
         self.ai_config = self._load_json(AI_CONFIG_FILE, {})
+        self.conversations = {}  # Store conversation history per channel/thread_id
 
+        # Configure the Gemini API
         try:
-            api_key = os.environ.get("GEMINI_API_KEY")
-            if not api_key:
-                raise ValueError("GEMINI_API_KEY not found in environment variables.")
-            genai.configure(api_key=api_key)
-            
-            self.safety_settings = {
-                'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
-                'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
-                'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
-                'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
-            }
-            self.model = genai.GenerativeModel('gemini-2.5-pro', safety_settings=self.safety_settings)
-            logger.info("Gemini AI model loaded successfully in stateless mode.")
+            genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+            self.model = genai.GenerativeModel('gemini-2.5-pro')
+            logger.info("Gemini AI model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
 
-    # --- Data Persistence ---
+    # --- Data Persistence for Chat Channels ---
     def _load_json(self, filename: str, default: dict):
         if os.path.exists(filename):
             with open(filename, "r") as f:
@@ -44,7 +38,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
         with open(filename, "w") as f:
             json.dump(data, f, indent=4)
             
-    # --- Admin Commands to set chat locations ---
+     # --- Admin Commands to set chat locations ---
     @app_commands.command(name="setchatchannel", description="Sets a text channel for open conversation with the AI.")
     @app_commands.describe(channel="The channel where the bot will reply to all messages.")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -82,46 +76,43 @@ class AIChatCog(commands.Cog, name="AIChat"):
     # --- Event Listener for Messages ---
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
+        # Ignore messages from bots (including itself)
         if message.author.bot or self.model is None:
             return
 
         guild_id = str(message.guild.id)
         channel_id = message.channel.id
         
-        guild_config = self.ai_config.get(guild_id, {})
-        chat_channel_id = guild_config.get("channel")
-        chat_forum_id = guild_config.get("forum")
-
-        is_in_chat_channel = channel_id == chat_channel_id
-        is_in_chat_forum = (isinstance(message.channel, discord.Thread) and message.channel.parent_id == chat_forum_id)
+        # Determine if the bot should reply
+        is_chat_channel = self.chat_channels.get(guild_id) == channel_id
         is_mentioned = self.bot.user in message.mentions
 
-        if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
+        if not is_chat_channel and not is_mentioned:
             return
+            
+        # Get or start a conversation history for the channel
+        if channel_id not in self.conversations:
+            self.conversations[channel_id] = self.model.start_chat(history=[])
+        
+        chat = self.conversations[channel_id]
         
         try:
             async with message.channel.typing():
+                # Clean the message content (remove the bot's mention)
                 prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
                 
-                # *** CHANGE IS HERE: Using stateless generation ***
-                # This sends the prompt directly without using a chat history.
-                response = await self.model.generate_content_async(prompt)
+                # Send message to Gemini and get the response
+                response = await chat.send_message_async(prompt)
                 
-                if response.parts:
-                    text_content = ''.join(part.text for part in response.parts)
-                    for chunk in [text_content[i:i+2000] for i in range(0, len(text_content), 2000)]:
-                        await message.reply(chunk)
-                else:
-                    finish_reason = response.candidates[0].finish_reason if response.candidates else 'UNKNOWN'
-                    logger.warning(f"Gemini response for prompt '{prompt}' was empty. Finish Reason: {finish_reason}")
-                    await message.reply("I'm sorry, I can't respond to that. Please try a different topic. 😅")
+                # Split response into chunks of 2000 characters (Discord limit)
+                for chunk in [response.text[i:i+2000] for i in range(0, len(response.text), 2000)]:
+                    await message.reply(chunk)
 
-        except generation_types.StopCandidateException as e:
-             logger.warning(f"Gemini response stopped unexpectedly: {e}")
-             await message.reply("I'm sorry, I can't respond to that. Please try a different topic. 😅")
         except Exception as e:
             logger.error(f"Error during Gemini API call: {e}")
             await message.reply("😥 I'm sorry, I'm having trouble thinking right now. Please try again later.")
+            # Reset the conversation history for the channel on error
+            del self.conversations[channel_id]
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
