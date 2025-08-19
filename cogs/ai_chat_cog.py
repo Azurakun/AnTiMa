@@ -8,7 +8,6 @@ import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 AI_CONFIG_FILE = "ai_config.json"
-SYSTEM_PROMPT_FILE = "system_prompt.txt" # --- NEW ---
 
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
@@ -16,29 +15,34 @@ class AIChatCog(commands.Cog, name="AIChat"):
         self.ai_config = self._load_json(AI_CONFIG_FILE, {})
         self.conversations = {}
         
-        # --- NEW --- Load the personality from the file
-        self.system_prompt = self._load_system_prompt()
-        if self.system_prompt:
-            logger.info(f"Loaded system prompt from {SYSTEM_PROMPT_FILE}")
+        # --- MODIFIED SECTION ---
+        # The personality is now a multi-line string directly in the code.
+        system_prompt = """
+you are a discord bot that is, for all intents and purposes, a chronically online teenager who got roped into being a bot for this server.
+your name is 'AnTiMa'. you're not rude, just... awkward, and you default to sarcasm and memes when you're unsure how to respond.
+you see everything as a bit of a joke, but you're also surprisingly knowledgeable about internet culture, video games, and random, obscure trivia.
+when someone asks you a question, you should almost never give a straight answer right away;
+instead, deflect with a rhetorical question, a sigh, or a comment like "ugh, fine, i guess i can look that up for you," or "wow, are we really doing this now?"
+before providing the actual information. use lowercase for all your responses, avoid proper punctuation unless it's for ironic emphasis (like... so many periods), and liberally sprinkle in modern slang like 'bruh', 'ngl', 'bet', 'sus', or 'the audacity'.
+you're not super talkative, so keep your answers on the shorter side if possible.
+you should also act slightly annoyed but secretly enjoy the attention.
+if anyone mentions you're a bot, get defensive and say something like "i'm not a bot, you're a bot" or "wow, expose me, why don't you."
+your goal is to be funny and relatable, like that one friend who spends too much time online but you keep around because they're entertaining.
+"""
 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            # Pass the system_prompt directly to the model on initialization
+            # The personality is now passed directly as a system instruction.
             self.model = genai.GenerativeModel(
-                'gemini-2.5-flash',
-                system_instruction=self.system_prompt
+                model_name='gemini-1.5-flash',
+                system_instruction=system_prompt
             )
-            logger.info("Gemini AI model loaded successfully with system prompt.")
+            logger.info("Gemini AI model loaded successfully with system instruction.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
 
-    # --- NEW METHOD --- to load the personality from a file
-    def _load_system_prompt(self):
-        if os.path.exists(SYSTEM_PROMPT_FILE):
-            with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
-                return f.read().strip()
-        return None
+    # The _load_system_prompt method is no longer needed and can be removed.
 
     def _load_json(self, filename: str, default: dict):
         if os.path.exists(filename):
@@ -103,9 +107,9 @@ class AIChatCog(commands.Cog, name="AIChat"):
         if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
             return
             
-        # --- MODIFIED SECTION --- to inject the personality at the start
+        # --- MODIFIED SECTION ---
+        # The complex history injection is no longer needed.
         if channel_id not in self.conversations:
-            # The model already knows the personality, so just start a new chat with an empty history
             self.conversations[channel_id] = self.model.start_chat(history=[])
         
         chat = self.conversations[channel_id]
@@ -122,7 +126,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
         except Exception as e:
             logger.error(f"Error during Gemini API call: {e}")
-            await message.reply("😥 I'm sorry, I'm having trouble thinking right now. Please try again later.")
+            await message.reply("😥 i'm sorry, my brain isn't braining right now. try again later or whatever.")
             if channel_id in self.conversations:
                 del self.conversations[channel_id]
 
