@@ -5,6 +5,7 @@ import logging
 import os
 import json
 import google.generativeai as genai
+from google.generativeai.types import GenerationConfig
 
 logger = logging.getLogger(__name__)
 AI_CONFIG_FILE = "ai_config.json"
@@ -20,7 +21,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
         # Configure the Gemini API
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel('gemini-2.5-flash') # Changed to a recommended model
+            self.model = genai.GenerativeModel('gemini-1.5-flash')
             logger.info("Gemini AI model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -93,11 +94,6 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
         if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
             return
-
-        prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
-        # Do not proceed if the prompt is empty after stripping the mention
-        if not prompt:
-            return
             
         # Each channel and each thread gets its own conversation history
         if channel_id not in self.conversations:
@@ -107,25 +103,24 @@ class AIChatCog(commands.Cog, name="AIChat"):
         
         try:
             async with message.channel.typing():
-                response = await chat.send_message_async(prompt)
+                prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
                 
-                # If the response text is empty, do nothing.
-                if not response.text:
-                    return
+                # Create a generation config to limit the output tokens.
+                # 1 token ~= 4 characters. Discord's limit is 2000 chars.
+                # 480 tokens is roughly 1920 characters, a safe margin.
+                generation_config = GenerationConfig(max_output_tokens=480)
 
-                # Discord's character limit per message is 2000.
-                # This code splits the AI's response into chunks of 1990 characters
-                # to leave a small buffer, and sends each chunk as a separate reply.
-                limit = 1990 
-                chunks = [response.text[i:i+limit] for i in range(0, len(response.text), limit)]
-
-                for chunk in chunks:
-                    await message.reply(chunk)
+                response = await chat.send_message_async(
+                    prompt,
+                    generation_config=generation_config
+                )
+                
+                # The response is now guaranteed to be short enough for one message.
+                await message.reply(response.text)
 
         except Exception as e:
             logger.error(f"Error during Gemini API call: {e}")
             await message.reply("😥 I'm sorry, I'm having trouble thinking right now. Please try again later.")
-            # Resetting the conversation history for this channel on error
             if channel_id in self.conversations:
                 del self.conversations[channel_id]
 
