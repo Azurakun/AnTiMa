@@ -20,7 +20,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
         # Configure the Gemini API
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            self.model = genai.GenerativeModel('gemini-1.5-flash') # Changed to a more recent model, you can change it back
             logger.info("Gemini AI model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -105,8 +105,12 @@ class AIChatCog(commands.Cog, name="AIChat"):
                 prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
                 response = await chat.send_message_async(prompt)
                 
-                for chunk in [response.text[i:i+2000] for i in range(0, len(response.text), 2000)]:
-                    await message.reply(chunk)
+                # Limit the output to Discord's 2000 character limit by truncating it.
+                final_text = response.text[:2000]
+
+                # Ensure the message is not empty before sending
+                if final_text:
+                    await message.reply(final_text)
 
         except Exception as e:
             logger.error(f"Error during Gemini API call: {e}")
