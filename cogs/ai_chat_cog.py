@@ -5,6 +5,7 @@ import logging
 import os
 import json
 import google.generativeai as genai
+from google.generativeai.types import generation_types
 
 logger = logging.getLogger(__name__)
 AI_CONFIG_FILE = "ai_config.json"
@@ -19,8 +20,18 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
         # Configure the Gemini API
         try:
-            genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel('gemini-2.5-pro')
+            api_key = os.environ.get("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY not found in environment variables.")
+            genai.configure(api_key=api_key)
+            # Add safety settings to be less restrictive, adjust as needed
+            self.safety_settings = {
+                'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
+                'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
+                'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
+                'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
+            }
+            self.model = genai.GenerativeModel('gemini-pro', safety_settings=self.safety_settings)
             logger.info("Gemini AI model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -81,12 +92,10 @@ class AIChatCog(commands.Cog, name="AIChat"):
         guild_id = str(message.guild.id)
         channel_id = message.channel.id
         
-        # Get the guild's AI config
         guild_config = self.ai_config.get(guild_id, {})
         chat_channel_id = guild_config.get("channel")
         chat_forum_id = guild_config.get("forum")
 
-        # Determine if the bot should reply
         is_in_chat_channel = channel_id == chat_channel_id
         is_in_chat_forum = (isinstance(message.channel, discord.Thread) and message.channel.parent_id == chat_forum_id)
         is_mentioned = self.bot.user in message.mentions
@@ -94,7 +103,6 @@ class AIChatCog(commands.Cog, name="AIChat"):
         if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
             return
             
-        # Each channel and each thread gets its own conversation history
         if channel_id not in self.conversations:
             self.conversations[channel_id] = self.model.start_chat(history=[])
         
@@ -105,9 +113,22 @@ class AIChatCog(commands.Cog, name="AIChat"):
                 prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
                 response = await chat.send_message_async(prompt)
                 
-                for chunk in [response.text[i:i+2000] for i in range(0, len(response.text), 2000)]:
-                    await message.reply(chunk)
+                # *** FIX IS HERE ***
+                # Check if the response has text content before trying to access it.
+                if response.parts:
+                    text_content = ''.join(part.text for part in response.parts)
+                    # Split response into chunks of 2000 characters (Discord limit)
+                    for chunk in [text_content[i:i+2000] for i in range(0, len(text_content), 2000)]:
+                        await message.reply(chunk)
+                else:
+                    # This happens if the response was blocked by safety filters.
+                    finish_reason = response.candidates[0].finish_reason if response.candidates else 'UNKNOWN'
+                    logger.warning(f"Gemini response for prompt '{prompt}' was empty. Finish Reason: {finish_reason}")
+                    await message.reply("I'm sorry, I can't respond to that. Please try a different topic. 😅")
 
+        except generation_types.StopCandidateException as e:
+             logger.warning(f"Gemini response stopped unexpectedly: {e}")
+             await message.reply("I'm sorry, I can't respond to that. Please try a different topic. 😅")
         except Exception as e:
             logger.error(f"Error during Gemini API call: {e}")
             await message.reply("😥 I'm sorry, I'm having trouble thinking right now. Please try again later.")
