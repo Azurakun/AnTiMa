@@ -13,18 +13,14 @@ AI_CONFIG_FILE = "ai_config.json"
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # The config now stores a dict per guild for channel and forum
-        # e.g., {"guild_id": {"channel": 123, "forum": 456}}
         self.ai_config = self._load_json(AI_CONFIG_FILE, {})
-        self.conversations = {}  # Store conversation history per channel/thread_id
 
-        # Configure the Gemini API
         try:
             api_key = os.environ.get("GEMINI_API_KEY")
             if not api_key:
                 raise ValueError("GEMINI_API_KEY not found in environment variables.")
             genai.configure(api_key=api_key)
-            # Add safety settings to be less restrictive, adjust as needed
+            
             self.safety_settings = {
                 'HARM_CATEGORY_HARASSMENT': 'BLOCK_NONE',
                 'HARM_CATEGORY_HATE_SPEECH': 'BLOCK_NONE',
@@ -32,7 +28,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
                 'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
             }
             self.model = genai.GenerativeModel('gemini-2.5-pro', safety_settings=self.safety_settings)
-            logger.info("Gemini AI model loaded successfully.")
+            logger.info("Gemini AI model loaded successfully in stateless mode.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
@@ -102,26 +98,20 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
         if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
             return
-            
-        if channel_id not in self.conversations:
-            self.conversations[channel_id] = self.model.start_chat(history=[])
-        
-        chat = self.conversations[channel_id]
         
         try:
             async with message.channel.typing():
                 prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
-                response = await chat.send_message_async(prompt)
                 
-                # *** FIX IS HERE ***
-                # Check if the response has text content before trying to access it.
+                # *** CHANGE IS HERE: Using stateless generation ***
+                # This sends the prompt directly without using a chat history.
+                response = await self.model.generate_content_async(prompt)
+                
                 if response.parts:
                     text_content = ''.join(part.text for part in response.parts)
-                    # Split response into chunks of 2000 characters (Discord limit)
                     for chunk in [text_content[i:i+2000] for i in range(0, len(text_content), 2000)]:
                         await message.reply(chunk)
                 else:
-                    # This happens if the response was blocked by safety filters.
                     finish_reason = response.candidates[0].finish_reason if response.candidates else 'UNKNOWN'
                     logger.warning(f"Gemini response for prompt '{prompt}' was empty. Finish Reason: {finish_reason}")
                     await message.reply("I'm sorry, I can't respond to that. Please try a different topic. 😅")
@@ -132,8 +122,6 @@ class AIChatCog(commands.Cog, name="AIChat"):
         except Exception as e:
             logger.error(f"Error during Gemini API call: {e}")
             await message.reply("😥 I'm sorry, I'm having trouble thinking right now. Please try again later.")
-            if channel_id in self.conversations:
-                del self.conversations[channel_id]
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
