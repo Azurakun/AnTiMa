@@ -31,7 +31,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
                 'HARM_CATEGORY_SEXUALLY_EXPLICIT': 'BLOCK_NONE',
                 'HARM_CATEGORY_DANGEROUS_CONTENT': 'BLOCK_NONE',
             }
-            self.model = genai.GenerativeModel('gemini-pro', safety_settings=self.safety_settings)
+            self.model = genai.GenerativeModel('gemini-2.5-pro', safety_settings=self.safety_settings)
             logger.info("Gemini AI model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
