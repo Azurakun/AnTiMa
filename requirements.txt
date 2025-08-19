@@ -4,3 +4,4 @@ flask
 aiohttp
 python-dotenv
 tzdata
+google-generativeai
