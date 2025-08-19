@@ -5,7 +5,6 @@ import logging
 import os
 import json
 import google.generativeai as genai
-from google.generativeai.types import GenerationConfig
 
 logger = logging.getLogger(__name__)
 AI_CONFIG_FILE = "ai_config.json"
@@ -72,24 +71,6 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
         self._save_json(AI_CONFIG_FILE, self.ai_config)
         await interaction.response.send_message(message, ephemeral=True)
-        
-        # --- Admin Commands to clear stuck conversations ---
-    @app_commands.command(name="clearchat", description="Clears the AI's conversation history for this channel.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def clearchat(self, interaction: discord.Interaction):
-        """Deletes the conversation history for the current channel."""
-        channel_id = interaction.channel.id
-        
-        if channel_id in self.conversations:
-            del self.conversations[channel_id]
-            message = f"✅ AI conversation history has been cleared for this channel."
-            logger.info(f"Admin cleared conversation history for channel {channel_id}")
-        else:
-            message = "ℹ️ There was no AI conversation history to clear for this channel."
-            
-        await interaction.response.send_message(message, ephemeral=True)
-
-
 
     # --- Event Listener for Messages ---
     @commands.Cog.listener()
@@ -100,10 +81,12 @@ class AIChatCog(commands.Cog, name="AIChat"):
         guild_id = str(message.guild.id)
         channel_id = message.channel.id
         
+        # Get the guild's AI config
         guild_config = self.ai_config.get(guild_id, {})
         chat_channel_id = guild_config.get("channel")
         chat_forum_id = guild_config.get("forum")
 
+        # Determine if the bot should reply
         is_in_chat_channel = channel_id == chat_channel_id
         is_in_chat_forum = (isinstance(message.channel, discord.Thread) and message.channel.parent_id == chat_forum_id)
         is_mentioned = self.bot.user in message.mentions
@@ -116,56 +99,20 @@ class AIChatCog(commands.Cog, name="AIChat"):
             self.conversations[channel_id] = self.model.start_chat(history=[])
         
         chat = self.conversations[channel_id]
-
-        # *** FIX 1: Prune the conversation history to prevent context overflow ***
-        # Keep the last 20 messages (10 user, 10 model). Adjust as needed.
-        if len(chat.history) > 20:
-            # Keep the last 20 items from the history
-            chat.history = chat.history[-20:]
-            logger.info(f"Pruned conversation history for channel {channel_id}")
         
         try:
             async with message.channel.typing():
                 prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
-
-                # *** FIX 2: Handle empty prompts gracefully ***
-                if not prompt:
-                    await message.reply("👋 Hello! Did you mean to ask me something? Just @mention me with your question.", mention_author=False)
-                    return
+                response = await chat.send_message_async(prompt)
                 
-                generation_config = GenerationConfig(max_output_tokens=480)
-
-                response = await chat.send_message_async(
-                    prompt,
-                    generation_config=generation_config
-                )
-                
-                # The response is now guaranteed to be short enough for one message.
-                await message.reply(response.text)
+                for chunk in [response.text[i:i+2000] for i in range(0, len(response.text), 2000)]:
+                    await message.reply(chunk)
 
         except Exception as e:
-            # It's good practice to log the actual content that caused the error for debugging
             logger.error(f"Error during Gemini API call: {e}")
-            logger.error(f"Failed prompt for channel {channel_id}: '{prompt}'")
-            
-            # This is a better way to handle the specific error from the log
-            # The 'parts' attribute is empty when no content is generated
-            if "response.text" in str(e):
-                 # You can access the feedback to see the exact reason (e.g., safety)
-                try:
-                    logger.error(f"Gemini response feedback: {response.prompt_feedback}")
-                except Exception:
-                     # This will fail if 'response' doesn't even exist, which is fine
-                     pass
-                await message.reply("😥 I'm sorry, I couldn't generate a response. This might be due to a safety filter or a configuration issue. Please try rephrasing your question.")
-            else:
-                 await message.reply("😥 I'm sorry, I'm having trouble thinking right now. Please try again later.")
-            
-            # It's often better not to delete the conversation history here,
-            # as the issue might be a one-off problem with the prompt itself.
-            # If errors persist, then clearing history might be a manual option.
-            # if channel_id in self.conversations:
-            #     del self.conversations[channel_id]
+            await message.reply("😥 I'm sorry, I'm having trouble thinking right now. Please try again later.")
+            if channel_id in self.conversations:
+                del self.conversations[channel_id]
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
