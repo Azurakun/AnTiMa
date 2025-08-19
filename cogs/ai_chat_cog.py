@@ -72,6 +72,24 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
         self._save_json(AI_CONFIG_FILE, self.ai_config)
         await interaction.response.send_message(message, ephemeral=True)
+        
+        # --- Admin Commands to clear stuck conversations ---
+    @app_commands.command(name="clearchat", description="Clears the AI's conversation history for this channel.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def clearchat(self, interaction: discord.Interaction):
+        """Deletes the conversation history for the current channel."""
+        channel_id = interaction.channel.id
+        
+        if channel_id in self.conversations:
+            del self.conversations[channel_id]
+            message = f"✅ AI conversation history has been cleared for this channel."
+            logger.info(f"Admin cleared conversation history for channel {channel_id}")
+        else:
+            message = "ℹ️ There was no AI conversation history to clear for this channel."
+            
+        await interaction.response.send_message(message, ephemeral=True)
+
+
 
     # --- Event Listener for Messages ---
     @commands.Cog.listener()
