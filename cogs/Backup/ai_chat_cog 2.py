@@ -8,34 +8,25 @@ import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 AI_CONFIG_FILE = "ai_config.json"
-SYSTEM_PROMPT_FILE = "system_prompt.txt" # --- NEW ---
 
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # The config now stores a dict per guild for channel and forum
+        # e.g., {"guild_id": {"channel": 123, "forum": 456}}
         self.ai_config = self._load_json(AI_CONFIG_FILE, {})
-        self.conversations = {}
-        
-        # --- NEW --- Load the personality from the file
-        self.system_prompt = self._load_system_prompt()
-        if self.system_prompt:
-            logger.info(f"Loaded system prompt from {SYSTEM_PROMPT_FILE}")
+        self.conversations = {}  # Store conversation history per channel/thread_id
 
+        # Configure the Gemini API
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            self.model = genai.GenerativeModel('gemini-2.5-flash') # Changed to a more recent model, you can change it back
             logger.info("Gemini AI model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
 
-    # --- NEW METHOD --- to load the personality from a file
-    def _load_system_prompt(self):
-        if os.path.exists(SYSTEM_PROMPT_FILE):
-            with open(SYSTEM_PROMPT_FILE, "r", encoding="utf-8") as f:
-                return f.read().strip()
-        return None
-
+    # --- Data Persistence ---
     def _load_json(self, filename: str, default: dict):
         if os.path.exists(filename):
             with open(filename, "r") as f:
@@ -46,6 +37,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
         with open(filename, "w") as f:
             json.dump(data, f, indent=4)
             
+    # --- Admin Commands to set chat locations ---
     @app_commands.command(name="setchatchannel", description="Sets a text channel for open conversation with the AI.")
     @app_commands.describe(channel="The channel where the bot will reply to all messages.")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -80,6 +72,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
         self._save_json(AI_CONFIG_FILE, self.ai_config)
         await interaction.response.send_message(message, ephemeral=True)
 
+    # --- Event Listener for Messages ---
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or self.model is None:
@@ -88,10 +81,12 @@ class AIChatCog(commands.Cog, name="AIChat"):
         guild_id = str(message.guild.id)
         channel_id = message.channel.id
         
+        # Get the guild's AI config
         guild_config = self.ai_config.get(guild_id, {})
         chat_channel_id = guild_config.get("channel")
         chat_forum_id = guild_config.get("forum")
 
+        # Determine if the bot should reply
         is_in_chat_channel = channel_id == chat_channel_id
         is_in_chat_forum = (isinstance(message.channel, discord.Thread) and message.channel.parent_id == chat_forum_id)
         is_mentioned = self.bot.user in message.mentions
@@ -99,16 +94,9 @@ class AIChatCog(commands.Cog, name="AIChat"):
         if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
             return
             
-        # --- MODIFIED SECTION --- to inject the personality at the start
+        # Each channel and each thread gets its own conversation history
         if channel_id not in self.conversations:
-            initial_history = []
-            if self.system_prompt:
-                # This pre-loads the conversation with the personality instructions
-                initial_history = [
-                    {'role': 'user', 'parts': [self.system_prompt]},
-                    {'role': 'model', 'parts': ["Understood. I will act as instructed."]}
-                ]
-            self.conversations[channel_id] = self.model.start_chat(history=initial_history)
+            self.conversations[channel_id] = self.model.start_chat(history=[])
         
         chat = self.conversations[channel_id]
         
@@ -117,8 +105,10 @@ class AIChatCog(commands.Cog, name="AIChat"):
                 prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
                 response = await chat.send_message_async(prompt)
                 
+                # Limit the output to Discord's 2000 character limit by truncating it.
                 final_text = response.text[:2000]
 
+                # Ensure the message is not empty before sending
                 if final_text:
                     await message.reply(final_text)
 
