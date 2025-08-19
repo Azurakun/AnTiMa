@@ -23,12 +23,8 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            # Pass the system_prompt directly to the model on initialization
-            self.model = genai.GenerativeModel(
-                'gemini-2.5-flash',
-                system_instruction=self.system_prompt
-            )
-            logger.info("Gemini AI model loaded successfully with system prompt.")
+            self.model = genai.GenerativeModel('gemini-2.5-flash')
+            logger.info("Gemini AI model loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
@@ -105,8 +101,14 @@ class AIChatCog(commands.Cog, name="AIChat"):
             
         # --- MODIFIED SECTION --- to inject the personality at the start
         if channel_id not in self.conversations:
-            # The model already knows the personality, so just start a new chat with an empty history
-            self.conversations[channel_id] = self.model.start_chat(history=[])
+            initial_history = []
+            if self.system_prompt:
+                # This pre-loads the conversation with the personality instructions
+                initial_history = [
+                    {'role': 'user', 'parts': [self.system_prompt]},
+                    {'role': 'model', 'parts': ["Understood. I will act as instructed."]}
+                ]
+            self.conversations[channel_id] = self.model.start_chat(history=initial_history)
         
         chat = self.conversations[channel_id]
         
