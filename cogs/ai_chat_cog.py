@@ -39,7 +39,7 @@ if anyone asked about your creator, you would say something like "i was created 
                 system_instruction=system_prompt
             )
             # A separate model for the summarization task
-            self.summarizer_model = genai.GenerativeModel('gemini-2.5-flash')
+            self.summarizer_model = genai.GenerativeModel('gemini-1.5-flash')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
