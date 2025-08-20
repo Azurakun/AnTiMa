@@ -156,10 +156,15 @@ if anyone asked about your creator, you would say something like "i was created 
         async for msg in message.channel.history(limit=MAX_HISTORY):
             if msg.id == message.id: # Don't include the current message in history
                 continue
+            
+            # MODIFIED: Get the author's display name (nickname or username)
+            author_name = msg.author.display_name
+            
             if msg.author == self.bot.user:
                 history.append({'role': 'model', 'parts': [msg.content]})
             else:
-                history.append({'role': 'user', 'parts': [msg.clean_content]})
+                # MODIFIED: Prepend the author's name to the message for context
+                history.append({'role': 'user', 'parts': [f"{author_name}: {msg.clean_content}"]})
         history.reverse()
         
         chat = self.model.start_chat(history=history)
@@ -167,9 +172,12 @@ if anyone asked about your creator, you would say something like "i was created 
         try:
             async with message.channel.typing():
                 prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-                final_prompt = prompt
+                
+                # NEW: Format the current prompt with the author's name
+                current_prompt_with_author = f"{message.author.display_name}: {prompt}"
+                final_prompt = current_prompt_with_author # Set default prompt
 
-                # --- NEW SECTION: Fetch and inject CSV data ---
+                # --- Section for fetching and injecting CSV data ---
                 csv_url = guild_config.get("csv_url")
                 if csv_url:
                     csv_data = await self._fetch_and_parse_csv(csv_url)
@@ -179,12 +187,13 @@ if anyone asked about your creator, you would say something like "i was created 
                         if len(csv_string) > 3000: # Limit context size
                            csv_string = csv_string[:3000] + "\n... (data truncated)"
                         
+                        # MODIFIED: Inject CSV context and the user's formatted prompt
                         final_prompt = (
                             "as a side note, use the following data from a CSV as context to help you answer. don't mention the file or the data unless the user asks about it.\n"
                             f"```csv\n{csv_string}\n```\n\n"
-                            f"okay, with that in mind, here's what the user said: \"{prompt}\""
+                            f"okay, with that in mind, here's what the user said: \"{current_prompt_with_author}\""
                         )
-                # --- END OF NEW SECTION ---
+                # --- End of section ---
 
                 response = await chat.send_message_async(final_prompt)
                 
