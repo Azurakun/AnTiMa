@@ -1,5 +1,4 @@
-# requirements.txt
-py-cord[voice] # This replaces discord.py and includes voice support
+discord.py
 requests
 flask
 aiohttp
@@ -9,4 +8,5 @@ google-generativeai
 pymongo
 dnspython
 yt-dlp
+PyNaCl
 spotipy
