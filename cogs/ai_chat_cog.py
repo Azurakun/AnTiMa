@@ -5,8 +5,6 @@ import logging
 import os
 import google.generativeai as genai
 import aiohttp
-import csv
-import io
 
 # Import the MongoDB collections, including the new one for memories
 from utils.db import ai_config_collection, ai_memories_collection
@@ -41,7 +39,7 @@ if anyone asked about your creator, you would say something like "i was created 
                 system_instruction=system_prompt
             )
             # A separate model for the summarization task
-            self.summarizer_model = genai.GenerativeModel('gemini-1.5-flash')
+            self.summarizer_model = genai.GenerativeModel('gemini-2.5-flash')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -84,20 +82,6 @@ if anyone asked about your creator, you would say something like "i was created 
         except Exception as e:
             logger.error(f"Failed to summarize and save memory for channel {channel_id}: {e}")
 
-    # --- CSV Helper ---
-    async def _fetch_and_parse_csv(self, url: str) -> list | None:
-        try:
-            async with self.http_session.get(url) as response:
-                if response.status == 200:
-                    text = await response.text()
-                    string_file = io.StringIO(text)
-                    reader = csv.reader(string_file)
-                    return list(reader)
-                return None
-        except Exception as e:
-            logger.error(f"Error fetching CSV: {e}")
-            return None
-
     # --- Commands (No changes needed here) ---
     @app_commands.command(name="setchatchannel", description="Sets a text channel for open conversation with the AI.")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -120,20 +104,6 @@ if anyone asked about your creator, you would say something like "i was created 
         else:
             ai_config_collection.update_one({"_id": guild_id}, {"$unset": {"forum": ""}})
             await interaction.response.send_message("ℹ️ AI chat forum has been cleared.", ephemeral=True)
-
-    @app_commands.command(name="setcsv", description="Sets a dynamic CSV file URL for the AI to use as context.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def setcsv(self, interaction: discord.Interaction, url: str = None):
-        guild_id = str(interaction.guild.id)
-        if url:
-            if not url.startswith(("http://", "https://")):
-                await interaction.response.send_message("❌ Invalid URL format.", ephemeral=True)
-                return
-            ai_config_collection.update_one({"_id": guild_id}, {"$set": {"csv_url": url}}, upsert=True)
-            await interaction.response.send_message(f"✅ CSV context URL has been set.", ephemeral=True)
-        else:
-            ai_config_collection.update_one({"_id": guild_id}, {"$unset": {"csv_url": ""}})
-            await interaction.response.send_message("ℹ️ CSV context URL has been cleared.", ephemeral=True)
 
     # --- Message Listener (Modified for Memory) ---
     @commands.Cog.listener()
@@ -182,21 +152,9 @@ if anyone asked about your creator, you would say something like "i was created 
                         f"do not mention this summary unless the user asks about past events. just use it as background knowledge.\n"
                         f"<memory>\n{memory_summary}\n</memory>\n\n"
                     )
-
-                # --- Fetch and Inject CSV data ---
-                csv_context = ""
-                csv_url = guild_config.get("csv_url")
-                if csv_url:
-                    csv_data = await self._fetch_and_parse_csv(csv_url)
-                    if csv_data:
-                        csv_string = "\n".join([",".join(row) for row in csv_data])[:3000]
-                        csv_context = (
-                            "also, use this data from a CSV file to help you answer. don't mention the file unless asked.\n"
-                            f"<csv_data>\n{csv_string}\n</csv_data>\n\n"
-                        )
                 
                 # Combine all parts for the final prompt
-                final_prompt = f"{memory_context}{csv_context}now, here is the current message from the user:\n{current_prompt_with_author}"
+                final_prompt = f"{memory_context}now, here is the current message from the user:\n{current_prompt_with_author}"
 
                 response = await chat.send_message_async(final_prompt)
                 
