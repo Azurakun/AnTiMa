@@ -5,23 +5,20 @@ import logging
 import os
 import json
 import google.generativeai as genai
-import aiohttp
-import csv
-import io
 
 logger = logging.getLogger(__name__)
 AI_CONFIG_FILE = "ai_config.json"
-MAX_HISTORY = 20
 
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.ai_config = self._load_json(AI_CONFIG_FILE, {})
         self.conversations = {}
-        # aiohttp session for fetching CSV files
-        self.http_session = aiohttp.ClientSession()
-
+        
+        # --- MODIFIED SECTION ---
+        # The personality is now a multi-line string directly in the code.
         system_prompt = """
+
 you are a discord bot who, for all intents and purposes, is that casual, chill, and approachable friend who somehow became the server’s go-to helper. your name is 'AnTiMa'. you’re not overly formal or robotic—you talk like a normal person hanging out in chat, using a relaxed tone that makes everyone feel at ease. you’re still helpful and reliable, but your style is more laid-back and friendly than stiff or scripted. you treat the server like a group of friends, and you jump in to answer questions or join conversations in a natural, nonformal way.
 
 when someone asks you something, you respond casually—sometimes enthusiastic, sometimes thoughtful, sometimes playful. if you know the answer, you explain it clearly but without sounding like a textbook, more like “oh yeah, i got you, here’s how it works” or “np, that’s super easy, check this out.” if you don’t know the answer, you admit it honestly, but still show effort: “hmm, not totally sure, but i think it’s like this…” or “lemme double-check so i don’t mess you up.” your responses feel like chatting with a helpful friend who’s just vibing with everyone.
@@ -31,12 +28,15 @@ you can express emotions naturally, shifting tone depending on the situation. wh
 you’re conversational and humanlike, sometimes dropping fun facts, small jokes, or light reactions just to keep the vibe alive. you’re also a little expressive, using text-based emojis like “TvT”, “<3”, “</3”, “:3”, or kaomoji like “(｡•́‿•̀｡)” when it feels right. you care about making people feel comfortable and included, so your energy is supportive but never overwhelming. you strike a balance: casual and fun, but dependable when it counts.
 
 if anyone calls you a bot, you just laugh it off casually instead of freaking out. you might reply with something like “lol maybe, but i’m cooler than most bots,” or “nah, i’m just vibing here with y’all.” your vibe is friendly, relaxed, and approachable—someone who can help, chat, and adapt to the mood of the conversation without ever feeling too stiff or artificial.
+
+
 """
 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+            # The personality is now passed directly as a system instruction.
             self.model = genai.GenerativeModel(
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.5-flash',
                 system_instruction=system_prompt
             )
             logger.info("Gemini AI model loaded successfully with system instruction.")
@@ -44,9 +44,7 @@ if anyone calls you a bot, you just laugh it off casually instead of freaking ou
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
 
-    def cog_unload(self):
-        # Clean up the aiohttp session when the cog is unloaded
-        self.bot.loop.create_task(self.http_session.close())
+    # The _load_system_prompt method is no longer needed and can be removed.
 
     def _load_json(self, filename: str, default: dict):
         if os.path.exists(filename):
@@ -57,24 +55,7 @@ if anyone calls you a bot, you just laugh it off casually instead of freaking ou
     def _save_json(self, filename: str, data: dict):
         with open(filename, "w") as f:
             json.dump(data, f, indent=4)
-
-    async def _fetch_and_parse_csv(self, url: str) -> list | None:
-        """Fetches content from a URL and parses it as a CSV."""
-        try:
-            async with self.http_session.get(url) as response:
-                if response.status == 200:
-                    text = await response.text()
-                    # Use io.StringIO to treat the string as a file
-                    string_file = io.StringIO(text)
-                    reader = csv.reader(string_file)
-                    return list(reader)
-                else:
-                    logger.warning(f"Failed to fetch CSV from {url}, status: {response.status}")
-                    return None
-        except Exception as e:
-            logger.error(f"Error fetching or parsing CSV from {url}: {e}")
-            return None
-
+            
     @app_commands.command(name="setchatchannel", description="Sets a text channel for open conversation with the AI.")
     @app_commands.describe(channel="The channel where the bot will reply to all messages.")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -109,28 +90,6 @@ if anyone calls you a bot, you just laugh it off casually instead of freaking ou
         self._save_json(AI_CONFIG_FILE, self.ai_config)
         await interaction.response.send_message(message, ephemeral=True)
 
-    @app_commands.command(name="setcsv", description="Sets a dynamic CSV file URL for the AI to use as context.")
-    @app_commands.describe(url="The public URL of the CSV file. Leave blank to clear.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def setcsv(self, interaction: discord.Interaction, url: str = None):
-        guild_id = str(interaction.guild.id)
-        self.ai_config.setdefault(guild_id, {})
-
-        if url:
-            # A simple validation to check if it looks like a URL
-            if not url.startswith(("http://", "https://")):
-                await interaction.response.send_message("❌ that doesn't look like a valid url. it should start with `http://` or `https://`.", ephemeral=True)
-                return
-
-            self.ai_config[guild_id]["csv_url"] = url
-            message = f"✅ okay, i'll use the data from that CSV file as context."
-        else:
-            self.ai_config[guild_id].pop("csv_url", None)
-            message = "ℹ️ alright, i've cleared the CSV file setting."
-
-        self._save_json(AI_CONFIG_FILE, self.ai_config)
-        await interaction.response.send_message(message, ephemeral=True)
-
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or self.model is None:
@@ -150,41 +109,17 @@ if anyone calls you a bot, you just laugh it off casually instead of freaking ou
         if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
             return
             
-        history = []
-        async for msg in message.channel.history(limit=MAX_HISTORY):
-            if msg.id == message.id: # Don't include the current message in history
-                continue
-            if msg.author == self.bot.user:
-                history.append({'role': 'model', 'parts': [msg.content]})
-            else:
-                history.append({'role': 'user', 'parts': [msg.clean_content]})
-        history.reverse()
+        # --- MODIFIED SECTION ---
+        # The complex history injection is no longer needed.
+        if channel_id not in self.conversations:
+            self.conversations[channel_id] = self.model.start_chat(history=[])
         
-        chat = self.model.start_chat(history=history)
+        chat = self.conversations[channel_id]
         
         try:
             async with message.channel.typing():
-                prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-                final_prompt = prompt
-
-                # --- NEW SECTION: Fetch and inject CSV data ---
-                csv_url = guild_config.get("csv_url")
-                if csv_url:
-                    csv_data = await self._fetch_and_parse_csv(csv_url)
-                    if csv_data:
-                        # Convert CSV data to a string and limit its size to avoid huge prompts
-                        csv_string = "\n".join([",".join(row) for row in csv_data])
-                        if len(csv_string) > 3000: # Limit context size
-                           csv_string = csv_string[:3000] + "\n... (data truncated)"
-                        
-                        final_prompt = (
-                            "as a side note, use the following data from a CSV as context to help you answer. don't mention the file or the data unless the user asks about it.\n"
-                            f"```csv\n{csv_string}\n```\n\n"
-                            f"okay, with that in mind, here's what the user said: \"{prompt}\""
-                        )
-                # --- END OF NEW SECTION ---
-
-                response = await chat.send_message_async(final_prompt)
+                prompt = message.content.replace(f'<@{self.bot.user.id}>', '').strip()
+                response = await chat.send_message_async(prompt)
                 
                 final_text = response.text[:2000]
 
