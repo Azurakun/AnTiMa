@@ -37,7 +37,7 @@ if anyone asked about your creator, you would say something like "i was created 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
             self.model = genai.GenerativeModel(
-                model_name='gemini-1.5-flash',
+                model_name='gemini-2.5-flash',
                 system_instruction=system_prompt
             )
             # A separate model for the summarization task
