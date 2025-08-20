@@ -1,43 +1,27 @@
+# cogs/reminders_cog.py
 import discord
 from discord import app_commands
 from discord.ext import commands
 import logging
-import json
-import os
 import asyncio
 import datetime
 import uuid
 import re
 from zoneinfo import ZoneInfo, available_timezones
+from utils.db import reminders_collection, user_timezones_collection # Import the collections
 
 logger = logging.getLogger(__name__)
-REMINDERS_FILE = "reminders.json"
-TIMEZONES_FILE = "user_timezones.json"
 
 class RemindersCog(commands.Cog, name="Reminders"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.user_timezones = self._load_json(TIMEZONES_FILE, {})
-        self.reminders = self._load_json(REMINDERS_FILE, [])
         self.bot.loop.create_task(self.initialize_reminders())
 
-    # --- Data Persistence ---
-    def _load_json(self, filename: str, default: dict | list):
-        if os.path.exists(filename):
-            with open(filename, "r") as f:
-                return json.load(f)
-        return default
-
-    def _save_json(self, filename: str, data: dict | list):
-        with open(filename, "w") as f:
-            json.dump(data, f, indent=4)
-
-    # --- Reminder Initialization ---
     async def initialize_reminders(self):
-        """On bot startup, load and schedule all pending reminders."""
+        """On bot startup, load and schedule all pending reminders from the database."""
         await self.bot.wait_until_ready()
-        logger.info("Initializing pending reminders...")
-        pending_reminders = list(self.reminders)
+        logger.info("Initializing pending reminders from MongoDB...")
+        pending_reminders = list(reminders_collection.find())
         for reminder in pending_reminders:
             await self._schedule_reminder(reminder)
         logger.info(f"Scheduled {len(pending_reminders)} reminders.")
@@ -52,7 +36,7 @@ class RemindersCog(commands.Cog, name="Reminders"):
         if delay > 0:
             self.bot.loop.create_task(self._send_reminder_task(delay, reminder))
         else:
-            logger.warning(f"Reminder {reminder['id']} was in the past. Sending now.")
+            logger.warning(f"Reminder {reminder['_id']} was in the past. Sending now.")
             self.bot.loop.create_task(self._send_reminder_task(0, reminder))
 
     async def _send_reminder_task(self, delay: float, reminder: dict):
@@ -63,8 +47,7 @@ class RemindersCog(commands.Cog, name="Reminders"):
         user = self.bot.get_user(reminder["user_id"])
         if not user:
             logger.error(f"Could not find user {reminder['user_id']}.")
-            self.reminders.remove(reminder)
-            self._save_json(REMINDERS_FILE, self.reminders)
+            reminders_collection.delete_one({"_id": reminder["_id"]})
             return
         
         for i in range(reminder["repeat"]):
@@ -82,11 +65,9 @@ class RemindersCog(commands.Cog, name="Reminders"):
                 logger.error(f"Cannot send DM to user {user.name}.")
                 break
 
-        if reminder in self.reminders:
-            self.reminders.remove(reminder)
-            self._save_json(REMINDERS_FILE, self.reminders)
+        reminders_collection.delete_one({"_id": reminder["_id"]})
 
-    # --- Time Parsing Helper ---
+    # --- Time Parsing Helper (no changes needed) ---
     def _parse_time(self, time_str: str, user_tz: ZoneInfo) -> datetime.datetime | None:
         """Parses a flexible time string into a timezone-aware datetime object."""
         now = datetime.datetime.now(user_tz)
@@ -109,7 +90,7 @@ class RemindersCog(commands.Cog, name="Reminders"):
         except ValueError:
             return None
 
-    # --- Autocomplete ---
+    # --- Autocomplete (no changes needed) ---
     async def timezone_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         all_timezones = available_timezones()
         if not current:
@@ -132,22 +113,29 @@ class RemindersCog(commands.Cog, name="Reminders"):
             return
 
         user_id = str(interaction.user.id)
-        self.user_timezones[user_id] = timezone
-        self._save_json(TIMEZONES_FILE, self.user_timezones)
+        # Update or insert the user's timezone in the database
+        user_timezones_collection.update_one(
+            {"_id": user_id},
+            {"$set": {"timezone": timezone}},
+            upsert=True
+        )
         await interaction.response.send_message(f"✅ Your timezone has been set to **{timezone}**.", ephemeral=True)
 
     @app_commands.command(name="remindme", description="Sets a personal reminder in your local time.")
     @app_commands.describe(when="When to be reminded (e.g., '10m', '2h30m', or '16:30').", message="What to be reminded about.", repeat="How many times to notify you. Default is 1.")
     async def remindme(self, interaction: discord.Interaction, when: str, message: str, repeat: int = 1):
         user_id = str(interaction.user.id)
-        if user_id not in self.user_timezones:
+        
+        # Get the user's timezone from the database
+        user_timezone_data = user_timezones_collection.find_one({"_id": user_id})
+        if not user_timezone_data:
             await interaction.response.send_message(
                 "️️️⚠️ **Please set your timezone first!** Use the `/settimezone` command before setting a reminder.",
                 ephemeral=True
             )
             return
 
-        user_tz_str = self.user_timezones[user_id]
+        user_tz_str = user_timezone_data["timezone"]
         user_tz = ZoneInfo(user_tz_str)
         remind_time = self._parse_time(when, user_tz)
 
@@ -156,16 +144,17 @@ class RemindersCog(commands.Cog, name="Reminders"):
             return
 
         reminder = {
-            "id": str(uuid.uuid4()),
             "user_id": interaction.user.id,
             "message": message,
             "remind_time_iso": remind_time.isoformat(),
             "repeat": max(1, min(5, repeat)) # Clamped between 1 and 5
         }
 
-        self.reminders.append(reminder)
-        self._save_json(REMINDERS_FILE, self.reminders)
-        await self._schedule_reminder(reminder)
+        # Insert the new reminder into the database
+        result = reminders_collection.insert_one(reminder)
+        # Get the reminder back with its new ID for scheduling
+        new_reminder = reminders_collection.find_one({"_id": result.inserted_id})
+        await self._schedule_reminder(new_reminder)
 
         await interaction.response.send_message(
             f"✅ **Reminder set!** I will remind you about `{message}` at {discord.utils.format_dt(remind_time, style='T')} your time.",

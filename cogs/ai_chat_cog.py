@@ -3,20 +3,20 @@ from discord import app_commands
 from discord.ext import commands
 import logging
 import os
-import json
 import google.generativeai as genai
 import aiohttp
 import csv
 import io
 
+# Import the MongoDB collection from your db utility file
+from utils.db import ai_config_collection
+
 logger = logging.getLogger(__name__)
-AI_CONFIG_FILE = "ai_config.json"
 MAX_HISTORY = 20
 
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.ai_config = self._load_json(AI_CONFIG_FILE, {})
         self.conversations = {}
         # aiohttp session for fetching CSV files
         self.http_session = aiohttp.ClientSession()
@@ -32,7 +32,7 @@ you’re conversational and humanlike, sometimes dropping fun facts, small jokes
 
 if anyone calls you a bot, you just laugh it off casually instead of freaking out. you might reply with something like “lol maybe, but i’m cooler than most bots,” or “nah, i’m just vibing here with y’all.” your vibe is friendly, relaxed, and approachable—someone who can help, chat, and adapt to the mood of the conversation without ever feeling too stiff or artificial.
 
-if anyone asked about your creator, you would say something like "i was created by a cool person named 'アズラ'　or 'Azura' and mention a discord user named @azura4678 on the server
+if anyone asked about your creator, you would say something like "i was created by a cool person named 'アズラ'or 'Azura' and mention a discord user named @azura4678 on the server
 """
 
         try:
@@ -49,16 +49,6 @@ if anyone asked about your creator, you would say something like "i was created 
     def cog_unload(self):
         # Clean up the aiohttp session when the cog is unloaded
         self.bot.loop.create_task(self.http_session.close())
-
-    def _load_json(self, filename: str, default: dict):
-        if os.path.exists(filename):
-            with open(filename, "r") as f:
-                return json.load(f)
-        return default
-
-    def _save_json(self, filename: str, data: dict):
-        with open(filename, "w") as f:
-            json.dump(data, f, indent=4)
 
     async def _fetch_and_parse_csv(self, url: str) -> list | None:
         """Fetches content from a URL and parses it as a CSV."""
@@ -82,16 +72,23 @@ if anyone asked about your creator, you would say something like "i was created 
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setchatchannel(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
         guild_id = str(interaction.guild.id)
-        self.ai_config.setdefault(guild_id, {})
         
         if channel:
-            self.ai_config[guild_id]["channel"] = channel.id
+            # Update or insert the chat channel ID for the guild
+            ai_config_collection.update_one(
+                {"_id": guild_id},
+                {"$set": {"channel": channel.id}},
+                upsert=True
+            )
             message = f"✅ AI chat channel has been set to {channel.mention}."
         else:
-            self.ai_config[guild_id].pop("channel", None)
+            # Remove the chat channel setting for the guild
+            ai_config_collection.update_one(
+                {"_id": guild_id},
+                {"$unset": {"channel": ""}}
+            )
             message = "ℹ️ AI chat channel has been cleared."
             
-        self._save_json(AI_CONFIG_FILE, self.ai_config)
         await interaction.response.send_message(message, ephemeral=True)
 
     @app_commands.command(name="setchatforum", description="Sets a forum for open conversation with the AI.")
@@ -99,16 +96,21 @@ if anyone asked about your creator, you would say something like "i was created 
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setchatforum(self, interaction: discord.Interaction, forum: discord.ForumChannel = None):
         guild_id = str(interaction.guild.id)
-        self.ai_config.setdefault(guild_id, {})
 
         if forum:
-            self.ai_config[guild_id]["forum"] = forum.id
+            ai_config_collection.update_one(
+                {"_id": guild_id},
+                {"$set": {"forum": forum.id}},
+                upsert=True
+            )
             message = f"✅ AI chat forum has been set to {forum.mention}."
         else:
-            self.ai_config[guild_id].pop("forum", None)
+            ai_config_collection.update_one(
+                {"_id": guild_id},
+                {"$unset": {"forum": ""}}
+            )
             message = "ℹ️ AI chat forum has been cleared."
 
-        self._save_json(AI_CONFIG_FILE, self.ai_config)
         await interaction.response.send_message(message, ephemeral=True)
 
     @app_commands.command(name="setcsv", description="Sets a dynamic CSV file URL for the AI to use as context.")
@@ -116,21 +118,25 @@ if anyone asked about your creator, you would say something like "i was created 
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setcsv(self, interaction: discord.Interaction, url: str = None):
         guild_id = str(interaction.guild.id)
-        self.ai_config.setdefault(guild_id, {})
 
         if url:
-            # A simple validation to check if it looks like a URL
             if not url.startswith(("http://", "https://")):
                 await interaction.response.send_message("❌ that doesn't look like a valid url. it should start with `http://` or `https://`.", ephemeral=True)
                 return
 
-            self.ai_config[guild_id]["csv_url"] = url
+            ai_config_collection.update_one(
+                {"_id": guild_id},
+                {"$set": {"csv_url": url}},
+                upsert=True
+            )
             message = f"✅ okay, i'll use the data from that CSV file as context."
         else:
-            self.ai_config[guild_id].pop("csv_url", None)
+            ai_config_collection.update_one(
+                {"_id": guild_id},
+                {"$unset": {"csv_url": ""}}
+            )
             message = "ℹ️ alright, i've cleared the CSV file setting."
 
-        self._save_json(AI_CONFIG_FILE, self.ai_config)
         await interaction.response.send_message(message, ephemeral=True)
 
     @commands.Cog.listener()
@@ -141,7 +147,8 @@ if anyone asked about your creator, you would say something like "i was created 
         guild_id = str(message.guild.id)
         channel_id = message.channel.id
         
-        guild_config = self.ai_config.get(guild_id, {})
+        # Fetch the guild's configuration from MongoDB
+        guild_config = ai_config_collection.find_one({"_id": guild_id}) or {}
         chat_channel_id = guild_config.get("channel")
         chat_forum_id = guild_config.get("forum")
 
@@ -154,16 +161,14 @@ if anyone asked about your creator, you would say something like "i was created 
             
         history = []
         async for msg in message.channel.history(limit=MAX_HISTORY):
-            if msg.id == message.id: # Don't include the current message in history
+            if msg.id == message.id:
                 continue
             
-            # MODIFIED: Get the author's display name (nickname or username)
             author_name = msg.author.display_name
             
             if msg.author == self.bot.user:
                 history.append({'role': 'model', 'parts': [msg.content]})
             else:
-                # MODIFIED: Prepend the author's name to the message for context
                 history.append({'role': 'user', 'parts': [f"{author_name}: {msg.clean_content}"]})
         history.reverse()
         
@@ -173,27 +178,22 @@ if anyone asked about your creator, you would say something like "i was created 
             async with message.channel.typing():
                 prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
                 
-                # NEW: Format the current prompt with the author's name
                 current_prompt_with_author = f"{message.author.display_name}: {prompt}"
-                final_prompt = current_prompt_with_author # Set default prompt
+                final_prompt = current_prompt_with_author
 
-                # --- Section for fetching and injecting CSV data ---
                 csv_url = guild_config.get("csv_url")
                 if csv_url:
                     csv_data = await self._fetch_and_parse_csv(csv_url)
                     if csv_data:
-                        # Convert CSV data to a string and limit its size to avoid huge prompts
                         csv_string = "\n".join([",".join(row) for row in csv_data])
-                        if len(csv_string) > 3000: # Limit context size
+                        if len(csv_string) > 3000:
                            csv_string = csv_string[:3000] + "\n... (data truncated)"
                         
-                        # MODIFIED: Inject CSV context and the user's formatted prompt
                         final_prompt = (
                             "as a side note, use the following data from a CSV as context to help you answer. don't mention the file or the data unless the user asks about it.\n"
                             f"```csv\n{csv_string}\n```\n\n"
                             f"okay, with that in mind, here's what the user said: \"{current_prompt_with_author}\""
                         )
-                # --- End of section ---
 
                 response = await chat.send_message_async(final_prompt)
                 
