@@ -14,7 +14,6 @@ yt_dlp.utils.bug_reports_message = lambda: ''
 logger = logging.getLogger(__name__)
 
 # --- FFMPEG options for streaming ---
-# Keep your options dictionary as is
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
@@ -37,6 +36,7 @@ YTDL_FORMAT_OPTIONS = {
 
 ytdl = yt_dlp.YoutubeDL(YTDL_FORMAT_OPTIONS)
 
+
 class YTDLSource(discord.PCMVolumeTransformer):
     """Represents a YTDL audio source, handling the data and FFmpeg stream."""
     def __init__(self, source, *, data, volume=0.5):
@@ -46,6 +46,7 @@ class YTDLSource(discord.PCMVolumeTransformer):
         self.url = data.get('webpage_url')
         self.duration = data.get('duration_string')
         self.uploader = data.get('uploader')
+
 
 class MusicCog(commands.Cog, name="Music"):
     def __init__(self, bot: commands.Bot):
@@ -80,13 +81,9 @@ class MusicCog(commands.Cog, name="Music"):
 
         data = state['queue'].pop(0)
         try:
-            # MODIFIED LINE: Explicitly pass the options
-            source = YTDLSource(discord.FFmpegPCMAudio(
-                data['url'],
-                before_options=FFMPEG_OPTIONS['before_options'],
-                options=FFMPEG_OPTIONS['options']
-            ), data=data)
-
+            source = YTDLSource(discord.FFmpegPCMAudio(data['url'], **FFMPEG_OPTIONS), data=data)
+            
+            # MODIFIED LINE: Use a proper function for the 'after' callback
             guild.voice_client.play(source, after=lambda e: self.bot.loop.create_task(self.on_song_end(guild_id, e)))
             
             if state['text_channel']:
