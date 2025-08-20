@@ -1,3 +1,4 @@
+# utils/danbooru_api.py
 import aiohttp
 import random
 import math
@@ -6,11 +7,25 @@ import traceback
 
 logger = logging.getLogger(__name__)
 
-# This function is used by the autocomplete decorator
-async def danbooru_tag_autocomplete(current: str) -> list:
-    if not current:
-        return []
+# --- NEW: Predefined list of popular tags for autocomplete ---
+SUGGESTED_TAGS = [
+    "1girl", "solo", "long_hair", "smile", "highres", "blush",
+    "open_mouth", "blue_eyes", "short_hair", "breasts", "hat",
+    "looking_at_viewer", "blonde_hair", "skirt", "thighhighs",
+    "touhou", "genshin_impact", "hololive", "azur_lane", "arknights"
+]
 
+async def danbooru_tag_autocomplete(current: str) -> list:
+    """
+    Provides autocomplete suggestions for Danbooru tags.
+    If 'current' is empty, it returns a predefined list of popular tags.
+    Otherwise, it queries the Danbooru API for matching tags.
+    """
+    # If the user hasn't typed anything, show the suggested tags
+    if not current:
+        return [{"name": tag, "value": tag} for tag in SUGGESTED_TAGS]
+
+    # If the user is typing, fetch live suggestions from the API
     url = f"https://danbooru.donmai.us/autocomplete.json?search[name]={current}&limit=10"
     headers = {"User-Agent": "DiscordBot (by Azura)"}
 
@@ -20,14 +35,12 @@ async def danbooru_tag_autocomplete(current: str) -> list:
                 if response.status != 200:
                     return []
                 data = await response.json()
-                # Return the data directly for the cog to process into Choices
                 return data
     except Exception as e:
-        print("[Autocomplete Error]", e)
+        logger.error(f"[Autocomplete Error] {e}")
         traceback.print_exc()
         return []
 
-# This function is used to get the best matching tag before searching
 async def get_danbooru_autocomplete_tag(session, user_input: str):
     try:
         url = f"https://danbooru.donmai.us/autocomplete.json?search[name]={user_input}&limit=1"
