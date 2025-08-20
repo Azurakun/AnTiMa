@@ -7,3 +7,5 @@ tzdata
 google-generativeai
 pymongo
 dnspython
+yt-dlp
+PyNaCl
