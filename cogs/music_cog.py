@@ -81,9 +81,10 @@ class MusicCog(commands.Cog, name="Music"):
 
         data = state['queue'].pop(0)
         try:
-            source = YTDLSource(discord.FFmpegPCMAudio(data['url'], **FFMPEG_OPTIONS), data=data)
+            # --- MODIFICATION ---
+            # We are removing the extra FFMPEG_OPTIONS for now to test.
+            source = YTDLSource(discord.FFmpegPCMAudio(data['url']), data=data)
             
-            # MODIFIED LINE: Use a proper function for the 'after' callback
             guild.voice_client.play(source, after=lambda e: self.bot.loop.create_task(self.on_song_end(guild_id, e)))
             
             if state['text_channel']:
@@ -92,6 +93,7 @@ class MusicCog(commands.Cog, name="Music"):
             logger.error(f"Error playing next song in guild {guild_id}: {e}")
             if state['text_channel']:
                 await state['text_channel'].send(f"😥 An error occurred playing **{data.get('title', 'the next song')}**.")
+            # Ensure we try to play the next song even if the current one fails
             await self.play_next_song(guild_id)
 
     async def on_song_end(self, guild_id: int, error=None):
