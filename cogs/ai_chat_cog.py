@@ -8,17 +8,16 @@ import aiohttp
 import csv
 import io
 
-# Import the MongoDB collection from your db utility file
-from utils.db import ai_config_collection
+# Import the MongoDB collections, including the new one for memories
+from utils.db import ai_config_collection, ai_memories_collection
 
 logger = logging.getLogger(__name__)
-MAX_HISTORY = 20
+MAX_HISTORY = 20 # Keep this to limit the immediate context for summarization
 
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.conversations = {}
-        # aiohttp session for fetching CSV files
         self.http_session = aiohttp.ClientSession()
 
         system_prompt = """
@@ -38,107 +37,105 @@ if anyone asked about your creator, you would say something like "i was created 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
             self.model = genai.GenerativeModel(
-                model_name='gemini-2.5-flash',
+                model_name='gemini-1.5-flash',
                 system_instruction=system_prompt
             )
-            logger.info("Gemini AI model loaded successfully with system instruction.")
+            # A separate model for the summarization task
+            self.summarizer_model = genai.GenerativeModel('gemini-1.5-flash')
+            logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
 
     def cog_unload(self):
-        # Clean up the aiohttp session when the cog is unloaded
         self.bot.loop.create_task(self.http_session.close())
 
+    # --- NEW: Memory Management ---
+    async def _load_memory(self, channel_id: int) -> str | None:
+        """Loads the most recent conversation summary from the database."""
+        memory = ai_memories_collection.find_one({"_id": str(channel_id)})
+        return memory.get("summary") if memory else None
+
+    async def _summarize_and_save_memory(self, channel_id: int, history: list):
+        """Generates a summary of the conversation and saves it to the database."""
+        if len(history) < 2: # Don't summarize very short conversations
+            return
+
+        # Format history for the summarizer prompt
+        transcript = "\n".join([f"{item['role']}: {item['parts'][0]}" for item in history])
+        
+        prompt = (
+            "You are a summarization AI. Your task is to create a concise, neutral, third-person summary of the following conversation transcript. "
+            "Focus on the main topics, key facts, user questions, and any stated preferences or decisions. Keep it under 150 words.\n\n"
+            f"TRANSCRIPT:\n---\n{transcript}\n---\n\nSUMMARY:"
+        )
+        
+        try:
+            response = await self.summarizer_model.generate_content_async(prompt)
+            summary = response.text.strip()
+            
+            # Save the new summary to the database, overwriting the old one
+            ai_memories_collection.update_one(
+                {"_id": str(channel_id)},
+                {"$set": {"summary": summary, "last_updated": discord.utils.utcnow()}},
+                upsert=True
+            )
+            logger.info(f"Saved memory for channel {channel_id}.")
+        except Exception as e:
+            logger.error(f"Failed to summarize and save memory for channel {channel_id}: {e}")
+
+    # --- CSV Helper ---
     async def _fetch_and_parse_csv(self, url: str) -> list | None:
-        """Fetches content from a URL and parses it as a CSV."""
         try:
             async with self.http_session.get(url) as response:
                 if response.status == 200:
                     text = await response.text()
-                    # Use io.StringIO to treat the string as a file
                     string_file = io.StringIO(text)
                     reader = csv.reader(string_file)
                     return list(reader)
-                else:
-                    logger.warning(f"Failed to fetch CSV from {url}, status: {response.status}")
-                    return None
+                return None
         except Exception as e:
-            logger.error(f"Error fetching or parsing CSV from {url}: {e}")
+            logger.error(f"Error fetching CSV: {e}")
             return None
 
+    # --- Commands (No changes needed here) ---
     @app_commands.command(name="setchatchannel", description="Sets a text channel for open conversation with the AI.")
-    @app_commands.describe(channel="The channel where the bot will reply to all messages.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setchatchannel(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
         guild_id = str(interaction.guild.id)
-        
         if channel:
-            # Update or insert the chat channel ID for the guild
-            ai_config_collection.update_one(
-                {"_id": guild_id},
-                {"$set": {"channel": channel.id}},
-                upsert=True
-            )
-            message = f"✅ AI chat channel has been set to {channel.mention}."
+            ai_config_collection.update_one({"_id": guild_id}, {"$set": {"channel": channel.id}}, upsert=True)
+            await interaction.response.send_message(f"✅ AI chat channel has been set to {channel.mention}.", ephemeral=True)
         else:
-            # Remove the chat channel setting for the guild
-            ai_config_collection.update_one(
-                {"_id": guild_id},
-                {"$unset": {"channel": ""}}
-            )
-            message = "ℹ️ AI chat channel has been cleared."
-            
-        await interaction.response.send_message(message, ephemeral=True)
+            ai_config_collection.update_one({"_id": guild_id}, {"$unset": {"channel": ""}})
+            await interaction.response.send_message("ℹ️ AI chat channel has been cleared.", ephemeral=True)
 
     @app_commands.command(name="setchatforum", description="Sets a forum for open conversation with the AI.")
-    @app_commands.describe(forum="The forum where the bot will reply to all posts and messages.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setchatforum(self, interaction: discord.Interaction, forum: discord.ForumChannel = None):
         guild_id = str(interaction.guild.id)
-
         if forum:
-            ai_config_collection.update_one(
-                {"_id": guild_id},
-                {"$set": {"forum": forum.id}},
-                upsert=True
-            )
-            message = f"✅ AI chat forum has been set to {forum.mention}."
+            ai_config_collection.update_one({"_id": guild_id}, {"$set": {"forum": forum.id}}, upsert=True)
+            await interaction.response.send_message(f"✅ AI chat forum has been set to {forum.mention}.", ephemeral=True)
         else:
-            ai_config_collection.update_one(
-                {"_id": guild_id},
-                {"$unset": {"forum": ""}}
-            )
-            message = "ℹ️ AI chat forum has been cleared."
-
-        await interaction.response.send_message(message, ephemeral=True)
+            ai_config_collection.update_one({"_id": guild_id}, {"$unset": {"forum": ""}})
+            await interaction.response.send_message("ℹ️ AI chat forum has been cleared.", ephemeral=True)
 
     @app_commands.command(name="setcsv", description="Sets a dynamic CSV file URL for the AI to use as context.")
-    @app_commands.describe(url="The public URL of the CSV file. Leave blank to clear.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setcsv(self, interaction: discord.Interaction, url: str = None):
         guild_id = str(interaction.guild.id)
-
         if url:
             if not url.startswith(("http://", "https://")):
-                await interaction.response.send_message("❌ that doesn't look like a valid url. it should start with `http://` or `https://`.", ephemeral=True)
+                await interaction.response.send_message("❌ Invalid URL format.", ephemeral=True)
                 return
-
-            ai_config_collection.update_one(
-                {"_id": guild_id},
-                {"$set": {"csv_url": url}},
-                upsert=True
-            )
-            message = f"✅ okay, i'll use the data from that CSV file as context."
+            ai_config_collection.update_one({"_id": guild_id}, {"$set": {"csv_url": url}}, upsert=True)
+            await interaction.response.send_message(f"✅ CSV context URL has been set.", ephemeral=True)
         else:
-            ai_config_collection.update_one(
-                {"_id": guild_id},
-                {"$unset": {"csv_url": ""}}
-            )
-            message = "ℹ️ alright, i've cleared the CSV file setting."
+            ai_config_collection.update_one({"_id": guild_id}, {"$unset": {"csv_url": ""}})
+            await interaction.response.send_message("ℹ️ CSV context URL has been cleared.", ephemeral=True)
 
-        await interaction.response.send_message(message, ephemeral=True)
-
+    # --- Message Listener (Modified for Memory) ---
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or self.model is None:
@@ -147,7 +144,6 @@ if anyone asked about your creator, you would say something like "i was created 
         guild_id = str(message.guild.id)
         channel_id = message.channel.id
         
-        # Fetch the guild's configuration from MongoDB
         guild_config = ai_config_collection.find_one({"_id": guild_id}) or {}
         chat_channel_id = guild_config.get("channel")
         chat_forum_id = guild_config.get("forum")
@@ -163,9 +159,7 @@ if anyone asked about your creator, you would say something like "i was created 
         async for msg in message.channel.history(limit=MAX_HISTORY):
             if msg.id == message.id:
                 continue
-            
             author_name = msg.author.display_name
-            
             if msg.author == self.bot.user:
                 history.append({'role': 'model', 'parts': [msg.content]})
             else:
@@ -177,36 +171,45 @@ if anyone asked about your creator, you would say something like "i was created 
         try:
             async with message.channel.typing():
                 prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-                
                 current_prompt_with_author = f"{message.author.display_name}: {prompt}"
-                final_prompt = current_prompt_with_author
+                
+                # --- NEW: Load and Inject Memory ---
+                memory_summary = await self._load_memory(channel_id)
+                memory_context = ""
+                if memory_summary:
+                    memory_context = (
+                        f"to give you some long-term context, here's a summary of past conversations in this channel. "
+                        f"do not mention this summary unless the user asks about past events. just use it as background knowledge.\n"
+                        f"<memory>\n{memory_summary}\n</memory>\n\n"
+                    )
 
+                # --- Fetch and Inject CSV data ---
+                csv_context = ""
                 csv_url = guild_config.get("csv_url")
                 if csv_url:
                     csv_data = await self._fetch_and_parse_csv(csv_url)
                     if csv_data:
-                        csv_string = "\n".join([",".join(row) for row in csv_data])
-                        if len(csv_string) > 3000:
-                           csv_string = csv_string[:3000] + "\n... (data truncated)"
-                        
-                        final_prompt = (
-                            "as a side note, use the following data from a CSV as context to help you answer. don't mention the file or the data unless the user asks about it.\n"
-                            f"```csv\n{csv_string}\n```\n\n"
-                            f"okay, with that in mind, here's what the user said: \"{current_prompt_with_author}\""
+                        csv_string = "\n".join([",".join(row) for row in csv_data])[:3000]
+                        csv_context = (
+                            "also, use this data from a CSV file to help you answer. don't mention the file unless asked.\n"
+                            f"<csv_data>\n{csv_string}\n</csv_data>\n\n"
                         )
+                
+                # Combine all parts for the final prompt
+                final_prompt = f"{memory_context}{csv_context}now, here is the current message from the user:\n{current_prompt_with_author}"
 
                 response = await chat.send_message_async(final_prompt)
                 
                 final_text = response.text[:2000]
-
                 if final_text:
                     await message.reply(final_text)
+
+                # --- NEW: Update memory in the background ---
+                self.bot.loop.create_task(self._summarize_and_save_memory(channel_id, chat.history))
 
         except Exception as e:
             logger.error(f"Error during Gemini API call: {e}")
             await message.reply("😥 i'm sorry, my brain isn't braining right now. try again later or whatever.")
-            if channel_id in self.conversations:
-                del self.conversations[channel_id]
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))

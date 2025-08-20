@@ -15,3 +15,4 @@ db = client.get_database("antima_db") # You can name your database whatever you 
 reminders_collection = db.get_collection("reminders")
 user_timezones_collection = db.get_collection("user_timezones")
 ai_config_collection = db.get_collection("ai_config")
+ai_memories_collection = db.get_collection("ai_memories") # <-- ADD THIS LINE
