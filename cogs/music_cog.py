@@ -15,7 +15,10 @@ yt_dlp.utils.bug_reports_message = lambda: ''
 logger = logging.getLogger(__name__)
 
 # --- FFMPEG options for streaming ---
+# This dictionary was the likely source of the error.
+# The key must be 'before_options', not 'before'.
 FFMPEG_OPTIONS = {
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
 }
 
@@ -81,12 +84,11 @@ class MusicCog(commands.Cog, name="Music"):
 
         data = state['queue'].pop(0)
         try:
-            # --- MODIFICATION ---
-            # We are removing the extra FFMPEG_OPTIONS for now to test.
+            # Correctly pass the FFMPEG_OPTIONS to FFmpegPCMAudio
             source = YTDLSource(discord.FFmpegPCMAudio(data['url'], **FFMPEG_OPTIONS), data=data)
-
+            
             guild.voice_client.play(source, after=lambda e: self.bot.loop.create_task(self.on_song_end(guild_id, e)))
-
+            
             if state['text_channel']:
                 await state['text_channel'].send(f'🎶 Now playing: **{source.title}**')
         except Exception as e:
@@ -130,9 +132,9 @@ class MusicCog(commands.Cog, name="Music"):
 
         state = self.get_guild_state(interaction.guild.id)
         state['text_channel'] = interaction.channel
-
+        
         youtube_query = query
-
+        
         # --- NEW: Spotify URL Handling ---
         spotify_track_match = re.match(r'https://open\.spotify\.com/track/([a-zA-Z0-9]+)', query)
         if spotify_track_match and self.sp:
@@ -149,16 +151,16 @@ class MusicCog(commands.Cog, name="Music"):
             return await interaction.followup.send("⚠️ Bot is not configured for Spotify links. Please contact the admin.")
 
         # --- End of Spotify Logic ---
-
+        
         try:
             loop = self.bot.loop or asyncio.get_event_loop()
             data = await loop.run_in_executor(None, lambda: ytdl.extract_info(youtube_query, download=False))
-
+            
             if 'entries' in data:
                 data = data['entries'][0]
 
             state['queue'].append(data)
-
+            
             message = f"✅ Added **{data['title']}** to the queue."
             if not interaction.guild.voice_client.is_playing():
                 message = f"✅ Adding **{data['title']}** and starting playback!"
@@ -200,7 +202,7 @@ class MusicCog(commands.Cog, name="Music"):
 
         if not vc or not vc.source and not queue:
             return await interaction.response.send_message("ℹ️ The queue is empty and nothing is playing.", ephemeral=True)
-
+            
         embed = discord.Embed(title="🎵 Music Queue", color=discord.Color.purple())
         if vc.source:
             embed.add_field(name="Now Playing", value=f"**[{vc.source.title}]({vc.source.url})**", inline=False)
@@ -209,7 +211,7 @@ class MusicCog(commands.Cog, name="Music"):
             embed.add_field(name="Up Next", value=queue_list, inline=False)
         if len(queue) > 10:
             embed.set_footer(text=f"...and {len(queue) - 10} more.")
-
+            
         await interaction.response.send_message(embed=embed)
 
 
