@@ -1,6 +1,9 @@
 # cogs/voice_interaction_cog.py
-import discord
+import discord 
 from discord.ext import commands
+from discord.sinks import WaveSink
+from discord.voice_client import VoiceClient
+
 import logging
 import asyncio
 import speech_recognition as sr
@@ -30,35 +33,40 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
             self.conversations[guild_id] = model.start_chat(history=[])
         return self.conversations[guild_id]
 
-    async def _speak(self, voice_client: discord.VoiceClient, text: str):
+    async def _speak(self, voice_client: VoiceClient, text: str):
         """Converts text to speech and plays it in the voice channel."""
         if not text or not voice_client.is_connected():
             return
 
         guild_id = voice_client.guild.id
+        print(guild_id)
         self.voice_states[guild_id]['is_speaking'] = True
+        print("is speaking", self.voice_states[guild_id]['is_speaking'])
 
         try:
             tts = gTTS(text=text, lang='en')
             fp = io.BytesIO()
             tts.write_to_fp(fp)
             fp.seek(0)
-            
-            voice_client.play(discord.FFmpegPCMAudio(fp, pipe=True), after=lambda e: self._after_speak(guild_id, e))
+
+            voice_client.play(discord.FFmpegOpusAudio(fp, pipe=True), after=lambda e: self._after_speak(guild_id, e))
         except Exception as e:
             logger.error(f"TTS error: {e}")
+            print('TTS error', {e})
             self.voice_states[guild_id]['is_speaking'] = False
 
     def _after_speak(self, guild_id, error):
         """Callback for after the bot finishes speaking."""
+        print('AFTER SPEAK IS STARTED')
         if error:
-            logger.error(f"Error after speaking: {error}")
+            print(f"Error after speaking: {error}")
         
         state = self.voice_states.get(guild_id)
         if state:
+            print(guild_id, ' Is State Okay?')
             asyncio.run_coroutine_threadsafe(self._start_listening(state['voice_client']), self.bot.loop)
 
-    def _process_audio(self, sink: discord, guild_id: int):
+    def _process_audio(self, sink: WaveSink(), guild_id: int): # type: ignore
         """Processes the recorded audio, transcribes it, and gets an AI response."""
         state = self.voice_states.get(guild_id)
         if not state or state['is_speaking']:
@@ -79,26 +87,32 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
                         self.bot.loop
                     )
             except sr.UnknownValueError:
-                logger.info("Could not understand audio, restarting listening.")
+                logging.info("Could not understand audio, restarting listening.")
                 asyncio.run_coroutine_threadsafe(self._start_listening(state['voice_client']), self.bot.loop)
             except Exception as e:
-                logger.error(f"Error processing audio for user {user_id}: {e}")
+                logging.error(f"Error processing audio for user {user_id}: {e}")
                 asyncio.run_coroutine_threadsafe(self._start_listening(state['voice_client']), self.bot.loop)
 
-    async def _start_listening(self, vc: discord.VoiceClient):
+    async def _start_listening(self, vc: VoiceClient):
         """Starts a new listening cycle."""
+        print('START LISTENING')
+        print('VC status = ', vc.is_connected())
         if not vc or not vc.is_connected() or self.voice_states[vc.guild.id]['is_speaking']:
             return
         
         # Give a small buffer
         await asyncio.sleep(0.5)
+        print('LISTENING HAS SLEEP')
 
         self.voice_states[vc.guild.id]['is_speaking'] = False
         
-        vc.listen(
-            discord.sinks.WaveSink(), 
-            after=lambda sink, gid=vc.guild.id: self._process_audio(sink, gid)
+        print('PROCESSING VOICE')
+        vc.start_recording(
+            WaveSink(), 
+            after=lambda sink, 
+            gid=vc.guild.id: self._process_audio(sink, gid)
         )
+        print('VOICE HAS PROCESSED')
 
     @commands.command(name="joinchat")
     async def joinchat(self, ctx: commands.Context):
@@ -118,6 +132,8 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
             'is_speaking': True,
             'voice_client': voice_client # Assign the voice client returned by the connect/move_to call
         }
+
+        print(self.voice_states[ctx.guild.id])
         
         await self._speak(ctx.voice_client, "Hi there! I'm listening.")
         # Listening will be started automatically by the _after_speak callback
@@ -129,17 +145,17 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
             await ctx.send("i'm not in a voice channel!")
             return
 
-        if ctx.voice_client.is_listening():
-            ctx.voice_client.stop_listening()
+        #if ctx.voice_client.is_listening():
+        #    ctx.voice_client.stop_listening()
             
-        await ctx.voice_client.disconnect()
         
         if ctx.guild.id in self.conversations:
             del self.conversations[ctx.guild.id]
         if ctx.guild.id in self.voice_states:
             del self.voice_states[ctx.guild.id]
-            
+
         await ctx.send("okay, talk to you later!")
+        await ctx.voice_client.disconnect()
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(VoiceInteractionCog(bot))

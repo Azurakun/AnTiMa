@@ -23,6 +23,7 @@ class MyBot(commands.Bot):
         intents.guilds = True
         intents.members = True
         intents.reactions = True
+        intents.voice_states = True # Required for voice
         # The command_prefix is required but won't be used for slash commands
         super().__init__(command_prefix="!", intents=intents)
 
