@@ -1,0 +1,10 @@
+# nixpacks.toml
+
+[phases.setup]
+nixPkgs = ["python311", "gcc"]
+
+[phases.build]
+cmds = [
+    "pip uninstall -y discord.py",
+    ". /opt/venv/bin/activate && pip install -r requirements.txt"
+]
