@@ -58,7 +58,7 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
         if state:
             asyncio.run_coroutine_threadsafe(self._start_listening(state['voice_client']), self.bot.loop)
 
-    def _process_audio(self, sink: discord.sinks.WaveSink, guild_id: int):
+    def _process_audio(self, sink: discord, guild_id: int):
         """Processes the recorded audio, transcribes it, and gets an AI response."""
         state = self.voice_states.get(guild_id)
         if not state or state['is_speaking']:
@@ -110,13 +110,13 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
         channel = ctx.author.voice.channel
         
         if ctx.voice_client:
-            await ctx.voice_client.move_to(channel)
+            voice_client = await ctx.voice_client.move_to(channel)
         else:
-            await channel.connect()
+            voice_client = await channel.connect()
 
         self.voice_states[ctx.guild.id] = {
-            'is_speaking': True, # Start as true until after greeting
-            'voice_client': ctx.voice_client
+            'is_speaking': True,
+            'voice_client': voice_client # Assign the voice client returned by the connect/move_to call
         }
         
         await self._speak(ctx.voice_client, "Hi there! I'm listening.")
