@@ -8,17 +8,18 @@ from utils.db import logs_collection # This now points to the correct DB connect
 logger = logging.getLogger(__name__)
 
 class MongoHandler(Handler):
-    """A logging handler that appends logs to a daily document in MongoDB."""
+    """A logging handler that appends logs to a new document in MongoDB every 10 minutes."""
 
     def __init__(self, collection, level=logging.NOTSET):
         super().__init__(level)
         self.collection = collection
 
     def emit(self, record: LogRecord):
-        """Appends a log record to the document for the current day."""
+        """Appends a log record to the document for the current 10-minute interval."""
         try:
-            # Use the current date as the document ID
-            log_date = datetime.utcfromtimestamp(record.created).strftime('%Y-%m-%d')
+            # Use the current date and 10-minute interval as the document ID
+            timestamp = datetime.utcfromtimestamp(record.created)
+            log_id = f"{timestamp.strftime('%Y-%m-%d-%H')}-{timestamp.minute // 10}"
             
             log_entry = {
                 'timestamp': record.created,
@@ -32,7 +33,7 @@ class MongoHandler(Handler):
             # Find the document for today and push the new log into its 'logs' array.
             # If the document doesn't exist, upsert=True will create it.
             self.collection.update_one(
-                {'_id': log_date},
+                {'_id': log_id},
                 {'$push': {'logs': log_entry}},
                 upsert=True
             )
