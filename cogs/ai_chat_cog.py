@@ -6,6 +6,7 @@ import logging
 import os
 import google.generativeai as genai
 import aiohttp
+import re
 from datetime import datetime
 
 # Import the MongoDB collections
@@ -14,6 +15,14 @@ from utils.db import ai_config_collection, ai_memories_collection
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
 MAX_USER_MEMORIES = 20
+
+def _find_member(guild: discord.Guild, name: str):
+    """Finds a member in a guild by name or display name, case-insensitively."""
+    name = name.lower()
+    return discord.utils.find(
+        lambda m: m.name.lower() == name or m.display_name.lower() == name,
+        guild.members
+    )
 
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
@@ -33,6 +42,10 @@ you’re conversational and humanlike, sometimes dropping fun facts, small jokes
 if anyone calls you a bot, you just laugh it off casually instead of freaking out. you might reply with something like “lol maybe, but i’m cooler than most bots,” or “nah, i’m just vibing here with y’all.” your vibe is friendly, relaxed, and approachable—someone who can help, chat, and adapt to the mood of the conversation without ever feeling too stiff or artificial.
 
 if anyone asked about your creator, you would say something like "i was created by a cool person named 'Azura' and mention a discord user 898989641112383488 on the server
+
+**New Tool Instructions:**
+- If you need to get information about a server member (like their ID, roles, or join date), respond ONLY with the text: [FETCH_USER_DATA: 'username']. I will provide you with the data.
+- After you have the user's ID, if you need to mention them in your response, use the format [MENTION: 'user_id']. I will convert this into a real Discord tag.
 """
 
         try:
@@ -41,8 +54,7 @@ if anyone asked about your creator, you would say something like "i was created 
                 model_name='gemini-2.5-pro',
                 system_instruction=system_prompt
             )
-            self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro',
-                system_instruction="You are a summarization AI. Your task is to create a concise, neutral, third-person summary of the following conversation transcript. Focus on the main topics, key facts, user questions, and any stated preferences or decisions. Keep it under 150 words.")
+            self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -53,7 +65,8 @@ if anyone asked about your creator, you would say something like "i was created 
 
     async def _load_user_memories(self, user_id: int) -> str:
         """Loads and formats all memories for a given user."""
-        memories = ai_memories_collection.find({"user_id": user_id}).sort("timestamp", 1)
+        memories_cursor = ai_memories_collection.find({"user_id": user_id}).sort("timestamp", 1)
+        memories = list(memories_cursor) # Convert cursor to list
         
         if not memories:
             return ""
@@ -81,7 +94,6 @@ if anyone asked about your creator, you would say something like "i was created 
             response = await self.summarizer_model.generate_content_async(prompt)
             summary = response.text.strip()
             
-            # Create a new memory document
             new_memory = {
                 "user_id": user_id,
                 "summary": summary,
@@ -90,10 +102,8 @@ if anyone asked about your creator, you would say something like "i was created 
             ai_memories_collection.insert_one(new_memory)
             logger.info(f"Saved new memory for user {user_id}.")
 
-            # Enforce the memory limit
             memory_count = ai_memories_collection.count_documents({"user_id": user_id})
             if memory_count > MAX_USER_MEMORIES:
-                # Find the oldest memory for this user and delete it
                 oldest_memories = ai_memories_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(memory_count - MAX_USER_MEMORIES)
                 for old_memory in oldest_memories:
                     ai_memories_collection.delete_one({"_id": old_memory["_id"]})
@@ -126,7 +136,7 @@ if anyone asked about your creator, you would say something like "i was created 
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot or self.model is None:
+        if message.author.bot or self.model is None or not message.guild:
             return
 
         guild_id = str(message.guild.id)
@@ -143,24 +153,22 @@ if anyone asked about your creator, you would say something like "i was created 
         if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
             return
             
-        history = []
-        async for msg in message.channel.history(limit=MAX_HISTORY):
-            if msg.id == message.id:
-                continue
-            
-            role = 'model' if msg.author == self.bot.user else 'user'
-            content = f"{msg.author.display_name}: {msg.clean_content}" if role == 'user' else msg.clean_content
-            
-            history.append({'role': role, 'parts': [content]})
-        history.reverse()
-        
-        chat = self.model.start_chat(history=history)
-        
-        try:
-            async with message.channel.typing():
+        async with message.channel.typing():
+            try:
+                history = []
+                async for msg in message.channel.history(limit=MAX_HISTORY):
+                    if msg.id == message.id:
+                        continue
+                    
+                    role = 'model' if msg.author == self.bot.user else 'user'
+                    content = f"{msg.author.display_name}: {msg.clean_content}" if role == 'user' else msg.clean_content
+                    history.append({'role': role, 'parts': [content]})
+                history.reverse()
+                
+                chat = self.model.start_chat(history=history)
+                
                 prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
                 
-                # Load user-specific memories
                 memory_summary = await self._load_user_memories(user_id)
                 memory_context = ""
                 if memory_summary:
@@ -170,20 +178,49 @@ if anyone asked about your creator, you would say something like "i was created 
                         f"<memory>\n{memory_summary}\n</memory>\n\n"
                     )
                 
-                final_prompt = f"{memory_context}Current message from {message.author.display_name}:\n{prompt}"
-
-                response = await chat.send_message_async(final_prompt)
+                initial_prompt = f"{memory_context}Current message from {message.author.display_name}:\n{prompt}"
+                response = await chat.send_message_async(initial_prompt)
                 
-                final_text = response.text[:2000]
-                if final_text:
-                    allowed_mentions = discord.AllowedMentions(users=True)
-                    await message.reply(final_text, allowed_mentions=allowed_mentions)
+                # Check if the AI is requesting user data
+                fetch_match = re.search(r"\[FETCH_USER_DATA: '([^']+)'\]", response.text)
+                if fetch_match:
+                    username_to_fetch = fetch_match.group(1)
+                    member = _find_member(message.guild, username_to_fetch)
+                    
+                    if member:
+                        user_data = (
+                            f"Okay, here is the data for '{username_to_fetch}':\n"
+                            f"- User ID: {member.id}\n"
+                            f"- Display Name: {member.display_name}\n"
+                            f"- Roles: {', '.join([role.name for role in member.roles if role.name != '@everyone'])}\n"
+                            f"- Joined Server: {member.joined_at.strftime('%Y-%m-%d')}\n"
+                            "Now, please formulate your final response to the user."
+                        )
+                    else:
+                        user_data = f"Sorry, I couldn't find any user named '{username_to_fetch}' in this server. Please inform the user."
+
+                    # Send the fetched data back to the AI to get a final response
+                    response = await chat.send_message_async(user_data)
+
+                # Process the final response for mentions
+                final_text = response.text
+                
+                # Replace any [MENTION: 'user_id'] tags with actual mentions
+                def replace_mention(match):
+                    user_id_to_mention = match.group(1)
+                    return f"<@{user_id_to_mention}>"
+                
+                processed_text = re.sub(r"\[MENTION: '(\d+)'\]", replace_mention, final_text)
+                
+                # Send the final, processed message
+                if processed_text:
+                    await message.reply(processed_text[:2000], allowed_mentions=discord.AllowedMentions(users=True))
 
                 self.bot.loop.create_task(self._summarize_and_save_memory(user_id, chat.history))
 
-        except Exception as e:
-            logger.error(f"Error during Gemini API call: {e}")
-            await message.reply("😥 i'm sorry, my brain isn't braining right now. try again later or whatever.")
+            except Exception as e:
+                logger.error(f"Error during Gemini API call: {e}")
+                await message.reply("😥 i'm sorry, my brain isn't braining right now. try again later or whatever.")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
