@@ -6,6 +6,7 @@ import logging
 import asyncio
 import yt_dlp
 import functools
+import traceback
 
 logger = logging.getLogger(__name__)
 
@@ -41,16 +42,21 @@ class YTDLSource(discord.PCMVolumeTransformer):
     @classmethod
     async def from_url(cls, url, *, loop=None, stream=False):
         loop = loop or asyncio.get_event_loop()
-        # Use functools.partial to run the synchronous ytdl code in an executor
-        partial_extract = functools.partial(ytdl.extract_info, url, download=not stream)
-        data = await loop.run_in_executor(None, partial_extract)
+        try:
+            # Use functools.partial to run the synchronous ytdl code in an executor
+            partial_extract = functools.partial(ytdl.extract_info, url, download=not stream)
+            data = await loop.run_in_executor(None, partial_extract)
 
-        if 'entries' in data:
-            # take first item from a playlist
-            data = data['entries'][0]
+            if 'entries' in data:
+                # take first item from a playlist
+                data = data['entries'][0]
 
-        filename = data['url'] if stream else ytdl.prepare_filename(data)
-        return cls(discord.FFmpegPCMAudio(filename, **FFMPEG_OPTIONS), data=data)
+            filename = data['url'] if stream else ytdl.prepare_filename(data)
+            return cls(discord.FFmpegPCMAudio(filename, **FFMPEG_OPTIONS), data=data)
+        except Exception:
+            logger.error(f"Error in YTDLSource.from_url for url: {url}")
+            logger.error(traceback.format_exc())
+            raise
 
 
 class MusicCog(commands.Cog, name="Music"):
@@ -93,8 +99,9 @@ class MusicCog(commands.Cog, name="Music"):
             )
             await interaction.channel.send(embed=embed)
 
-        except Exception as e:
-            logger.error(f"Error playing song with yt-dlp: {e}")
+        except Exception:
+            logger.error("Error playing song with yt-dlp:")
+            logger.error(traceback.format_exc())
             await interaction.channel.send("i had a little trouble playing that song, sorry! TvT")
             await self._song_finished(interaction)
 
