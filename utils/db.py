@@ -14,7 +14,6 @@ ai_config_collection = db.get_collection("ai_config")
 ai_memories_collection = db.get_collection("ai_memories")
 ai_memories_collection.create_index([("user_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
 
-# --- Unified Logs Collection ---
-# Logs will now be stored in the main database.
-logs_collection = db.get_collection("logs")
-print("Logging is configured to use the main database.")
+
+logs_collection = db.get_collection("improved_logs")
+print("Logging is configured to use the 'improved_logs' collection in the main database.")
