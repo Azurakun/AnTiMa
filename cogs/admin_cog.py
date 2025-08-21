@@ -1,7 +1,10 @@
+# cogs/admin_cog.py
 import discord
 from discord import app_commands
 from discord.ext import commands
 import logging
+from utils.db import logs_collection # Import the logs collection
+from datetime import datetime, timedelta # Import for date calculations
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +84,49 @@ class AdminCog(commands.Cog):
         except Exception as e:
             logger.error(f"Error sending message: {e}")
             await interaction.response.send_message("Failed to send the message.", ephemeral=True)
+
+    @app_commands.command(name="purgelogs", description="Deletes log data from the database.")
+    @app_commands.describe(
+        days="Delete logs older than this many days. Leave blank to delete ALL logs.",
+        confirm="You must set this to true to confirm the deletion."
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def purgelogs(self, interaction: discord.Interaction, confirm: bool, days: int = None):
+        """
+        Deletes log data. Can delete all data or data older than a specified number of days.
+        Requires administrator permissions and explicit confirmation.
+        """
+        if not confirm:
+            await interaction.response.send_message(
+                "⚠️ **Confirmation required!** You must set the `confirm` option to `True` to proceed with deleting logs.",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            if days is None:
+                # Delete all documents in the collection
+                result = logs_collection.delete_many({})
+                message = f"🗑️ **All log data has been deleted.** ({result.deleted_count} documents removed)."
+                logger.warning(f"Admin {interaction.user} purged all log data.")
+            else:
+                # Calculate the cutoff date
+                cutoff_date = datetime.utcnow() - timedelta(days=days)
+                # The _id is formatted like 'YYYY-MM-DD-HH-M', so we can do a string comparison
+                cutoff_id_str = f"{cutoff_date.strftime('%Y-%m-%d-%H')}-{cutoff_date.minute // 10}"
+                
+                # Delete documents where the _id is less than the cutoff string
+                result = logs_collection.delete_many({"_id": {"$lt": cutoff_id_str}})
+                message = f"🗑️ **Logs older than {days} days have been deleted.** ({result.deleted_count} documents removed)."
+                logger.warning(f"Admin {interaction.user} purged logs older than {days} days.")
+
+            await interaction.followup.send(message)
+
+        except Exception as e:
+            logger.error(f"Error purging logs: {e}")
+            await interaction.followup.send("❌ An error occurred while trying to purge the logs.")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))
