@@ -1,4 +1,4 @@
 # nixpacks.toml
 
 [phases.setup]
-nixPkgs = ["...", "ffmpeg", "stockfish", "opus"]
+nixPkgs = ["...", "ffmpeg", "stockfish", "libopus"]
