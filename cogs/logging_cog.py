@@ -2,7 +2,10 @@
 import logging
 from logging import Handler, LogRecord
 import pymongo
+from discord.ext import commands
 from utils.db import logs_collection # Assuming logs_collection is defined in your db utility
+
+logger = logging.getLogger(__name__)
 
 class MongoHandler(Handler):
     """A logging handler that writes logs to a MongoDB collection."""
