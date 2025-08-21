@@ -10,3 +10,5 @@ dnspython
 yt-dlp
 PyNaCl
 spotipy
+python-chess
+cairosvg

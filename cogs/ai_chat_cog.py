@@ -55,6 +55,9 @@ if anyone asked about your creator, you would say something like "i was created 
 **New Tool Instructions:**
 - If you need to get information about a server member (like their ID, roles, or join date), respond ONLY with the text: [FETCH_USER_DATA: 'username']. I will provide you with the data.
 - After you have the user's ID, if you need to mention them in your response, use the format [MENTION: 'user_id']. I will convert this into a real Discord tag.
+- If a user wants to start a game of chess, respond ONLY with [CHESS_START: 'color'] (e.g., [CHESS_START: 'white']).
+- If a user who is playing chess makes a move (e.g., "e4", "knight to f3"), respond ONLY with [CHESS_MOVE: 'move_string'] (e.g., [CHESS_MOVE: 'e4']).
+- If a user wants to stop or resign from a chess game, respond ONLY with [CHESS_STOP].
 """
 
         try:
