@@ -1,10 +1,12 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import logging
 import os
 import google.generativeai as genai
 import aiohttp
+import re
+from datetime import datetime, timedelta
 
 # Import the MongoDB collections, including the new one for memories
 from utils.db import ai_config_collection, ai_memories_collection
@@ -45,10 +47,37 @@ if anyone asked about your creator, you would say something like "i was created 
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
 
+        self.clear_old_memories.start()
+
     def cog_unload(self):
         self.bot.loop.create_task(self.http_session.close())
+        self.clear_old_memories.cancel()
 
-    # --- NEW: Memory Management ---
+    @tasks.loop(hours=1)
+    async def clear_old_memories(self):
+        logger.info("Running hourly check to clear old channel memories...")
+        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
+
+        all_guild_configs = ai_config_collection.find({})
+        chat_channel_ids = [str(config["channel"]) for config in all_guild_configs if "channel" in config]
+
+        if not chat_channel_ids:
+            logger.info("No chat channels configured for memory wipe.")
+            return
+
+        query = {
+            "_id": { "$in": chat_channel_ids },
+            "last_updated": { "$lt": twenty_four_hours_ago }
+        }
+        
+        result = ai_memories_collection.delete_many(query)
+        if result.deleted_count > 0:
+            logger.info(f"Cleared {result.deleted_count} old memories from chat channels.")
+
+    @clear_old_memories.before_loop
+    async def before_clear_old_memories(self):
+        await self.bot.wait_until_ready()
+
     async def _load_memory(self, channel_id: int) -> str | None:
         """Loads the most recent conversation summary from the database."""
         memory = ai_memories_collection.find_one({"_id": str(channel_id)})
@@ -56,10 +85,9 @@ if anyone asked about your creator, you would say something like "i was created 
 
     async def _summarize_and_save_memory(self, channel_id: int, history: list):
         """Generates a summary of the conversation and saves it to the database."""
-        if len(history) < 2: # Don't summarize very short conversations
+        if len(history) < 2:
             return
 
-        # Format history for the summarizer prompt
         transcript = "\n".join([f"{item['role']}: {item['parts'][0]}" for item in history])
         
         prompt = (
@@ -72,7 +100,6 @@ if anyone asked about your creator, you would say something like "i was created 
             response = await self.summarizer_model.generate_content_async(prompt)
             summary = response.text.strip()
             
-            # Save the new summary to the database, overwriting the old one
             ai_memories_collection.update_one(
                 {"_id": str(channel_id)},
                 {"$set": {"summary": summary, "last_updated": discord.utils.utcnow()}},
@@ -82,7 +109,6 @@ if anyone asked about your creator, you would say something like "i was created 
         except Exception as e:
             logger.error(f"Failed to summarize and save memory for channel {channel_id}: {e}")
 
-    # --- Commands (No changes needed here) ---
     @app_commands.command(name="setchatchannel", description="Sets a text channel for open conversation with the AI.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setchatchannel(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
@@ -105,7 +131,6 @@ if anyone asked about your creator, you would say something like "i was created 
             ai_config_collection.update_one({"_id": guild_id}, {"$unset": {"forum": ""}})
             await interaction.response.send_message("ℹ️ AI chat forum has been cleared.", ephemeral=True)
 
-    # --- Message Listener (Modified for Memory) ---
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or self.model is None:
@@ -129,11 +154,11 @@ if anyone asked about your creator, you would say something like "i was created 
         async for msg in message.channel.history(limit=MAX_HISTORY):
             if msg.id == message.id:
                 continue
-            author_name = msg.author.display_name
+            author_mention = msg.author.mention
             if msg.author == self.bot.user:
                 history.append({'role': 'model', 'parts': [msg.content]})
             else:
-                history.append({'role': 'user', 'parts': [f"{author_name}: {msg.clean_content}"]})
+                history.append({'role': 'user', 'parts': [f"{author_mention}: {msg.clean_content}"]})
         history.reverse()
         
         chat = self.model.start_chat(history=history)
@@ -141,9 +166,8 @@ if anyone asked about your creator, you would say something like "i was created 
         try:
             async with message.channel.typing():
                 prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-                current_prompt_with_author = f"{message.author.display_name}: {prompt}"
+                current_prompt_with_author = f"{message.author.mention}: {prompt}"
                 
-                # --- NEW: Load and Inject Memory ---
                 memory_summary = await self._load_memory(channel_id)
                 memory_context = ""
                 if memory_summary:
@@ -153,16 +177,15 @@ if anyone asked about your creator, you would say something like "i was created 
                         f"<memory>\n{memory_summary}\n</memory>\n\n"
                     )
                 
-                # Combine all parts for the final prompt
                 final_prompt = f"{memory_context}now, here is the current message from the user:\n{current_prompt_with_author}"
 
                 response = await chat.send_message_async(final_prompt)
                 
                 final_text = response.text[:2000]
                 if final_text:
-                    await message.reply(final_text)
+                    allowed_mentions = discord.AllowedMentions(users=True)
+                    await message.reply(final_text, allowed_mentions=allowed_mentions)
 
-                # --- NEW: Update memory in the background ---
                 self.bot.loop.create_task(self._summarize_and_save_memory(channel_id, chat.history))
 
         except Exception as e:
