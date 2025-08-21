@@ -1,4 +1,4 @@
-discord.py
+discord.py[voice]
 requests
 flask
 aiohttp
@@ -8,8 +8,6 @@ google-generativeai
 pymongo
 dnspython
 PyNaCl
-spotipy
-yt-dlp
 SpeechRecognition
 gTTS
 pydub
