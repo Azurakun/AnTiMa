@@ -5,6 +5,7 @@ from discord.ext import commands
 import logging
 import os
 import google.generativeai as genai
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import aiohttp
 import re
 from datetime import datetime
@@ -56,12 +57,21 @@ if anyone asked about your creator, you would say something like "i was created 
 - If you need to get information about a server member (like their ID, roles, or join date), respond ONLY with the text: [FETCH_USER_DATA: 'username']. I will provide you with the data.
 - After you have the user's ID, if you need to mention them in your response, use the format [MENTION: 'user_id']. I will convert this into a real Discord tag.
 """
+        
+        # Define less restrictive safety settings
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
             self.model = genai.GenerativeModel(
                 model_name='gemini-2.5-pro',
-                system_instruction=system_prompt
+                system_instruction=system_prompt,
+                safety_settings=safety_settings
             )
             self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro')
             logger.info("Gemini AI models loaded successfully.")
@@ -91,7 +101,6 @@ if anyone asked about your creator, you would say something like "i was created 
         if len(history) < 2:
             return
 
-        # Use the safe text getter for history parts as well
         transcript_parts = []
         for item in history:
             role = item.role
@@ -100,7 +109,6 @@ if anyone asked about your creator, you would say something like "i was created 
                 try:
                     text = item.parts[0].text
                 except Exception:
-                    # Fallback for older history formats if necessary
                     text = str(item.parts[0])
             transcript_parts.append(f"{role}: {text}")
 
@@ -183,9 +191,7 @@ if anyone asked about your creator, you would say something like "i was created 
             try:
                 history = []
                 async for msg in message.channel.history(limit=MAX_HISTORY):
-                    if msg.id == message.id:
-                        continue
-                    
+                    if msg.id == message.id: continue
                     role = 'model' if msg.author == self.bot.user else 'user'
                     content = f"{msg.author.display_name}: {msg.clean_content}" if role == 'user' else msg.clean_content
                     history.append({'role': role, 'parts': [content]})
@@ -198,36 +204,32 @@ if anyone asked about your creator, you would say something like "i was created 
                 memory_summary = await self._load_user_memories(user_id)
                 memory_context = ""
                 if memory_summary:
-                    memory_context = (
-                        f"Here is a summary of your past conversations with {message.author.display_name}. "
-                        f"Use this as background knowledge but do not mention it unless asked.\n"
-                        f"<memory>\n{memory_summary}\n</memory>\n\n"
-                    )
+                    memory_context = (f"Here is a summary of your past conversations with {message.author.display_name}. "
+                                      f"Use this as background knowledge but do not mention it unless asked.\n"
+                                      f"<memory>\n{memory_summary}\n</memory>\n\n")
                 
                 initial_prompt = f"{memory_context}Current message from {message.author.display_name}:\n{prompt}"
                 response = await chat.send_message_async(initial_prompt)
                 
                 final_text = _safe_get_response_text(response)
                 
-                # --- TOOL/COMMAND PROCESSING ---
-                fetch_match = re.search(r"\[FETCH_USER_DATA: '([^']+)'\]", final_text)
+                if not final_text:
+                    await message.reply("i wanted to say something, but my brain filters went 'nope!' try rephrasing that?")
+                    return
 
+                fetch_match = re.search(r"\[FETCH_USER_DATA: '([^']+)'\]", final_text)
                 if fetch_match:
                     username_to_fetch = fetch_match.group(1)
                     member = _find_member(message.guild, username_to_fetch)
-                    
                     if member:
-                        user_data = (
-                            f"Okay, here is the data for '{username_to_fetch}':\n"
-                            f"- User ID: {member.id}\n"
-                            f"- Display Name: {member.display_name}\n"
-                            f"- Roles: {', '.join([role.name for role in member.roles if role.name != '@everyone'])}\n"
-                            f"- Joined Server: {member.joined_at.strftime('%Y-%m-%d') if member.joined_at else 'N/A'}\n"
-                            "Now, please formulate your final response to the user."
-                        )
+                        user_data = (f"Okay, here is the data for '{username_to_fetch}':\n"
+                                     f"- User ID: {member.id}\n"
+                                     f"- Display Name: {member.display_name}\n"
+                                     f"- Roles: {', '.join([role.name for role in member.roles if role.name != '@everyone'])}\n"
+                                     f"- Joined Server: {member.joined_at.strftime('%Y-%m-%d') if member.joined_at else 'N/A'}\n"
+                                     "Now, please formulate your final response to the user.")
                     else:
                         user_data = f"Sorry, I couldn't find any user named '{username_to_fetch}' in this server. Please inform the user."
-
                     response = await chat.send_message_async(user_data)
                     final_text = _safe_get_response_text(response)
 
@@ -239,8 +241,6 @@ if anyone asked about your creator, you would say something like "i was created 
                 
                 if processed_text:
                     await message.reply(processed_text[:2000], allowed_mentions=discord.AllowedMentions(users=True))
-                else:
-                    logger.warning("Final processed text was empty, not sending a message.")
 
                 self.bot.loop.create_task(self._summarize_and_save_memory(user_id, chat.history))
 
