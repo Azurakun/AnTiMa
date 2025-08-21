@@ -9,6 +9,4 @@ pymongo
 dnspython
 PyNaCl
 spotipy
-python-chess
-cairosvg
 yt-dlp
