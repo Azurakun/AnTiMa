@@ -82,11 +82,12 @@ class MusicCog(commands.Cog, name="Music"):
 
         data = state['queue'].pop(0)
         try:
-            source = YTDLSource(discord.FFmpegPCMAudio(
-                data['url'], 
-                before_options=FFMPEG_OPTIONS['before_options'], 
-                options=FFMPEG_OPTIONS['options']
-            ), data=data)
+            source = YTDLSource(discord.FFmpegOpusAudio(
+            data['url'],
+            before_options=FFMPEG_OPTIONS['before_options'],
+            options=FFMPEG_OPTIONS['options']
+        ), data=data)
+
             
             guild.voice_client.play(source, after=lambda e: self.bot.loop.create_task(self.on_song_end(guild_id, e)))
             
@@ -136,7 +137,7 @@ class MusicCog(commands.Cog, name="Music"):
         
         youtube_query = query
         
-        # --- NEW: Spotify URL Handling ---
+        # Spotify URL Handling
         spotify_track_match = re.match(r'https://open\.spotify\.com/track/([a-zA-Z0-9]+)', query)
         if spotify_track_match and self.sp:
             try:
@@ -151,11 +152,13 @@ class MusicCog(commands.Cog, name="Music"):
         elif spotify_track_match and not self.sp:
             return await interaction.followup.send("⚠️ Bot is not configured for Spotify links. Please contact the admin.")
 
-        # --- End of Spotify Logic ---
-        
         try:
             loop = self.bot.loop or asyncio.get_event_loop()
-            data = await loop.run_in_executor(None, lambda: ytdl.extract_info(youtube_query, download=False))
+            # Fix: Wrap the ytdl.extract_info call in a function without parameters
+            def extract_info():
+                return ytdl.extract_info(youtube_query, download=False)
+            
+            data = await loop.run_in_executor(None, extract_info)
             
             if 'entries' in data:
                 data = data['entries'][0]
@@ -167,7 +170,6 @@ class MusicCog(commands.Cog, name="Music"):
                 message = f"✅ Adding **{data['title']}** and starting playback!"
                 await self.play_next_song(interaction.guild.id)
 
-            # Edit the original "Searching..." message or send a new one
             if spotify_track_match:
                  await interaction.edit_original_response(content=message)
             else:
