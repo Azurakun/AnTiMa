@@ -48,7 +48,7 @@ class LoggingCog(commands.Cog, name="Logging"):
 
     def setup_logging(self):
         """Sets up the MongoDB logging handler."""
-        if not logs_collection:
+        if logs_collection is None:
             logger.error("Logs collection is not available. Cannot set up MongoDB logging.")
             return
 
