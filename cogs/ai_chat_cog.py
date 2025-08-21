@@ -24,6 +24,15 @@ def _find_member(guild: discord.Guild, name: str):
         guild.members
     )
 
+def _safe_get_response_text(response) -> str:
+    """Safely gets text from a Gemini response, handling blocked content."""
+    try:
+        return response.text
+    except (ValueError, IndexError):
+        # This occurs when the response is blocked by safety filters
+        logger.warning("Gemini response was empty or blocked.")
+        return ""
+
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -54,7 +63,7 @@ if anyone asked about your creator, you would say something like "i was created 
                 model_name='gemini-2.5-pro',
                 system_instruction=system_prompt
             )
-            self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro')
+            self.summarizer_model = genai.GenerativeModel('gemini-1.5-flash')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -82,7 +91,7 @@ if anyone asked about your creator, you would say something like "i was created 
         if len(history) < 2:
             return
 
-        transcript = "\n".join([f"{item.role}: {item.parts[0].text}" for item in history])
+        transcript = "\n".join([_safe_get_response_text(item) for item in history])
         
         prompt = (
             "You are a summarization AI. Your task is to create a concise, neutral, third-person summary of the following conversation transcript. "
@@ -92,8 +101,12 @@ if anyone asked about your creator, you would say something like "i was created 
         
         try:
             response = await self.summarizer_model.generate_content_async(prompt)
-            summary = response.text.strip()
+            summary = _safe_get_response_text(response)
             
+            if not summary:
+                logger.warning("Summarization failed because the response was empty.")
+                return
+
             new_memory = {
                 "user_id": user_id,
                 "summary": summary,
@@ -181,8 +194,9 @@ if anyone asked about your creator, you would say something like "i was created 
                 initial_prompt = f"{memory_context}Current message from {message.author.display_name}:\n{prompt}"
                 response = await chat.send_message_async(initial_prompt)
                 
-                # Check if the AI is requesting user data
-                fetch_match = re.search(r"\[FETCH_USER_DATA: '([^']+)'\]", response.text)
+                final_text = _safe_get_response_text(response)
+                
+                fetch_match = re.search(r"\[FETCH_USER_DATA: '([^']+)'\]", final_text)
                 if fetch_match:
                     username_to_fetch = fetch_match.group(1)
                     member = _find_member(message.guild, username_to_fetch)
@@ -193,28 +207,25 @@ if anyone asked about your creator, you would say something like "i was created 
                             f"- User ID: {member.id}\n"
                             f"- Display Name: {member.display_name}\n"
                             f"- Roles: {', '.join([role.name for role in member.roles if role.name != '@everyone'])}\n"
-                            f"- Joined Server: {member.joined_at.strftime('%Y-%m-%d')}\n"
+                            f"- Joined Server: {member.joined_at.strftime('%Y-%m-%d') if member.joined_at else 'N/A'}\n"
                             "Now, please formulate your final response to the user."
                         )
                     else:
                         user_data = f"Sorry, I couldn't find any user named '{username_to_fetch}' in this server. Please inform the user."
 
-                    # Send the fetched data back to the AI to get a final response
                     response = await chat.send_message_async(user_data)
+                    final_text = _safe_get_response_text(response)
 
-                # Process the final response for mentions
-                final_text = response.text
-                
-                # Replace any [MENTION: 'user_id'] tags with actual mentions
                 def replace_mention(match):
                     user_id_to_mention = match.group(1)
                     return f"<@{user_id_to_mention}>"
                 
                 processed_text = re.sub(r"\[MENTION: '(\d+)'\]", replace_mention, final_text)
                 
-                # Send the final, processed message
                 if processed_text:
                     await message.reply(processed_text[:2000], allowed_mentions=discord.AllowedMentions(users=True))
+                else:
+                    logger.warning("Final processed text was empty, not sending a message.")
 
                 self.bot.loop.create_task(self._summarize_and_save_memory(user_id, chat.history))
 
