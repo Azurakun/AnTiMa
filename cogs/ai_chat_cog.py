@@ -78,7 +78,7 @@ if anyone asked about your creator, you would say something like "i was created 
     async def _load_user_memories(self, user_id: int) -> str:
         """Loads and formats all memories for a given user."""
         memories_cursor = ai_memories_collection.find({"user_id": user_id}).sort("timestamp", 1)
-        memories = list(memories_cursor) # Convert cursor to list
+        memories = list(memories_cursor)
         
         if not memories:
             return ""
@@ -94,7 +94,20 @@ if anyone asked about your creator, you would say something like "i was created 
         if len(history) < 2:
             return
 
-        transcript = "\n".join([_safe_get_response_text(item) for item in history])
+        # Use the safe text getter for history parts as well
+        transcript_parts = []
+        for item in history:
+            role = item.role
+            text = ""
+            if item.parts:
+                try:
+                    text = item.parts[0].text
+                except Exception:
+                    # Fallback for older history formats if necessary
+                    text = str(item.parts[0])
+            transcript_parts.append(f"{role}: {text}")
+
+        transcript = "\n".join(transcript_parts)
         
         prompt = (
             "You are a summarization AI. Your task is to create a concise, neutral, third-person summary of the following conversation transcript. "
@@ -169,6 +182,11 @@ if anyone asked about your creator, you would say something like "i was created 
         if not is_in_chat_channel and not is_in_chat_forum and not is_mentioned:
             return
             
+        chess_cog = self.bot.get_cog("Chess")
+        if chess_cog and message.channel.id in chess_cog.games:
+            await chess_cog.handle_user_move(message, message.content)
+            return
+
         async with message.channel.typing():
             try:
                 history = []
@@ -199,7 +217,22 @@ if anyone asked about your creator, you would say something like "i was created 
                 
                 final_text = _safe_get_response_text(response)
                 
+                # --- TOOL/COMMAND PROCESSING ---
+                start_match = re.search(r"\[CHESS_START: '(\w+)'\]", final_text)
+                stop_match = re.search(r"\[CHESS_STOP\]", final_text)
                 fetch_match = re.search(r"\[FETCH_USER_DATA: '([^']+)'\]", final_text)
+
+                if start_match:
+                    color = start_match.group(1).lower()
+                    if chess_cog:
+                        await chess_cog.start_game(message, user_as_white=(color == 'white'))
+                    return
+
+                if stop_match:
+                    if chess_cog:
+                        await chess_cog.stop_game(message)
+                    return
+
                 if fetch_match:
                     username_to_fetch = fetch_match.group(1)
                     member = _find_member(message.guild, username_to_fetch)
