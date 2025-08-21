@@ -10,3 +10,6 @@ dnspython
 PyNaCl
 spotipy
 yt-dlp
+SpeechRecognition
+gTTS
+pydub
