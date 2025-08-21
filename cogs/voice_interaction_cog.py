@@ -1,6 +1,6 @@
 # cogs/voice_interaction_cog.py
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import logging
 import asyncio
 import speech_recognition as sr
@@ -8,6 +8,8 @@ from gtts import gTTS
 import google.generativeai as genai
 import os
 import io
+import wave
+import audioop
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +23,8 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.recognizer = sr.Recognizer()
-        self.conversations = {}  # {guild_id: GenerativeModel.start_chat()}
-        self.voice_states = {}   # {guild_id: {'is_speaking': False, 'is_listening': False, 'voice_client': vc}}
+        self.conversations = {}
+        self.voice_states = {}
 
     def _get_or_create_conversation(self, guild_id):
         if guild_id not in self.conversations:
@@ -31,68 +33,54 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
         return self.conversations[guild_id]
 
     async def _speak(self, voice_client: discord.VoiceClient, text: str):
-        """Converts text to speech and plays it in the voice channel."""
-        if not text:
+        if not text or not voice_client.is_connected():
             return
 
         guild_id = voice_client.guild.id
         self.voice_states[guild_id]['is_speaking'] = True
 
         try:
-            # Generate TTS audio in memory
             tts = gTTS(text=text, lang='en')
             fp = io.BytesIO()
             tts.write_to_fp(fp)
             fp.seek(0)
             
-            # Play the audio
             voice_client.play(discord.FFmpegPCMAudio(fp, pipe=True), after=lambda e: self._after_speak(guild_id, e))
         except Exception as e:
             logger.error(f"TTS error: {e}")
             self.voice_states[guild_id]['is_speaking'] = False
 
     def _after_speak(self, guild_id, error):
-        """Callback for after the bot finishes speaking."""
         if error:
             logger.error(f"Error after speaking: {error}")
         
-        # Give a small buffer before listening again
-        asyncio.run_coroutine_threadsafe(asyncio.sleep(0.5), self.bot.loop)
-        self.voice_states[guild_id]['is_speaking'] = False
+        state = self.voice_states.get(guild_id)
+        if state:
+            state['is_speaking'] = False
 
-    def _process_audio(self, sink: discord.sinks.WaveSink, guild_id: int):
-        """Processes the recorded audio, transcribes it, and gets an AI response."""
-        voice_state = self.voice_states.get(guild_id)
-        if not voice_state or voice_state['is_speaking']:
+    @tasks.loop(seconds=1.0)
+    async def listen_and_process_task(self, guild_id):
+        state = self.voice_states.get(guild_id)
+        if not state or state['is_speaking'] or not state['voice_client'].is_connected():
             return
 
-        for user_id, audio in sink.audio_data.items():
-            try:
-                audio_data = sr.AudioData(audio.file.read(), sink.encoding.sample_rate, 2)
-                text = self.recognizer.recognize_google(audio_data)
-                logger.info(f"User {user_id} said: {text}")
+        vc = state['voice_client']
+        if not hasattr(vc, 'ws') or not vc.ws:
+            return
+            
+        audio_buffer = state.get('audio_buffer', io.BytesIO())
+        
+        while len(vc.ws.recv_buffer) > 0:
+            packet = vc.ws.recv_buffer.popleft()
+            if packet:
+                # Decode from opus and write raw PCM data to buffer
+                decoded_packet = vc.decoder.decode(packet)
+                audio_buffer.write(decoded_packet)
 
-                if text:
-                    # Send text to Gemini and get response
-                    chat = self._get_or_create_conversation(guild_id)
-                    response = chat.send_message(text)
-                    
-                    # Speak the response
-                    asyncio.run_coroutine_threadsafe(
-                        self._speak(voice_state['voice_client'], response.text),
-                        self.bot.loop
-                    )
+        state['audio_buffer'] = audio_buffer
 
-            except sr.UnknownValueError:
-                logger.info("Google Speech Recognition could not understand audio")
-            except sr.RequestError as e:
-                logger.error(f"Could not request results from Google Speech Recognition service; {e}")
-            except Exception as e:
-                logger.error(f"Error processing audio for user {user_id}: {e}")
-    
     @commands.command(name="joinchat")
     async def joinchat(self, ctx: commands.Context):
-        """Joins your voice channel and starts a voice conversation."""
         if not ctx.author.voice:
             await ctx.send("you're not in a voice channel, silly!")
             return
@@ -106,41 +94,21 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
 
         self.voice_states[ctx.guild.id] = {
             'is_speaking': False,
-            'is_listening': True,
-            'voice_client': ctx.voice_client
+            'voice_client': ctx.voice_client,
+            'audio_buffer': io.BytesIO()
         }
         
         await self._speak(ctx.voice_client, "Hi there! I'm listening.")
-        
-        # Start the listening loop
-        while self.voice_states.get(ctx.guild.id, {}).get('is_listening'):
-            # Small sleep to prevent a tight loop
-            await asyncio.sleep(0.1)
-            
-            vc = self.voice_states.get(ctx.guild.id, {}).get('voice_client')
-            if not vc or not vc.is_connected() or self.voice_states[ctx.guild.id]['is_speaking']:
-                continue
-
-            sink = discord.sinks.WaveSink()
-            try:
-                # Listen for up to 5 seconds of audio
-                vc.listen(sink, after=lambda sink, guild_id=ctx.guild.id: self._process_audio(sink, guild_id), timeout=5.0)
-            except Exception as e:
-                logger.error(f"Listening failed: {e}")
-            
-            # Wait for the listen timeout to complete before looping again
-            await asyncio.sleep(5.0)
+        self.listen_and_process_task.start(ctx.guild.id)
 
     @commands.command(name="leavechat")
     async def leavechat(self, ctx: commands.Context):
-        """Leaves the voice channel and ends the conversation."""
         if not ctx.voice_client:
             await ctx.send("i'm not in a voice channel!")
             return
 
-        if ctx.guild.id in self.voice_states:
-            self.voice_states[ctx.guild.id]['is_listening'] = False
-            
+        self.listen_and_process_task.cancel()
+        
         await ctx.voice_client.disconnect()
         
         if ctx.guild.id in self.conversations:
@@ -150,11 +118,51 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
             
         await ctx.send("okay, talk to you later!")
 
-    # Cog unload cleanup
-    def cog_unload(self):
-        for state in self.voice_states.values():
-            if state['voice_client']:
-                self.bot.loop.create_task(state['voice_client'].disconnect())
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member, before, after):
+        # A simple way to trigger speech processing when a user stops talking
+        # This is not perfect, but works without complex voice activity detection
+        if not member.bot and before.speaking and not after.speaking:
+            state = self.voice_states.get(member.guild.id)
+            if state and not state['is_speaking'] and state['voice_client'].channel == before.channel:
+                buffer = state.get('audio_buffer')
+                if buffer and buffer.tell() > 20000: # Process if there's a decent amount of audio
+                    self.process_audio_buffer(member.guild.id, buffer)
+                    state['audio_buffer'] = io.BytesIO() # Reset buffer
+
+    def process_audio_buffer(self, guild_id, buffer):
+        state = self.voice_states.get(guild_id)
+        if not state: return
+
+        buffer.seek(0)
+        
+        # Convert raw PCM to a WAV file in memory for speech_recognition
+        with io.BytesIO() as wav_buffer:
+            with wave.open(wav_buffer, 'wb') as wf:
+                wf.setnchannels(discord.opus.Decoder.CHANNELS)
+                wf.setsampwidth(discord.opus.Decoder.SAMPLE_SIZE // discord.opus.Decoder.CHANNELS)
+                wf.setframerate(discord.opus.Decoder.SAMPLING_RATE)
+                wf.writeframes(buffer.read())
+            
+            wav_buffer.seek(0)
+            with sr.AudioFile(wav_buffer) as source:
+                audio_data = self.recognizer.record(source)
+
+        try:
+            text = self.recognizer.recognize_google(audio_data)
+            logger.info(f"User said: {text}")
+
+            if text:
+                chat = self._get_or_create_conversation(guild_id)
+                response = chat.send_message(text)
+                asyncio.run_coroutine_threadsafe(
+                    self._speak(state['voice_client'], response.text),
+                    self.bot.loop
+                )
+        except sr.UnknownValueError:
+            pass # Ignore if speech is not understood
+        except Exception as e:
+            logger.error(f"Error in STT processing: {e}")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(VoiceInteractionCog(bot))
