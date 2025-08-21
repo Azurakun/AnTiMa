@@ -11,4 +11,4 @@ PyNaCl
 spotipy
 python-chess
 cairosvg
-pytube
+yt-dlp
