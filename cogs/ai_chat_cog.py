@@ -41,7 +41,8 @@ if anyone asked about your creator, you would say something like "i was created 
                 model_name='gemini-2.5-pro',
                 system_instruction=system_prompt
             )
-            self.summarizer_model = genai.GenerativeModel('gemini-1.5-flash')
+            self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro-summarize',
+                system_instruction="You are a summarization AI. Your task is to create a concise, neutral, third-person summary of the following conversation transcript. Focus on the main topics, key facts, user questions, and any stated preferences or decisions. Keep it under 150 words.")
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
