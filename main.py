@@ -14,6 +14,14 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --- Explicitly load Opus ---
+if not discord.opus.is_loaded():
+    try:
+        # The opus library name may be different on other systems
+        discord.opus.load_opus('libopus.so.0') 
+    except discord.errors.OpusNotLoaded:
+        logger.error("Opus library not found. Please ensure it is installed and in your system's path.")
+
 TOKEN = os.environ["TOKEN"]
 
 # We use commands.Bot instead of discord.Client to use the cogs extension system
