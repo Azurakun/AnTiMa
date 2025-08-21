@@ -1,19 +1,19 @@
 # cogs/ai_chat_cog.py
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 import logging
 import os
 import google.generativeai as genai
 import aiohttp
-import re
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# Import the MongoDB collections, including the new one for memories
+# Import the MongoDB collections
 from utils.db import ai_config_collection, ai_memories_collection
 
 logger = logging.getLogger(__name__)
-MAX_HISTORY = 20 # Keep this to limit the immediate context for summarization
+MAX_HISTORY = 15
+MAX_USER_MEMORIES = 20
 
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
@@ -41,55 +41,33 @@ if anyone asked about your creator, you would say something like "i was created 
                 model_name='gemini-2.5-pro',
                 system_instruction=system_prompt
             )
-            # A separate model for the summarization task
             self.summarizer_model = genai.GenerativeModel('gemini-1.5-flash')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
 
-        self.clear_old_memories.start()
-
     def cog_unload(self):
         self.bot.loop.create_task(self.http_session.close())
-        self.clear_old_memories.cancel()
 
-    @tasks.loop(hours=1)
-    async def clear_old_memories(self):
-        logger.info("Running hourly check to clear old channel memories...")
-        twenty_four_hours_ago = datetime.utcnow() - timedelta(hours=24)
-
-        all_guild_configs = ai_config_collection.find({})
-        chat_channel_ids = [str(config["channel"]) for config in all_guild_configs if "channel" in config]
-
-        if not chat_channel_ids:
-            logger.info("No chat channels configured for memory wipe.")
-            return
-
-        query = {
-            "_id": { "$in": chat_channel_ids },
-            "last_updated": { "$lt": twenty_four_hours_ago }
-        }
+    async def _load_user_memories(self, user_id: int) -> str:
+        """Loads and formats all memories for a given user."""
+        memories = ai_memories_collection.find({"user_id": user_id}).sort("timestamp", 1)
         
-        result = ai_memories_collection.delete_many(query)
-        if result.deleted_count > 0:
-            logger.info(f"Cleared {result.deleted_count} old memories from chat channels.")
+        if not memories:
+            return ""
 
-    @clear_old_memories.before_loop
-    async def before_clear_old_memories(self):
-        await self.bot.wait_until_ready()
+        formatted_memories = []
+        for i, memory in enumerate(memories):
+            formatted_memories.append(f"Memory {i+1}: {memory['summary']}")
+            
+        return "\n".join(formatted_memories)
 
-    async def _load_memory(self, channel_id: int) -> str | None:
-        """Loads the most recent conversation summary from the database."""
-        memory = ai_memories_collection.find_one({"_id": str(channel_id)})
-        return memory.get("summary") if memory else None
-
-    async def _summarize_and_save_memory(self, channel_id: int, history: list):
-        """Generates a summary of the conversation and saves it to the database."""
+    async def _summarize_and_save_memory(self, user_id: int, history: list):
+        """Generates a summary of the conversation and saves it as a new memory."""
         if len(history) < 2:
             return
 
-        # Correctly access attributes of the Content object
         transcript = "\n".join([f"{item.role}: {item.parts[0].text}" for item in history])
         
         prompt = (
@@ -102,14 +80,26 @@ if anyone asked about your creator, you would say something like "i was created 
             response = await self.summarizer_model.generate_content_async(prompt)
             summary = response.text.strip()
             
-            ai_memories_collection.update_one(
-                {"_id": str(channel_id)},
-                {"$set": {"summary": summary, "last_updated": discord.utils.utcnow()}},
-                upsert=True
-            )
-            logger.info(f"Saved memory for channel {channel_id}.")
+            # Create a new memory document
+            new_memory = {
+                "user_id": user_id,
+                "summary": summary,
+                "timestamp": datetime.utcnow()
+            }
+            ai_memories_collection.insert_one(new_memory)
+            logger.info(f"Saved new memory for user {user_id}.")
+
+            # Enforce the memory limit
+            memory_count = ai_memories_collection.count_documents({"user_id": user_id})
+            if memory_count > MAX_USER_MEMORIES:
+                # Find the oldest memory for this user and delete it
+                oldest_memories = ai_memories_collection.find({"user_id": user_id}).sort("timestamp", 1).limit(memory_count - MAX_USER_MEMORIES)
+                for old_memory in oldest_memories:
+                    ai_memories_collection.delete_one({"_id": old_memory["_id"]})
+                logger.info(f"Pruned old memories for user {user_id} to meet the limit of {MAX_USER_MEMORIES}.")
+
         except Exception as e:
-            logger.error(f"Failed to summarize and save memory for channel {channel_id}: {e}")
+            logger.error(f"Failed to summarize and save memory for user {user_id}: {e}")
 
     @app_commands.command(name="setchatchannel", description="Sets a text channel for open conversation with the AI.")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -139,13 +129,13 @@ if anyone asked about your creator, you would say something like "i was created 
             return
 
         guild_id = str(message.guild.id)
-        channel_id = message.channel.id
+        user_id = message.author.id
         
         guild_config = ai_config_collection.find_one({"_id": guild_id}) or {}
         chat_channel_id = guild_config.get("channel")
         chat_forum_id = guild_config.get("forum")
 
-        is_in_chat_channel = channel_id == chat_channel_id
+        is_in_chat_channel = message.channel.id == chat_channel_id
         is_in_chat_forum = (isinstance(message.channel, discord.Thread) and message.channel.parent_id == chat_forum_id)
         is_mentioned = self.bot.user in message.mentions
 
@@ -156,11 +146,11 @@ if anyone asked about your creator, you would say something like "i was created 
         async for msg in message.channel.history(limit=MAX_HISTORY):
             if msg.id == message.id:
                 continue
-            author_mention = msg.author.mention
-            if msg.author == self.bot.user:
-                history.append({'role': 'model', 'parts': [msg.content]})
-            else:
-                history.append({'role': 'user', 'parts': [f"{author_mention}: {msg.clean_content}"]})
+            
+            role = 'model' if msg.author == self.bot.user else 'user'
+            content = f"{msg.author.display_name}: {msg.clean_content}" if role == 'user' else msg.clean_content
+            
+            history.append({'role': role, 'parts': [content]})
         history.reverse()
         
         chat = self.model.start_chat(history=history)
@@ -168,18 +158,18 @@ if anyone asked about your creator, you would say something like "i was created 
         try:
             async with message.channel.typing():
                 prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-                current_prompt_with_author = f"{message.author.mention}: {prompt}"
                 
-                memory_summary = await self._load_memory(channel_id)
+                # Load user-specific memories
+                memory_summary = await self._load_user_memories(user_id)
                 memory_context = ""
                 if memory_summary:
                     memory_context = (
-                        f"to give you some long-term context, here's a summary of past conversations in this channel. "
-                        f"do not mention this summary unless the user asks about past events. just use it as background knowledge.\n"
+                        f"Here is a summary of your past conversations with {message.author.display_name}. "
+                        f"Use this as background knowledge but do not mention it unless asked.\n"
                         f"<memory>\n{memory_summary}\n</memory>\n\n"
                     )
                 
-                final_prompt = f"{memory_context}now, here is the current message from the user:\n{current_prompt_with_author}"
+                final_prompt = f"{memory_context}Current message from {message.author.display_name}:\n{prompt}"
 
                 response = await chat.send_message_async(final_prompt)
                 
@@ -188,7 +178,7 @@ if anyone asked about your creator, you would say something like "i was created 
                     allowed_mentions = discord.AllowedMentions(users=True)
                     await message.reply(final_text, allowed_mentions=allowed_mentions)
 
-                self.bot.loop.create_task(self._summarize_and_save_memory(channel_id, chat.history))
+                self.bot.loop.create_task(self._summarize_and_save_memory(user_id, chat.history))
 
         except Exception as e:
             logger.error(f"Error during Gemini API call: {e}")

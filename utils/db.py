@@ -16,4 +16,7 @@ reminders_collection = db.get_collection("reminders")
 user_timezones_collection = db.get_collection("user_timezones")
 ai_config_collection = db.get_collection("ai_config")
 ai_memories_collection = db.get_collection("ai_memories")
-logs_collection = db.get_collection("logs") # <-- ADD THIS LINE
+logs_collection = db.get_collection("logs")
+
+# Indexing for faster queries on user-specific memories
+ai_memories_collection.create_index([("user_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
