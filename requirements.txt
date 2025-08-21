@@ -7,8 +7,8 @@ tzdata
 google-generativeai
 pymongo
 dnspython
-yt-dlp
 PyNaCl
 spotipy
 python-chess
 cairosvg
+pytube
