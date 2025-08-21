@@ -1,3 +1,4 @@
+# cogs/ai_chat_cog.py
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
@@ -88,7 +89,8 @@ if anyone asked about your creator, you would say something like "i was created 
         if len(history) < 2:
             return
 
-        transcript = "\n".join([f"{item['role']}: {item['parts'][0]}" for item in history])
+        # Correctly access attributes of the Content object
+        transcript = "\n".join([f"{item.role}: {item.parts[0].text}" for item in history])
         
         prompt = (
             "You are a summarization AI. Your task is to create a concise, neutral, third-person summary of the following conversation transcript. "
