@@ -15,8 +15,6 @@ yt_dlp.utils.bug_reports_message = lambda: ''
 logger = logging.getLogger(__name__)
 
 # --- FFMPEG options for streaming ---
-# This dictionary was the likely source of the error.
-# The key must be 'before_options', not 'before'.
 FFMPEG_OPTIONS = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5',
     'options': '-vn',
@@ -84,8 +82,11 @@ class MusicCog(commands.Cog, name="Music"):
 
         data = state['queue'].pop(0)
         try:
-            # Correctly pass the FFMPEG_OPTIONS to FFmpegPCMAudio
-            source = YTDLSource(discord.FFmpegPCMAudio(data['url'], **FFMPEG_OPTIONS), data=data)
+            source = YTDLSource(discord.FFmpegPCMAudio(
+                data['url'], 
+                before_options=FFMPEG_OPTIONS['before_options'], 
+                options=FFMPEG_OPTIONS['options']
+            ), data=data)
             
             guild.voice_client.play(source, after=lambda e: self.bot.loop.create_task(self.on_song_end(guild_id, e)))
             
