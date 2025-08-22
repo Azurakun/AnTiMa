@@ -12,8 +12,14 @@ import google.generativeai as genai
 import os
 import io
 import wave
+import audioop # Required for volume analysis
+import time    # Required for the silence timer
 
 logger = logging.getLogger(__name__)
+
+VOICE_SYSTEM_PROMPT = """
+Act as a friendly and helpful voice assistant. Keep your responses concise and clear. Your name is AnTiMa. When asked about your creator, say you were created by Azura.
+"""
 
 # --- Configure Google AI ---
 try:
@@ -22,19 +28,45 @@ except Exception as e:
     logger.error(f"Failed to configure Gemini AI for voice: {e}")
 
 
-# ------------------- NEW CLASS DEFINITION START -------------------
+# ------------------- MODIFIED BufferingSink CLASS -------------------
 class BufferingSink(AudioSink):
-    def __init__(self):
+    def __init__(self, stop_callback, silence_duration=2, volume_threshold=400):
         super().__init__()
+        self.stop_callback = stop_callback
+        self.silence_duration = silence_duration
+        self.volume_threshold = volume_threshold
         self.audio_data = {}
+        self.last_speech_time = None
+        self.has_spoken = False # Track if anyone has spoken yet in this cycle
 
     def wants_opus(self):
         return False
 
     def write(self, user, data):
+        # Calculate volume of the incoming audio chunk
+        volume = audioop.rms(data.pcm, 2) # 2 = 16-bit audio
+
+        # Simple Voice Activity Detection (VAD)
+        is_speaking = volume > self.volume_threshold
+
+        if is_speaking:
+            self.last_speech_time = time.time()
+            if not self.has_spoken:
+                logger.info("Speech detected, VAD timer armed.")
+                self.has_spoken = True
+
+        # Append audio data regardless of speaking state
         if user not in self.audio_data:
             self.audio_data[user] = io.BytesIO()
         self.audio_data[user].write(data.pcm)
+
+        # If we have detected speech and now it's silent, check the timer
+        if self.has_spoken and not is_speaking and self.stop_callback:
+            time_since_last_speech = time.time() - self.last_speech_time
+            if time_since_last_speech > self.silence_duration:
+                logger.info(f"Silence detected for {self.silence_duration}s, stopping listener.")
+                self.stop_callback()
+                self.stop_callback = None # Prevent calling it multiple times
 
     def cleanup(self):
         pass
@@ -43,7 +75,7 @@ class BufferingSink(AudioSink):
         for buffer in self.audio_data.values():
             buffer.close()
         self.audio_data.clear()
-# -------------------- NEW CLASS DEFINITION END --------------------
+# -------------------- END OF MODIFIED CLASS --------------------
 
 
 class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
@@ -62,7 +94,10 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
 
     def _get_or_create_conversation(self, guild_id):
         if guild_id not in self.conversations:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel(
+                'gemini-1.5-flash',
+                system_instruction=VOICE_SYSTEM_PROMPT
+            )
             self.conversations[guild_id] = model.start_chat(history=[])
         return self.conversations[guild_id]
 
@@ -96,12 +131,6 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
                 self.voice_states[guild_id]['is_speaking'] = False
             self.bot.loop.call_soon_threadsafe(self._after_speak, voice_client, "TTS Failure")
 
-    async def _listening_task(self, vc: VoiceRecvClient, duration: float):
-        await asyncio.sleep(duration)
-        if vc.is_connected() and vc.is_listening():
-            logger.info(f"[{vc.guild.id}] Listening timeout reached, stopping listener.")
-            vc.stop_listening()
-
     def _after_speak(self, vc: VoiceRecvClient, error):
         guild_id = vc.guild.id
         logger.info(f"[{guild_id}] Finished speaking.")
@@ -114,10 +143,15 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
 
         self.voice_states[guild_id]['is_speaking'] = False
         
-        sink = BufferingSink()
+        # Create a thread-safe callback that the sink can use to stop the listener
+        stop_listening_callback = lambda: self.bot.loop.call_soon_threadsafe(vc.stop_listening)
+        
+        # --- MODIFIED LINE ---
+        # Pass the callback and a shorter silence duration to the sink.
+        sink = BufferingSink(stop_listening_callback, silence_duration=0.5)
         self.voice_states[guild_id]['sink'] = sink
 
-        logger.info(f"[{guild_id}] Starting a new listening cycle.")
+        logger.info(f"[{guild_id}] Starting a new listening cycle with VAD.")
 
         def after_listening_callback(sink_from_callback, error=None):
             if error:
@@ -128,7 +162,6 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
             self.bot.loop.call_soon_threadsafe(self._process_audio, stored_sink, guild_id)
         
         vc.listen(sink, after=after_listening_callback)
-        self.bot.loop.create_task(self._listening_task(vc, 15.0))
 
     def _process_audio(self, sink: BufferingSink, guild_id: int):
         if not sink:
@@ -158,7 +191,6 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
 
                 mem_wav = io.BytesIO()
                 with wave.open(mem_wav, 'wb') as wf:
-                    # Use hardcoded standard Discord audio properties
                     wf.setnchannels(2)
                     wf.setsampwidth(2)
                     wf.setframerate(48000)
