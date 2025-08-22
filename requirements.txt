@@ -13,3 +13,4 @@ PyNaCl
 SpeechRecognition
 gTTS
 pydub
+webrtcvad
