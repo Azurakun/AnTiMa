@@ -1,3 +1,6 @@
+discord-ext-voice-recv
+discord
+discord.py
 requests
 flask
 aiohttp
