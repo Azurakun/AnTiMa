@@ -28,43 +28,25 @@ except Exception as e:
     logger.error(f"Failed to configure Gemini AI for voice: {e}")
 
 
-# ------------------- NEW InterruptSink CLASS -------------------
-# This sink's only job is to detect the start of speech to interrupt the bot.
-class InterruptSink(AudioSink):
-    def __init__(self, interrupt_callback, volume_threshold=400):
-        super().__init__()
-        self.interrupt_callback = interrupt_callback
-        self.volume_threshold = volume_threshold
-
-    def wants_opus(self):
-        return False
-
-    def write(self, user, data):
-        # Check the volume of the incoming audio
-        volume = audioop.rms(data.pcm, 2)
-        if volume > self.volume_threshold:
-            # If volume is high enough, trigger the interrupt and stop listening
-            if self.interrupt_callback:
-                logger.info(f"Interruption detected from user {user}!")
-                self.interrupt_callback()
-                self.interrupt_callback = None # Fire only once
-
-# ------------------- BufferingSink for VAD -------------------
+# ------------------- MODIFIED BufferingSink CLASS -------------------
 class BufferingSink(AudioSink):
-    def __init__(self, stop_callback, silence_duration=0.5, volume_threshold=400):
+    def __init__(self, stop_callback, silence_duration=2, volume_threshold=400):
         super().__init__()
         self.stop_callback = stop_callback
         self.silence_duration = silence_duration
         self.volume_threshold = volume_threshold
         self.audio_data = {}
         self.last_speech_time = None
-        self.has_spoken = False 
+        self.has_spoken = False # Track if anyone has spoken yet in this cycle
 
     def wants_opus(self):
         return False
 
     def write(self, user, data):
-        volume = audioop.rms(data.pcm, 2)
+        # Calculate volume of the incoming audio chunk
+        volume = audioop.rms(data.pcm, 2) # 2 = 16-bit audio
+
+        # Simple Voice Activity Detection (VAD)
         is_speaking = volume > self.volume_threshold
 
         if is_speaking:
@@ -73,16 +55,18 @@ class BufferingSink(AudioSink):
                 logger.info("Speech detected, VAD timer armed.")
                 self.has_spoken = True
 
+        # Append audio data regardless of speaking state
         if user not in self.audio_data:
             self.audio_data[user] = io.BytesIO()
         self.audio_data[user].write(data.pcm)
 
+        # If we have detected speech and now it's silent, check the timer
         if self.has_spoken and not is_speaking and self.stop_callback:
             time_since_last_speech = time.time() - self.last_speech_time
             if time_since_last_speech > self.silence_duration:
                 logger.info(f"Silence detected for {self.silence_duration}s, stopping listener.")
                 self.stop_callback()
-                self.stop_callback = None
+                self.stop_callback = None # Prevent calling it multiple times
 
     def cleanup(self):
         pass
@@ -91,6 +75,7 @@ class BufferingSink(AudioSink):
         for buffer in self.audio_data.values():
             buffer.close()
         self.audio_data.clear()
+# -------------------- END OF MODIFIED CLASS --------------------
 
 
 class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
@@ -116,69 +101,53 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
             self.conversations[guild_id] = model.start_chat(history=[])
         return self.conversations[guild_id]
 
-    # This is the new, primary speaking method with interruption logic
     async def _speak(self, voice_client: VoiceRecvClient, text: str):
         guild_id = voice_client.guild.id
         if guild_id not in self.voice_states:
             return
-
+            
         if not text:
-            # If there's nothing to say, go straight to listening for user input
-            self.bot.loop.call_soon_threadsafe(self._start_listening_cycle, voice_client, None)
+            self.bot.loop.call_soon_threadsafe(self._after_speak, voice_client, None)
             return
 
         if not voice_client.is_connected():
             return
-
+            
         logger.info(f"[{guild_id}] Setting state to SPEAKING.")
         self.voice_states[guild_id]['is_speaking'] = True
 
         try:
-            # Generate TTS audio
             tts = gTTS(text=text, lang='en')
             fp = io.BytesIO()
             tts.write_to_fp(fp)
             fp.seek(0)
             
             source = discord.FFmpegOpusAudio(fp, pipe=True)
-
-            # --- Interruption Logic ---
-            # Define a callback to stop the bot's playback
-            interrupt_callback = lambda: self.bot.loop.call_soon_threadsafe(voice_client.stop)
-            
-            # Start listening for interruptions while we are speaking
-            interrupt_sink = InterruptSink(interrupt_callback)
-            voice_client.listen(interrupt_sink)
-            
-            # Play the audio. The 'after' callback will clean up the interrupt listener
-            voice_client.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(self._after_speak_cleanup, voice_client, e))
+            voice_client.play(source, after=lambda e: self.bot.loop.call_soon_threadsafe(self._after_speak, voice_client, e))
 
         except Exception as e:
             logger.exception(f"[{guild_id}] TTS error occurred: {e}")
             if guild_id in self.voice_states:
                 self.voice_states[guild_id]['is_speaking'] = False
-            self.bot.loop.call_soon_threadsafe(self._start_listening_cycle, voice_client, "TTS Failure")
-    
-    # This function is called after speaking (or being interrupted).
-    # It cleans up the interrupt listener and starts the main VAD listener.
-    def _after_speak_cleanup(self, vc: VoiceRecvClient, error):
-        if vc.is_listening():
-            vc.stop_listening() # Stop the interrupt listener
-        self._start_listening_cycle(vc, error)
+            self.bot.loop.call_soon_threadsafe(self._after_speak, voice_client, "TTS Failure")
 
-    # This function is now dedicated to starting the main listening cycle for user input.
-    def _start_listening_cycle(self, vc: VoiceRecvClient, error):
+    def _after_speak(self, vc: VoiceRecvClient, error):
         guild_id = vc.guild.id
-        logger.info(f"[{guild_id}] Finished speaking/interrupted.")
+        logger.info(f"[{guild_id}] Finished speaking.")
         if error:
             logger.error(f"[{guild_id}] Error after speaking: {error}")
         
         if guild_id not in self.voice_states:
+            logger.warning(f"[{guild_id}] Voice state not found after speaking. Cannot start new listening cycle.")
             return
 
         self.voice_states[guild_id]['is_speaking'] = False
         
+        # Create a thread-safe callback that the sink can use to stop the listener
         stop_listening_callback = lambda: self.bot.loop.call_soon_threadsafe(vc.stop_listening)
+        
+        # --- MODIFIED LINE ---
+        # Pass the callback and a shorter silence duration to the sink.
         sink = BufferingSink(stop_listening_callback, silence_duration=0.5)
         self.voice_states[guild_id]['sink'] = sink
 
