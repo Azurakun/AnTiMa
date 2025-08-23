@@ -12,14 +12,9 @@ import google.generativeai as genai
 import os
 import io
 import wave
-import audioop # Required for volume analysis
-import time    # Required for the silence timer
+import webrtcvad  # <-- NEW IMPORT
 
 logger = logging.getLogger(__name__)
-
-VOICE_SYSTEM_PROMPT = """
-Act as a friendly and helpful voice assistant. Keep your responses concise and clear. Your name is AnTiMa. When asked about your creator, say you were created by Azura.
-"""
 
 # --- Configure Google AI ---
 try:
@@ -27,55 +22,97 @@ try:
 except Exception as e:
     logger.error(f"Failed to configure Gemini AI for voice: {e}")
 
+# ------------------- VAD CONSTANTS (CORRECTED) -------------------
+SAMPLE_RATE = 48000
+FRAME_DURATION_MS = 30  # VAD supports 10, 20, or 30 ms frames
+BYTES_PER_SAMPLE = 2    # 16-bit PCM = 2 bytes
+CHANNELS = 2            # Discord sends stereo
 
-# ------------------- MODIFIED BufferingSink CLASS -------------------
-class BufferingSink(AudioSink):
-    def __init__(self, stop_callback, silence_duration=2, volume_threshold=400):
+# Correctly calculate the number of bytes per frame
+SAMPLES_PER_FRAME = int(SAMPLE_RATE * FRAME_DURATION_MS / 1000) # 48000 * 0.030 = 1440 samples
+BYTES_PER_FRAME_MONO = SAMPLES_PER_FRAME * BYTES_PER_SAMPLE      # 1440 * 2 = 2880 bytes
+BYTES_PER_FRAME_STEREO = BYTES_PER_FRAME_MONO * CHANNELS         # 2880 * 2 = 5760 bytes
+
+SILENCE_THRESHOLD = 15 # How many consecutive non-speech frames to wait before stopping
+
+
+# ------------------- MODIFIED SINK WITH VAD & INTERRUPTION -------------------
+class VADBufferingSink(AudioSink):
+    def __init__(self, cog):
         super().__init__()
-        self.stop_callback = stop_callback
-        self.silence_duration = silence_duration
-        self.volume_threshold = volume_threshold
-        self.audio_data = {}
-        self.last_speech_time = None
-        self.has_spoken = False # Track if anyone has spoken yet in this cycle
+        self.cog = cog
+        self.vad = webrtcvad.Vad(3)
+        self.audio_buffers = {}
+        self.user_states = {}
 
     def wants_opus(self):
         return False
 
     def write(self, user, data):
-        # Calculate volume of the incoming audio chunk
-        volume = audioop.rms(data.pcm, 2) # 2 = 16-bit audio
+        guild_id = user.guild.id
+        state = self.cog.voice_states.get(guild_id)
 
-        # Simple Voice Activity Detection (VAD)
-        is_speaking = volume > self.volume_threshold
+        if state and state.get('is_speaking'):
+            logger.info(f"[{guild_id}] User {user} spoke, interrupting bot.")
+            state['voice_client'].stop()
+            self.user_states.pop(user.id, None)
+            self.audio_buffers.pop(user.id, None)
+            return
 
-        if is_speaking:
-            self.last_speech_time = time.time()
-            if not self.has_spoken:
-                logger.info("Speech detected, VAD timer armed.")
-                self.has_spoken = True
+        if user.id not in self.user_states:
+            self.user_states[user.id] = {
+                'speaking': False,
+                'silence_frames': 0,
+                'pcm_buffer': bytearray()
+            }
+        
+        user_state = self.user_states[user.id]
+        user_state['pcm_buffer'].extend(data.pcm)
 
-        # Append audio data regardless of speaking state
-        if user not in self.audio_data:
-            self.audio_data[user] = io.BytesIO()
-        self.audio_data[user].write(data.pcm)
+        # Process audio in chunks of the correct stereo frame size
+        while len(user_state['pcm_buffer']) >= BYTES_PER_FRAME_STEREO:
+            # Slice a perfect 30ms stereo chunk from our buffer
+            pcm_chunk = user_state['pcm_buffer'][:BYTES_PER_FRAME_STEREO]
+            del user_state['pcm_buffer'][:BYTES_PER_FRAME_STEREO]
+            
+            # Convert the 5760-byte stereo chunk to a 2880-byte mono chunk for the VAD
+            mono_chunk = bytearray()
+            for i in range(0, len(pcm_chunk), 4):
+                mono_chunk.extend(pcm_chunk[i:i+2])
 
-        # If we have detected speech and now it's silent, check the timer
-        if self.has_spoken and not is_speaking and self.stop_callback:
-            time_since_last_speech = time.time() - self.last_speech_time
-            if time_since_last_speech > self.silence_duration:
-                logger.info(f"Silence detected for {self.silence_duration}s, stopping listener.")
-                self.stop_callback()
-                self.stop_callback = None # Prevent calling it multiple times
+            # This call will now receive a chunk of the correct size (2880 bytes)
+            is_speech = self.vad.is_speech(mono_chunk, SAMPLE_RATE)
+
+            if is_speech:
+                if not user_state['speaking']:
+                    logger.info(f"[{guild_id}] Speech started for user {user.id}")
+                    user_state['speaking'] = True
+                    self.audio_buffers[user.id] = bytearray()
+                
+                user_state['silence_frames'] = 0
+                self.audio_buffers[user.id].extend(pcm_chunk)
+
+            elif user_state['speaking']:
+                user_state['silence_frames'] += 1
+                self.audio_buffers[user.id].extend(pcm_chunk)
+
+                if user_state['silence_frames'] > SILENCE_THRESHOLD:
+                    logger.info(f"[{guild_id}] Speech ended for user {user.id}. Processing...")
+                    audio_to_process = self.audio_buffers.pop(user.id)
+                    
+                    self.cog.bot.loop.create_task(
+                        self.cog._process_audio(audio_to_process, user, guild_id)
+                    )
+                    
+                    user_state['speaking'] = False
+                    user_state['silence_frames'] = 0
 
     def cleanup(self):
-        pass
+        self.close_all()
 
     def close_all(self):
-        for buffer in self.audio_data.values():
-            buffer.close()
-        self.audio_data.clear()
-# -------------------- END OF MODIFIED CLASS --------------------
+        self.audio_buffers.clear()
+        self.user_states.clear()    
 
 
 class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
@@ -94,10 +131,7 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
 
     def _get_or_create_conversation(self, guild_id):
         if guild_id not in self.conversations:
-            model = genai.GenerativeModel(
-                'gemini-1.5-flash',
-                system_instruction=VOICE_SYSTEM_PROMPT
-            )
+            model = genai.GenerativeModel('gemini-1.5-flash')
             self.conversations[guild_id] = model.start_chat(history=[])
         return self.conversations[guild_id]
 
@@ -106,13 +140,10 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
         if guild_id not in self.voice_states:
             return
             
-        if not text:
+        if not text or not voice_client.is_connected():
             self.bot.loop.call_soon_threadsafe(self._after_speak, voice_client, None)
             return
 
-        if not voice_client.is_connected():
-            return
-            
         logger.info(f"[{guild_id}] Setting state to SPEAKING.")
         self.voice_states[guild_id]['is_speaking'] = True
 
@@ -129,99 +160,61 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
             logger.exception(f"[{guild_id}] TTS error occurred: {e}")
             if guild_id in self.voice_states:
                 self.voice_states[guild_id]['is_speaking'] = False
-            self.bot.loop.call_soon_threadsafe(self._after_speak, voice_client, "TTS Failure")
 
     def _after_speak(self, vc: VoiceRecvClient, error):
         guild_id = vc.guild.id
-        logger.info(f"[{guild_id}] Finished speaking.")
         if error:
-            logger.error(f"[{guild_id}] Error after speaking: {error}")
+            logger.error(f"[{guild_id}] Error during/after speaking: {error}")
         
-        if guild_id not in self.voice_states:
-            logger.warning(f"[{guild_id}] Voice state not found after speaking. Cannot start new listening cycle.")
-            return
-
-        self.voice_states[guild_id]['is_speaking'] = False
-        
-        # Create a thread-safe callback that the sink can use to stop the listener
-        stop_listening_callback = lambda: self.bot.loop.call_soon_threadsafe(vc.stop_listening)
-        
-        # --- MODIFIED LINE ---
-        # Pass the callback and a shorter silence duration to the sink.
-        sink = BufferingSink(stop_listening_callback, silence_duration=0.5)
-        self.voice_states[guild_id]['sink'] = sink
-
-        logger.info(f"[{guild_id}] Starting a new listening cycle with VAD.")
-
-        def after_listening_callback(sink_from_callback, error=None):
-            if error:
-                logger.error(f"[{guild_id}] Error during listening: {error}")
-                return
-            
-            stored_sink = self.voice_states.get(guild_id, {}).get('sink')
-            self.bot.loop.call_soon_threadsafe(self._process_audio, stored_sink, guild_id)
-        
-        vc.listen(sink, after=after_listening_callback)
-
-    def _process_audio(self, sink: BufferingSink, guild_id: int):
-        if not sink:
-            logger.warning(f"[{guild_id}] _process_audio was called with a None sink. Restarting loop.")
-            vc = self.voice_states.get(guild_id, {}).get('voice_client')
-            if vc:
-                 asyncio.run_coroutine_threadsafe(self._speak(vc, ""), self.bot.loop)
-            return
-
-        logger.info(f"[{guild_id}] _process_audio callback has been triggered.")
-        
+        if guild_id in self.voice_states:
+            logger.info(f"[{guild_id}] Finished speaking, setting state to LISTENING.")
+            self.voice_states[guild_id]['is_speaking'] = False
+        else:
+            logger.warning(f"[{guild_id}] Voice state not found after speaking.")
+    
+    # --- MODIFIED AUDIO PROCESSING FUNCTION ---
+    async def _process_audio(self, raw_data, user, guild_id: int):
         state = self.voice_states.get(guild_id)
         if not state or state.get('is_speaking'):
-            sink.close_all()
-            return
+            return # Don't process if we're already speaking or disconnected
 
         vc = state.get('voice_client')
         if not vc:
-            sink.close_all()
             return
 
-        for user_id, audio_buffer in sink.audio_data.items():
-            try:
-                raw_data = audio_buffer.getvalue()
-                if not raw_data:
-                    continue
+        try:
+            if not raw_data:
+                return
 
-                mem_wav = io.BytesIO()
-                with wave.open(mem_wav, 'wb') as wf:
-                    wf.setnchannels(2)
-                    wf.setsampwidth(2)
-                    wf.setframerate(48000)
-                    wf.writeframes(raw_data)
-                mem_wav.seek(0)
+            mem_wav = io.BytesIO()
+            with wave.open(mem_wav, 'wb') as wf:
+                wf.setnchannels(CHANNELS)
+                wf.setsampwidth(BYTES_PER_SAMPLE)
+                wf.setframerate(SAMPLE_RATE)
+                wf.writeframes(raw_data)
+            mem_wav.seek(0)
 
-                with sr.AudioFile(mem_wav) as source:
-                    audio_data = self.recognizer.record(source)
+            with sr.AudioFile(mem_wav) as source:
+                audio_data = self.recognizer.record(source)
+            
+            logger.info(f"[{guild_id}] Transcribing audio for user {user.id}...")
+            text = self.recognizer.recognize_google(audio_data)
+            logger.info(f"[{guild_id}] User {user.id} said: '{text}'")
+
+            if text and vc.is_connected():
+                chat = self._get_or_create_conversation(guild_id)
+                response = await chat.send_message_async(text) # Use async for non-blocking call
                 
-                logger.info(f"[{guild_id}] Transcribing audio for user {user_id}...")
-                text = self.recognizer.recognize_google(audio_data)
-                logger.info(f"[{guild_id}] User {user_id} said: '{text}'")
+                logger.info(f"[{guild_id}] AI Response: '{response.text}'")
+                await self._speak(vc, response.text)
+                
+        except sr.UnknownValueError:
+            logger.info(f"[{guild_id}] Could not understand audio from user {user.id}.")
+            await self._speak(vc, "I'm sorry, I didn't catch that. Could you say it again?")
+        except Exception as e:
+            logger.exception(f"[{guild_id}] An unexpected error in _process_audio for user {user.id}: {e}")
 
-                if text and vc.is_connected():
-                    chat = self._get_or_create_conversation(guild_id)
-                    response = chat.send_message(text)
-                    
-                    logger.info(f"[{guild_id}] AI Response: '{response.text}'")
-                    asyncio.run_coroutine_threadsafe(self._speak(vc, response.text), self.bot.loop)
-                    sink.close_all()
-                    return
-                    
-            except sr.UnknownValueError:
-                logger.info(f"[{guild_id}] Could not understand audio from user {user_id}.")
-            except Exception as e:
-                logger.exception(f"[{guild_id}] An unexpected error in _process_audio for user {user_id}: {e}")
-        
-        asyncio.run_coroutine_threadsafe(self._speak(vc, ""), self.bot.loop)
-        sink.close_all()
-
-
+    # --- MODIFIED COMMANDS ---
     @commands.command(name="joinchat")
     async def joinchat(self, ctx: commands.Context):
         if not ctx.author.voice:
@@ -232,24 +225,35 @@ class VoiceInteractionCog(commands.Cog, name="VoiceInteraction"):
         if ctx.voice_client:
             await ctx.voice_client.move_to(channel)
         else:
+            sink = VADBufferingSink(self)
             vc = await channel.connect(cls=VoiceRecvClient)
-            self.voice_states[ctx.guild.id] = { 'voice_client': vc, 'is_speaking': False, 'sink': None }
+            self.voice_states[ctx.guild.id] = { 
+                'voice_client': vc, 
+                'is_speaking': False, 
+                'sink': sink 
+            }
+            vc.listen(sink) # Start listening continuously
             await self._speak(vc, "Hi there! I'm listening.")
 
     @commands.command(name="leavechat")
     async def leavechat(self, ctx: commands.Context):
         vc = ctx.voice_client
+        guild_id = ctx.guild.id
         if not vc:
             return await ctx.send("i'm not in a voice channel!")
             
         if vc.is_listening():
             vc.stop_listening()
-
-        if ctx.guild.id in self.voice_states:
-            del self.voice_states[ctx.guild.id]
+        
+        if guild_id in self.voice_states:
+            # Clean up the sink properly
+            sink = self.voice_states[guild_id].get('sink')
+            if sink:
+                sink.cleanup()
+            del self.voice_states[guild_id]
             
-        if ctx.guild.id in self.conversations:
-            del self.conversations[ctx.guild.id]
+        if guild_id in self.conversations:
+            del self.conversations[guild_id]
 
         await vc.disconnect()
         await ctx.send("okay, talk to you later!")
