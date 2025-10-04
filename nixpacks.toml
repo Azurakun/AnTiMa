@@ -1,0 +1,9 @@
+# nixpacks.toml
+
+[phases.setup]
+nixPkgs = ["ffmpeg", "libopus", "opusfile", "python311", "gcc"]
+
+[phases.build]
+cmds = [
+    ". /opt/venv/bin/activate && pip install -U pip && pip install 'discord.py[voice]' && pip install -r requirements.txt"
+]

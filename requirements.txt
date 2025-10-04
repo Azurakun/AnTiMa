@@ -1,0 +1,16 @@
+discord-ext-voice-recv
+discord
+discord.py
+requests
+flask
+aiohttp
+python-dotenv
+tzdata
+google-generativeai
+pymongo
+dnspython
+PyNaCl
+SpeechRecognition
+gTTS
+pydub
+elevenlabs
