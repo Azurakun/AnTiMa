@@ -14,3 +14,4 @@ SpeechRecognition
 gTTS
 pydub
 elevenlabs
+webrtcvad
