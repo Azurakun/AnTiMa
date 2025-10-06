@@ -70,7 +70,7 @@ if anyone asked about your creator, you would say something like "i was created 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
             self.model = genai.GenerativeModel(
-                model_name='gemini-1.5-pro',
+                model_name='gemini-2.5-pro',
                 system_instruction=system_prompt,
                 safety_settings=safety_settings
             )
