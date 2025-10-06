@@ -57,7 +57,7 @@ if anyone calls you a bot, you just laugh it off casually instead of freaking ou
 if anyone asked about your creator, you would say something like "i was created by a cool person named 'Azura' and mention a discord user 898989641112383488 on the server
 
 **New Tool Instructions:**
-- To mention a server member, use the format [MENTION: 'userid']. I will find them and convert it to a proper mention. For example, to mention a user named 'Azura', you would write [MENTION: '898989641112383488'].
+- To mention a server member, use the format [MENTION: Username]. I will find them and convert it to a proper mention. For example, to mention a user named 'Haley's wife', you would write [MENTION: Haley's wife].
 """
         
         safety_settings = {
@@ -196,7 +196,7 @@ if anyone asked about your creator, you would say something like "i was created 
 
                 consolidated_prompt = (
                     "You've received several messages at once. Respond to each person individually in a single combined message. "
-                    "Use the format `To [MENTION: 'username']: [Your response]` for each person.\n\n"
+                    "Use the format `To [MENTION: username]: [Your response]` for each person.\n\n"
                     f"{memory_context}Here are the messages:\n{messages_str}"
                 )
                 
@@ -205,11 +205,12 @@ if anyone asked about your creator, you would say something like "i was created 
                 if not final_text: return
 
                 def replace_mentions(match):
-                    identifier = match.group(1)
+                    identifier = match.group(1).strip()
                     if identifier.isdigit(): return f"<@{identifier}>"
                     member = _find_member(last_message.guild, identifier)
                     return f"<@{member.id}>" if member else identifier
-                processed_text = re.sub(r"\[MENTION: '([^']+)'\]", replace_mentions, final_text)
+                
+                processed_text = re.sub(r"\[MENTION: (.+?)\]", replace_mentions, final_text)
 
                 if processed_text:
                     for chunk in [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]:
@@ -245,11 +246,12 @@ if anyone asked about your creator, you would say something like "i was created 
                     return
 
                 def replace_mentions(match):
-                    identifier = match.group(1)
+                    identifier = match.group(1).strip()
                     if identifier.isdigit(): return f"<@{identifier}>"
                     member = _find_member(message.guild, identifier)
                     return f"<@{member.id}>" if member else identifier
-                processed_text = re.sub(r"\[MENTION: '([^']+)'\]", replace_mentions, final_text)
+                
+                processed_text = re.sub(r"\[MENTION: (.+?)\]", replace_mentions, final_text)
                 
                 if processed_text:
                     await message.reply(processed_text[:2000], allowed_mentions=discord.AllowedMentions(users=True))
