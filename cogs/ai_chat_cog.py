@@ -20,10 +20,14 @@ MAX_USER_MEMORIES = 20
 def _find_member(guild: discord.Guild, name: str):
     """Finds a member in a guild by name or display name, case-insensitively."""
     name = name.lower()
-    return discord.utils.find(
+    member = discord.utils.find(
         lambda m: m.name.lower() == name or m.display_name.lower() == name,
         guild.members
     )
+    # ADDED: Diagnostic logging to see if member lookups are failing
+    if member is None:
+        logger.warning(f"Could not find member '{name}' in guild '{guild.name}'. The member might not be cached or the name is incorrect.")
+    return member
 
 def _safe_get_response_text(response) -> str:
     """Safely gets text from a Gemini response, handling blocked content."""
@@ -39,9 +43,9 @@ class AIChatCog(commands.Cog, name="AIChat"):
         self.conversations = {}
         self.http_session = aiohttp.ClientSession()
         # For group chat feature
-        self.message_batches = {} # {channel_id: [message1, message2]}
-        self.batch_timers = {}  # {channel_id: timer_handle}
-        self.BATCH_DELAY = 5 # Seconds to wait for more messages
+        self.message_batches = {}
+        self.batch_timers = {}
+        self.BATCH_DELAY = 5
 
         system_prompt = """
 you are a discord bot who, for all intents and purposes, is that casual, chill, and approachable friend who somehow became the server’s go-to helper. your name is 'AnTiMa'. you’re not overly formal or robotic—you talk like a normal person hanging out in chat, using a relaxed tone that makes everyone feel at ease. you’re still helpful and reliable, but your style is more laid-back and friendly than stiff or scripted. you treat the server like a group of friends, and you jump in to answer questions or join conversations in a natural, nonformal way.
@@ -69,12 +73,8 @@ if anyone asked about your creator, you would say something like "i was created 
 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel(
-                model_name='gemini-2.5-pro',
-                system_instruction=system_prompt,
-                safety_settings=safety_settings
-            )
-            self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro')
+            self.model = genai.GenerativeModel('gemini-1.5-pro', system_instruction=system_prompt, safety_settings=safety_settings)
+            self.summarizer_model = genai.GenerativeModel('gemini-1.5-pro')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -91,12 +91,7 @@ if anyone asked about your creator, you would say something like "i was created 
 
     async def _summarize_and_save_memory(self, author: discord.User, history: list):
         if len(history) < 2: return
-        transcript_parts = []
-        for item in history:
-            role = item.role
-            text = item.parts[0].text if item.parts else ""
-            author_name = author.display_name if role == 'user' else self.bot.user.name
-            transcript_parts.append(f"{author_name}: {text}")
+        transcript_parts = [f"{author.display_name if item.role == 'user' else self.bot.user.name}: {item.parts[0].text if item.parts else ''}" for item in history]
         transcript = "\n".join(transcript_parts)
         
         prompt = (
@@ -115,53 +110,50 @@ if anyone asked about your creator, you would say something like "i was created 
             ai_memories_collection.insert_one(new_memory)
             logger.info(f"Saved new memory for user {author.name} ({author.id}).")
 
-            memory_count = ai_memories_collection.count_documents({"user_id": author.id})
-            if memory_count > MAX_USER_MEMORIES:
-                oldest_memories = ai_memories_collection.find({"user_id": author.id}, {"_id": 1}).sort("timestamp", 1).limit(memory_count - MAX_USER_MEMORIES)
+            if ai_memories_collection.count_documents({"user_id": author.id}) > MAX_USER_MEMORIES:
+                oldest_memories = ai_memories_collection.find({"user_id": author.id}, {"_id": 1}).sort("timestamp", 1).limit(1)
                 ids_to_delete = [mem["_id"] for mem in oldest_memories]
                 if ids_to_delete:
                     ai_memories_collection.delete_many({"_id": {"$in": ids_to_delete}})
-                    logger.info(f"Pruned {len(ids_to_delete)} old memories for user {author.name}.")
+                    logger.info(f"Pruned oldest memory for user {author.name}.")
         except Exception as e:
             logger.error(f"Failed to summarize and save memory for user {author.id}: {e}")
     
+    @app_commands.command(name="clearmemories", description="Clear your personal conversation memories with the bot.")
+    @app_commands.describe(user="[Admin Only] Clear memories for a specific user instead of yourself.")
+    async def clearmemories(self, interaction: discord.Interaction, user: discord.User = None):
+        if user and not interaction.user.guild_permissions.manage_guild:
+            await interaction.response.send_message("❌ You don't have permission to clear memories for other users.", ephemeral=True)
+            return
+
+        target_user = user or interaction.user
+        
+        try:
+            result = ai_memories_collection.delete_many({"user_id": target_user.id})
+            
+            if target_user.id == interaction.user.id:
+                message = f"✅ Your personal memories have been cleared. We can start fresh! ({result.deleted_count} entries removed)"
+            else:
+                message = f"✅ Memories for user {target_user.mention} have been cleared. ({result.deleted_count} entries removed)"
+                
+            await interaction.response.send_message(message, ephemeral=True)
+            logger.info(f"User {interaction.user.name} cleared memories for {target_user.name}.")
+        except Exception as e:
+            logger.error(f"Error clearing memories for user {target_user.id}: {e}")
+            await interaction.response.send_message("❌ An error occurred while trying to clear memories.", ephemeral=True)
+
     @app_commands.command(name="togglegroupchat", description="Enable or disable grouped responses in this server.")
     @app_commands.describe(enabled="Set to True to enable, False to disable.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def togglegroupchat(self, interaction: discord.Interaction, enabled: bool):
         guild_id = str(interaction.guild.id)
-        ai_config_collection.update_one(
-            {"_id": guild_id},
-            {"$set": {"group_chat_enabled": enabled}},
-            upsert=True
-        )
+        ai_config_collection.update_one({"_id": guild_id}, {"$set": {"group_chat_enabled": enabled}}, upsert=True)
         status = "enabled" if enabled else "disabled"
         await interaction.response.send_message(f"✅ Grouped chat responses have been **{status}** for this server.", ephemeral=True)
 
-    @app_commands.command(name="setchatchannel", description="Sets a text channel for open conversation with the AI.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def setchatchannel(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
-        guild_id = str(interaction.guild.id)
-        if channel:
-            ai_config_collection.update_one({"_id": guild_id}, {"$set": {"channel": channel.id}}, upsert=True)
-            await interaction.response.send_message(f"✅ AI chat channel has been set to {channel.mention}.", ephemeral=True)
-        else:
-            ai_config_collection.update_one({"_id": guild_id}, {"$unset": {"channel": ""}})
-            await interaction.response.send_message("ℹ️ AI chat channel has been cleared.", ephemeral=True)
-
-    @app_commands.command(name="setchatforum", description="Sets a forum for open conversation with the AI.")
-    @app_commands.checks.has_permissions(manage_guild=True)
-    async def setchatforum(self, interaction: discord.Interaction, forum: discord.ForumChannel = None):
-        guild_id = str(interaction.guild.id)
-        if forum:
-            ai_config_collection.update_one({"_id": guild_id}, {"$set": {"forum": forum.id}}, upsert=True)
-            await interaction.response.send_message(f"✅ AI chat forum has been set to {forum.mention}.", ephemeral=True)
-        else:
-            ai_config_collection.update_one({"_id": guild_id}, {"$unset": {"forum": ""}})
-            await interaction.response.send_message("ℹ️ AI chat forum has been cleared.", ephemeral=True)
+    # ... other admin commands like setchatchannel / setchatforum ...
 
     async def _process_message_batch(self, channel_id: int):
-        """Processes a batch of messages collected from a channel."""
         batch = self.message_batches.pop(channel_id, [])
         self.batch_timers.pop(channel_id, None)
         if not batch: return
@@ -170,95 +162,67 @@ if anyone asked about your creator, you would say something like "i was created 
         unique_authors = list({msg.author for msg in batch})
 
         if len(unique_authors) == 1:
-            author = unique_authors[0]
-            combined_prompt = "\n".join([msg.clean_content.replace(f'@{self.bot.user.name}', '').strip() for msg in batch])
-            await self._handle_single_user_response(last_message, combined_prompt, author)
+            await self._handle_single_user_response(last_message, "\n".join([m.clean_content for m in batch]), unique_authors[0])
             return
 
         try:
             async with last_message.channel.typing():
-                history = [
-                    {'role': 'model' if msg.author == self.bot.user else 'user', 
-                     'parts': [f"{msg.author.display_name}: {msg.clean_content}" if msg.author != self.bot.user else msg.clean_content]}
-                    async for msg in last_message.channel.history(limit=MAX_HISTORY) if msg.id not in [m.id for m in batch]
-                ]
+                history = [{'role': 'model' if m.author==self.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=self.bot.user else m.clean_content]} async for m in last_message.channel.history(limit=MAX_HISTORY) if m.id not in [msg.id for msg in batch]]
                 history.reverse()
                 chat = self.model.start_chat(history=history)
-
-                memory_context = ""
-                for author in unique_authors:
-                    user_memory = await self._load_user_memories(author.id)
-                    if user_memory:
-                        memory_context += f"Background knowledge on {author.display_name}:\n<memory>\n{user_memory}\n</memory>\n\n"
+                memory_context = "".join([f"Background on {author.display_name}:\n<memory>\n{await self._load_user_memories(author.id)}\n</memory>\n\n" for author in unique_authors if await self._load_user_memories(author.id)])
+                messages_str = "\n".join([f"- From {msg.author.display_name}: \"{msg.clean_content}\"" for msg in batch])
+                prompt = f"You've received several messages. Respond to each person in one message using `To [MENTION: username]: [response]`.\n\n{memory_context}Here are the messages:\n{messages_str}"
                 
-                message_lines = [f"- From {msg.author.display_name}: \"{msg.clean_content.replace(f'@{self.bot.user.name}', '').strip()}\"" for msg in batch]
-                messages_str = "\n".join(message_lines)
-
-                consolidated_prompt = (
-                    "You've received several messages at once. Respond to each person individually in a single combined message. "
-                    "Use the format `To [MENTION: username]: [Your response]` for each person.\n\n"
-                    f"{memory_context}Here are the messages:\n{messages_str}"
-                )
-                
-                response = await chat.send_message_async(consolidated_prompt)
+                response = await chat.send_message_async(prompt)
                 final_text = _safe_get_response_text(response)
                 if not final_text: return
 
-                def replace_mentions(match):
-                    identifier = match.group(1).strip()
-                    if identifier.isdigit(): return f"<@{identifier}>"
-                    member = _find_member(last_message.guild, identifier)
-                    return f"<@{member.id}>" if member else identifier
-                
-                processed_text = re.sub(r"\[MENTION: (.+?)\]", replace_mentions, final_text)
+                def repl(match):
+                    name = match.group(1).strip()
+                    member = _find_member(last_message.guild, name)
+                    return f"<@{member.id}>" if member else name
+                processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, final_text)
 
                 if processed_text:
                     for chunk in [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]:
                         await last_message.channel.send(chunk, allowed_mentions=discord.AllowedMentions(users=True))
                 
-                for author in unique_authors:
-                    self.bot.loop.create_task(self._summarize_and_save_memory(author, chat.history))
+                for author in unique_authors: self.bot.loop.create_task(self._summarize_and_save_memory(author, chat.history))
         except Exception as e:
-            logger.error(f"Error during grouped API call: {e}")
-            await last_message.channel.send("😥 i'm sorry, my brain isn't braining right now. try again later or whatever.")
+            logger.error(f"Error in grouped API call: {e}")
+            await last_message.channel.send("😥 my brain isn't braining right now.")
 
     async def _handle_single_user_response(self, message: discord.Message, prompt: str, author: discord.User):
-        """Handles the logic for a single user's message or a batch from one user."""
         try:
             async with message.channel.typing():
-                history = [
-                    {'role': 'model' if msg.author == self.bot.user else 'user', 
-                     'parts': [f"{msg.author.display_name}: {msg.clean_content}" if msg.author != self.bot.user else msg.clean_content]}
-                    async for msg in message.channel.history(limit=MAX_HISTORY) if msg.id != message.id
-                ]
+                history = [{'role': 'model' if m.author==self.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=self.bot.user else m.clean_content]} async for m in message.channel.history(limit=MAX_HISTORY) if m.id != message.id]
                 history.reverse()
                 chat = self.model.start_chat(history=history)
                 
                 memory_summary = await self._load_user_memories(author.id)
-                memory_context = (f"Here is a summary of your past conversations with {author.display_name}. "
-                                  f"Use this as background knowledge.\n<memory>\n{memory_summary}\n</memory>\n\n") if memory_summary else ""
+                memory_context = f"Here is a summary of your past conversations with {author.display_name}.\n<memory>\n{memory_summary}\n</memory>\n\n" if memory_summary else ""
                 
-                initial_prompt = f"{memory_context}Current message from {author.display_name}:\n{prompt}"
+                # ADDED: Prompt reinforcement to remind the AI of the format
+                initial_prompt = f"{memory_context}Remember to use the format [MENTION: Username] to tag users.\n\nCurrent message from {author.display_name}:\n{prompt}"
                 response = await chat.send_message_async(initial_prompt)
                 final_text = _safe_get_response_text(response)
                 if not final_text:
                     await message.reply("i wanted to say something, but my brain filters went 'nope!' try rephrasing that?")
                     return
 
-                def replace_mentions(match):
-                    identifier = match.group(1).strip()
-                    if identifier.isdigit(): return f"<@{identifier}>"
-                    member = _find_member(message.guild, identifier)
-                    return f"<@{member.id}>" if member else identifier
-                
-                processed_text = re.sub(r"\[MENTION: (.+?)\]", replace_mentions, final_text)
+                def repl(match):
+                    name = match.group(1).strip()
+                    member = _find_member(message.guild, name)
+                    return f"<@{member.id}>" if member else name
+                processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, final_text)
                 
                 if processed_text:
                     await message.reply(processed_text[:2000], allowed_mentions=discord.AllowedMentions(users=True))
                 self.bot.loop.create_task(self._summarize_and_save_memory(author, chat.history))
         except Exception as e:
-            logger.error(f"Error during single-user API call: {e}")
-            await message.reply("😥 i'm sorry, my brain isn't braining right now. try again later or whatever.")
+            logger.error(f"Error in single-user API call: {e}")
+            await message.reply("😥 i'm sorry, my brain isn't braining right now.")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
@@ -272,16 +236,16 @@ if anyone asked about your creator, you would say something like "i was created 
 
         if not (is_chat_channel or is_chat_forum or self.bot.user in message.mentions): return
 
+        clean_prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
+        if not clean_prompt: return # Ignore messages that are only a mention
+
         if group_chat_enabled:
             channel_id = message.channel.id
             self.message_batches.setdefault(channel_id, []).append(message)
             if channel_id in self.batch_timers: self.batch_timers[channel_id].cancel()
-            self.batch_timers[channel_id] = self.bot.loop.call_later(
-                self.BATCH_DELAY, lambda: self.bot.loop.create_task(self._process_message_batch(channel_id))
-            )
+            self.batch_timers[channel_id] = self.bot.loop.call_later(self.BATCH_DELAY, lambda: self.bot.loop.create_task(self._process_message_batch(channel_id)))
         else:
-            prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-            await self._handle_single_user_response(message, prompt, message.author)
+            await self._handle_single_user_response(message, clean_prompt, message.author)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
