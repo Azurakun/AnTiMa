@@ -74,7 +74,7 @@ if anyone asked about your creator, you would say something like "i was created 
                 system_instruction=system_prompt,
                 safety_settings=safety_settings
             )
-            self.summarizer_model = genai.GenerativeModel('gemini-1.5-pro')
+            self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
