@@ -98,7 +98,7 @@ if anyone asked about your creator, you would say something like "i was created 
             f"You are a memory creation AI. Your name is AnTiMa. Create a concise, first-person memory entry from your perspective "
             f"about your conversation with '{author.display_name}'. Focus on their preferences, questions, or personal details. "
             f"Frame it like you're remembering it, e.g., 'I remember talking to {author.display_name} about...'. Keep it under 150 words.\n\n"
-            f"if there's a MENTION tag, replace it with the user's actual username.\n\n"
+            f"if there's a MENTION tag, replace it with the user's actual username. For example, you mention a user named 'Haley's wife' with [MENTION: Haley's wife], you would write 'Haley's wife' on the memory.\n\n" "
             f"TRANSCRIPT:\n---\n{transcript}\n---\n\nMEMORY ENTRY:"
         )
         
