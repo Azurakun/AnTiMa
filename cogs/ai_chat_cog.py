@@ -75,7 +75,7 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
             self.model = genai.GenerativeModel('gemini-2.5-pro', system_instruction=system_prompt, safety_settings=safety_settings)
-            self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro')
+            self.summarizer_model = genai.GenerativeModel('gemini-2.5-flash')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -102,6 +102,7 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
             reply_info = ""
             if msg.reference and msg.reference.message_id:
                 replied_to_author = None
+                # This is a simplified check; a full fetch would be too slow here.
                 for hist_msg in history:
                     if msg.reference.message_id == hist_msg.id:
                         replied_to_author = "AnTiMa" if hist_msg.author == self.bot.user else hist_msg.author.display_name
@@ -265,7 +266,31 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
                 memory_summary = await self._load_user_memories(author.id)
                 memory_context = f"Here is a summary of your past conversations with {author.display_name}.\n<memory>\n{memory_summary}\n</memory>\n\n" if memory_summary else ""
                 
-                content = [f"{memory_context}Remember to use the format [MENTION: Username] to tag users.\n\nCurrent message from {author.display_name}:\n{prompt}"]
+                # --- NEW, MORE CONTEXTUAL PROMPT ---
+                contextual_prompt_text = ""
+                if message.reference:
+                    try:
+                        replied_to_message = await message.channel.fetch_message(message.reference.message_id)
+                        replied_to_author_name = "you (AnTiMa)" if replied_to_message.author == self.bot.user else replied_to_message.author.display_name
+                        contextual_prompt_text = (
+                            f"The user {author.display_name} is replying to {replied_to_author_name}.\n"
+                            f"The original message was: \"{replied_to_message.clean_content}\"\n"
+                            f"Their reply is: \"{prompt}\"\n\n"
+                            f"Based on this context, and your memories of {author.display_name}, formulate your response to them."
+                        )
+                    except (discord.NotFound, discord.HTTPException):
+                        contextual_prompt_text = f"The user {author.display_name} is replying to a previous message and says: \"{prompt}\"."
+                else:
+                    contextual_prompt_text = f"The user {author.display_name} is talking to you and says: \"{prompt}\"."
+
+                full_prompt = (
+                    f"{memory_context}"
+                    f"Remember your personality and the rules. Remember to use `[MENTION: Username]` to tag users when needed.\n\n"
+                    f"--- Current Conversation Turn ---\n"
+                    f"{contextual_prompt_text}"
+                )
+                
+                content = [full_prompt]
 
                 if message.attachments:
                     for attachment in message.attachments:
@@ -305,14 +330,19 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
         group_chat_enabled = guild_config.get("group_chat_enabled", False)
 
         is_reply_to_bot = False
-        if message.reference:
-            try:
-                replied_to_message = await message.channel.fetch_message(message.reference.message_id)
-                if replied_to_message.author == self.bot.user:
-                    is_reply_to_bot = True
-                    logger.info("Determined message is a reply to the bot.")
-            except (discord.NotFound, discord.HTTPException):
-                pass
+        if message.reference and message.reference.message_id:
+            # A cached message can be accessed directly
+            if isinstance(message.reference.resolved, discord.Message) and message.reference.resolved.author == self.bot.user:
+                 is_reply_to_bot = True
+                 logger.info("Determined message is a reply to the bot from cache.")
+            else: # Otherwise, fetch the message
+                try:
+                    replied_to_message = await message.channel.fetch_message(message.reference.message_id)
+                    if replied_to_message.author == self.bot.user:
+                        is_reply_to_bot = True
+                        logger.info("Determined message is a reply to the bot via fetch.")
+                except (discord.NotFound, discord.HTTPException):
+                    pass
 
         should_respond = False
         if is_mentioned or is_chat_forum or is_reply_to_bot:
@@ -326,7 +356,7 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
         clean_prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
         if not clean_prompt and not message.attachments: return
 
-        if group_chat_enabled and is_chat_channel:
+        if group_chat_enabled and is_chat_channel and not is_reply_to_bot:
             channel_id = message.channel.id
             self.message_batches.setdefault(channel_id, []).append(message)
             if channel_id in self.batch_timers: self.batch_timers[channel_id].cancel()
@@ -338,11 +368,10 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
     async def proactive_chat_loop(self):
         """Periodically and randomly initiates a conversation in a quiet, configured chat channel."""
         try:
-            await asyncio.sleep(random.uniform(60, 3600)) 
+            await asyncio.sleep(random.uniform(3600, 10800)) # Wait between 1 to 3 hours
 
             guild_configs = list(ai_config_collection.find({"channel": {"$exists": True, "$ne": None}}))
             if not guild_configs:
-                logger.info("Proactive chat: No guilds with chat channels configured.")
                 return
 
             config = random.choice(guild_configs)
@@ -350,19 +379,17 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
             channel = self.bot.get_channel(config['channel'])
 
             if not guild or not channel:
-                logger.info(f"Proactive chat: Could not find guild or channel for config {config['_id']}.")
                 return
 
             if channel.last_message_id:
                 try:
                     last_message = await channel.fetch_message(channel.last_message_id)
-                    if last_message and (datetime.now(timezone.utc) - last_message.created_at).total_seconds() < 7200:
-                        logger.info(f"Proactive chat: Channel #{channel.name} is too active. Skipping.")
+                    if last_message and (datetime.now(timezone.utc) - last_message.created_at).total_seconds() < 7200: # 2 hours
                         return
                 except discord.NotFound:
-                    pass # Channel is empty, proceed.
+                    pass
 
-            all_user_ids_with_memories = await ai_memories_collection.distinct("user_id")
+            all_user_ids_with_memories = ai_memories_collection.distinct("user_id", {"guild_id": guild.id}) # Filter by guild
             potential_users = []
             for user_id in all_user_ids_with_memories:
                 member = guild.get_member(user_id)
@@ -370,7 +397,6 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
                     potential_users.append(member)
 
             if not potential_users:
-                logger.info(f"Proactive chat: No active users with memories found in {guild.name}.")
                 return
             
             target_user = random.choice(potential_users)
@@ -422,3 +448,4 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
+
