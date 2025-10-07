@@ -72,8 +72,8 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel('gemini-1.5-pro-vision-latest', system_instruction=system_prompt, safety_settings=safety_settings)
-            self.summarizer_model = genai.GenerativeModel('gemini-1.5-pro-vision-latest')
+            self.model = genai.GenerativeModel('gemini-2.5-pro', system_instruction=system_prompt, safety_settings=safety_settings)
+            self.summarizer_model = genai.GenerativeModel('gemini-2.5-pro')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
