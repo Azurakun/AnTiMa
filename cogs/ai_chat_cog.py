@@ -9,6 +9,8 @@ from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import aiohttp
 import re
 from datetime import datetime
+import io
+from PIL import Image
 
 # Import the MongoDB collections
 from utils.db import ai_config_collection, ai_memories_collection
@@ -63,7 +65,7 @@ if anyone asked about your creator, you would say something like "i was created 
 **New Tool Instructions:**
 - To mention a server member, use the format [MENTION: Username]. I will find them and convert it to a proper mention. For example, to mention a user named 'Haley's wife', you would write [MENTION: Haley's wife].
 """
-        
+
         safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -93,15 +95,15 @@ if anyone asked about your creator, you would say something like "i was created 
         if len(history) < 2: return
         transcript_parts = [f"{author.display_name if item.role == 'user' else self.bot.user.name}: {item.parts[0].text if item.parts else ''}" for item in history]
         transcript = "\n".join(transcript_parts)
-        
+
         prompt = (
             f"You are a memory creation AI. Your name is AnTiMa. Create a concise, first-person memory entry from your perspective "
             f"about your conversation with '{author.display_name}'. Focus on their preferences, questions, or personal details. "
-            f"Frame it like you're remembering it, e.g., 'I remember talking to {author.display_name} about...'. Keep it under 150 words.\n\n"
+            f"Frame it like you're remembering it, e.g., 'I remember talking to {author.display_name} about...'. Keep it under 150 words."
             f"if there's a MENTION tag, replace it with the user's actual username. For example, you mention a user named 'Haley's wife' with [MENTION: Haley's wife], you would write 'Haley's wife' on the memory."
             f"TRANSCRIPT:\n---\n{transcript}\n---\n\nMEMORY ENTRY:"
         )
-        
+
         try:
             response = await self.summarizer_model.generate_content_async(prompt)
             summary = _safe_get_response_text(response)
@@ -119,7 +121,7 @@ if anyone asked about your creator, you would say something like "i was created 
                     logger.info(f"Pruned oldest memory for user {author.name}.")
         except Exception as e:
             logger.error(f"Failed to summarize and save memory for user {author.id}: {e}")
-    
+
     @app_commands.command(name="clearmemories", description="Clear your personal conversation memories with the bot.")
     @app_commands.describe(user="[Admin Only] Clear memories for a specific user instead of yourself.")
     async def clearmemories(self, interaction: discord.Interaction, user: discord.User = None):
@@ -128,15 +130,15 @@ if anyone asked about your creator, you would say something like "i was created 
             return
 
         target_user = user or interaction.user
-        
+
         try:
             result = ai_memories_collection.delete_many({"user_id": target_user.id})
-            
+
             if target_user.id == interaction.user.id:
                 message = f"✅ Your personal memories have been cleared. We can start fresh! ({result.deleted_count} entries removed)"
             else:
                 message = f"✅ Memories for user {target_user.mention} have been cleared. ({result.deleted_count} entries removed)"
-                
+
             await interaction.response.send_message(message, ephemeral=True)
             logger.info(f"User {interaction.user.name} cleared memories for {target_user.name}.")
         except Exception as e:
@@ -162,7 +164,7 @@ if anyone asked about your creator, you would say something like "i was created 
         last_message = batch[-1]
         unique_authors = list({msg.author for msg in batch})
 
-        if len(unique_authors) == 1:
+        if len(unique_authors) == 1 and not any(msg.attachments for msg in batch):
             await self._handle_single_user_response(last_message, "\n".join([m.clean_content for m in batch]), unique_authors[0])
             return
 
@@ -172,10 +174,23 @@ if anyone asked about your creator, you would say something like "i was created 
                 history.reverse()
                 chat = self.model.start_chat(history=history)
                 memory_context = "".join([f"Background on {author.display_name}:\n<memory>\n{await self._load_user_memories(author.id)}\n</memory>\n\n" for author in unique_authors if await self._load_user_memories(author.id)])
-                messages_str = "\n".join([f"- From {msg.author.display_name}: \"{msg.clean_content}\"" for msg in batch])
-                prompt = f"You've received several messages. Respond to each person in one message using `To [MENTION: username]: [response]`.\n\n{memory_context}Here are the messages:\n{messages_str}"
                 
-                response = await chat.send_message_async(prompt)
+                messages_str_parts = []
+                content = []
+                for msg in batch:
+                    messages_str_parts.append(f"- From {msg.author.display_name}: \"{msg.clean_content}\"")
+                    if msg.attachments:
+                        for attachment in msg.attachments:
+                            if attachment.content_type.startswith('image/'):
+                                image_data = await attachment.read()
+                                image = Image.open(io.BytesIO(image_data))
+                                content.append(image)
+
+                messages_str = "\n".join(messages_str_parts)
+                prompt = f"You've received several messages. Respond to each person in one message using `To [MENTION: username]: [response]`.\n\n{memory_context}Here are the messages:\n{messages_str}"
+                content.insert(0, prompt)
+                
+                response = await chat.send_message_async(content)
                 final_text = _safe_get_response_text(response)
                 if not final_text: return
 
@@ -204,9 +219,16 @@ if anyone asked about your creator, you would say something like "i was created 
                 memory_summary = await self._load_user_memories(author.id)
                 memory_context = f"Here is a summary of your past conversations with {author.display_name}.\n<memory>\n{memory_summary}\n</memory>\n\n" if memory_summary else ""
                 
-                # ADDED: Prompt reinforcement to remind the AI of the format
-                initial_prompt = f"{memory_context}Remember to use the format [MENTION: Username] to tag users.\n\nCurrent message from {author.display_name}:\n{prompt}"
-                response = await chat.send_message_async(initial_prompt)
+                content = [f"{memory_context}Remember to use the format [MENTION: Username] to tag users.\n\nCurrent message from {author.display_name}:\n{prompt}"]
+
+                if message.attachments:
+                    for attachment in message.attachments:
+                        if attachment.content_type.startswith('image/'):
+                            image_data = await attachment.read()
+                            image = Image.open(io.BytesIO(image_data))
+                            content.append(image)
+                
+                response = await chat.send_message_async(content)
                 final_text = _safe_get_response_text(response)
                 if not final_text:
                     await message.reply("i wanted to say something, but my brain filters went 'nope!' try rephrasing that?")
@@ -238,7 +260,7 @@ if anyone asked about your creator, you would say something like "i was created 
         if not (is_chat_channel or is_chat_forum or self.bot.user in message.mentions): return
 
         clean_prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-        if not clean_prompt: return # Ignore messages that are only a mention
+        if not clean_prompt and not message.attachments: return
 
         if group_chat_enabled:
             channel_id = message.channel.id
