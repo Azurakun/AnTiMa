@@ -15,3 +15,4 @@ gTTS
 pydub
 elevenlabs
 webrtcvad
+Pillow
