@@ -1,16 +1,18 @@
 # cogs/ai_chat_cog.py
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import logging
 import os
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import aiohttp
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 import io
 from PIL import Image
+import random
+import asyncio
 
 # Import the MongoDB collections
 from utils.db import ai_config_collection, ai_memories_collection
@@ -78,8 +80,11 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
+        
+        self.proactive_chat_loop.start()
 
     def cog_unload(self):
+        self.proactive_chat_loop.cancel()
         self.bot.loop.create_task(self.http_session.close())
 
     async def _should_bot_respond_ai_check(self, message: discord.Message) -> bool:
@@ -328,6 +333,92 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
             self.batch_timers[channel_id] = self.bot.loop.call_later(self.BATCH_DELAY, lambda: self.bot.loop.create_task(self._process_message_batch(channel_id)))
         else:
             await self._handle_single_user_response(message, clean_prompt, message.author)
+
+    @tasks.loop(hours=3)
+    async def proactive_chat_loop(self):
+        """Periodically and randomly initiates a conversation in a quiet, configured chat channel."""
+        try:
+            await asyncio.sleep(random.uniform(60, 3600)) 
+
+            guild_configs = list(ai_config_collection.find({"channel": {"$exists": True, "$ne": None}}))
+            if not guild_configs:
+                logger.info("Proactive chat: No guilds with chat channels configured.")
+                return
+
+            config = random.choice(guild_configs)
+            guild = self.bot.get_guild(int(config['_id']))
+            channel = self.bot.get_channel(config['channel'])
+
+            if not guild or not channel:
+                logger.info(f"Proactive chat: Could not find guild or channel for config {config['_id']}.")
+                return
+
+            if channel.last_message_id:
+                try:
+                    last_message = await channel.fetch_message(channel.last_message_id)
+                    if last_message and (datetime.now(timezone.utc) - last_message.created_at).total_seconds() < 7200:
+                        logger.info(f"Proactive chat: Channel #{channel.name} is too active. Skipping.")
+                        return
+                except discord.NotFound:
+                    pass # Channel is empty, proceed.
+
+            all_user_ids_with_memories = await ai_memories_collection.distinct("user_id")
+            potential_users = []
+            for user_id in all_user_ids_with_memories:
+                member = guild.get_member(user_id)
+                if member and not member.bot and member.status != discord.Status.offline:
+                    potential_users.append(member)
+
+            if not potential_users:
+                logger.info(f"Proactive chat: No active users with memories found in {guild.name}.")
+                return
+            
+            target_user = random.choice(potential_users)
+            logger.info(f"Proactive chat: Attempting to start a conversation with {target_user.name} in {guild.name}.")
+
+            await self._initiate_conversation(channel, target_user)
+
+        except Exception as e:
+            logger.error(f"An error occurred in the proactive chat loop: {e}", exc_info=True)
+
+    @proactive_chat_loop.before_loop
+    async def before_proactive_chat_loop(self):
+        await self.bot.wait_until_ready()
+
+    async def _initiate_conversation(self, channel: discord.TextChannel, user: discord.Member):
+        """Uses the AI to generate and send a conversation starter."""
+        try:
+            memory_summary = await self._load_user_memories(user.id)
+            if not memory_summary:
+                return
+
+            prompt = (
+                f"You are feeling a bit bored or reflective and want to start a casual conversation with a user named '{user.display_name}'. "
+                "You remember some things about them. Based on the memories below, craft a natural-sounding conversation starter. "
+                "It could be a question about something you discussed before, a follow-up, or just a random thought related to them. "
+                "Keep it chill and not too intense. Remember to tag them using `[MENTION: {user.display_name}]`.\n\n"
+                f"--- YOUR MEMORIES OF {user.display_name} ---\n{memory_summary}\n---"
+            )
+            
+            async with channel.typing():
+                response = await self.model.generate_content_async(prompt)
+                starter_text = _safe_get_response_text(response)
+
+                if not starter_text:
+                    logger.warning("Proactive chat: AI generated an empty conversation starter.")
+                    return
+                
+                def repl(match):
+                    name = match.group(1).strip()
+                    member = _find_member(channel.guild, name)
+                    return f"<@{member.id}>" if member else name
+                processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, starter_text)
+
+                await channel.send(processed_text, allowed_mentions=discord.AllowedMentions(users=True))
+                logger.info(f"Proactive chat: Sent a conversation starter to {user.name} in #{channel.name}.")
+
+        except Exception as e:
+            logger.error(f"Failed to initiate conversation with {user.name}: {e}")
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
