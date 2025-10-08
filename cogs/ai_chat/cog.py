@@ -33,8 +33,8 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel('gemini-1.5-pro', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
-            self.summarizer_model = genai.GenerativeModel('gemini-1.5-flash')
+            self.model = genai.GenerativeModel('gemini-2.5-pro', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings)
+            self.summarizer_model = genai.GenerativeModel('gemini-2.5-flash')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
