@@ -33,9 +33,14 @@ class MyBot(commands.Bot):
 
     async def setup_hook(self):
         # This is the best place to load cogs and sync commands
+        
+        # Load the new ai_chat cog
+        await self.load_extension("cogs.ai_chat.cog")
+        
+        # Load other cogs
         cogs_folder = "cogs"
         for filename in os.listdir(cogs_folder):
-            if filename.endswith(".py"):
+            if filename.endswith(".py") and filename != "ai_chat_cog.py": # Make sure not to load the old one
                 await self.load_extension(f"{cogs_folder}.{filename[:-3]}")
         
         # Sync the commands to Discord
