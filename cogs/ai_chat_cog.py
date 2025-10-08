@@ -401,17 +401,27 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
                 except discord.NotFound:
                     pass
 
-            all_user_ids_with_memories = ai_memories_collection.distinct("user_id", {"guild_id": guild.id}) # Filter by guild
-            potential_users = []
-            for user_id in all_user_ids_with_memories:
-                member = guild.get_member(user_id)
-                if member and not member.bot and member.status != discord.Status.offline:
-                    potential_users.append(member)
+            potential_users = set()
+            async for msg in channel.history(limit=100):
+                # Find users who have either been replied to by the bot or have mentioned the bot
+                if msg.author == self.bot.user and msg.reference:
+                    try:
+                        replied_to_message = await channel.fetch_message(msg.reference.message_id)
+                        if not replied_to_message.author.bot:
+                            potential_users.add(replied_to_message.author)
+                    except (discord.NotFound, discord.HTTPException):
+                        continue
+                elif self.bot.user in msg.mentions and not msg.author.bot:
+                    potential_users.add(msg.author)
+            
+            # Filter out offline members
+            online_users = [user for user in potential_users if isinstance(user, discord.Member) and user.status != discord.Status.offline]
 
-            if not potential_users:
+            if not online_users:
+                logger.info("Proactive chat: No recent, online users found to interact with.")
                 return
             
-            target_user = random.choice(potential_users)
+            target_user = random.choice(online_users)
             logger.info(f"Proactive chat: Attempting to start a conversation with {target_user.name} in {guild.name}.")
 
             await self._initiate_conversation(channel, target_user)
@@ -434,33 +444,38 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 
         await interaction.response.defer(ephemeral=True)
         
-        success = await self._initiate_conversation(interaction.channel, user)
+        success, reason = await self._initiate_conversation(interaction.channel, user)
         
         if success:
             await interaction.followup.send(f"✅ Successfully started a conversation with {user.mention} in this channel.")
         else:
-            await interaction.followup.send(f"⚠️ Could not start a conversation. This is likely because I have no memories of {user.mention}.")
+            await interaction.followup.send(f"⚠️ Could not start a conversation with {user.mention}. Reason: {reason}")
 
-    # --- MODIFIED: _initiate_conversation now returns a boolean ---
-    async def _initiate_conversation(self, channel: discord.TextChannel, user: discord.Member) -> bool:
-        """Uses the AI to generate and send a conversation starter. Returns True on success."""
+    # --- MODIFIED: _initiate_conversation now returns a boolean and a reason string ---
+    async def _initiate_conversation(self, channel: discord.TextChannel, user: discord.Member) -> tuple[bool, str]:
+        """Uses the AI to generate and send a conversation starter. Returns a tuple of (success, reason)."""
         try:
             memory_summary = await self._load_user_memories(user.id)
-            if not memory_summary:
-                logger.warning(f"Proactive chat: No memories found for {user.name}, cannot start conversation.")
-                return False
-
+            
             # Add current time to the prompt
             now_gmt7 = datetime.now(ZoneInfo("Asia/Jakarta"))
             time_str = now_gmt7.strftime("%A, %B %d, %Y at %I:%M %p GMT+7")
 
-            prompt = (
-                f"The current time is {time_str}. You are feeling a bit bored or reflective and want to start a casual conversation with a user named '{user.display_name}'. "
-                "You remember some things about them. Based on the memories below, craft a natural-sounding conversation starter. "
-                "It could be a question about something you discussed before, a follow-up, or just a random thought related to them. "
-                "Keep it chill and not too intense. Remember to tag them using `[MENTION: {user.display_name}]`.\n\n"
-                f"--- YOUR MEMORIES OF {user.display_name} ---\n{memory_summary}\n---"
-            )
+            if memory_summary:
+                prompt = (
+                    f"The current time is {time_str}. You are feeling a bit bored or reflective and want to start a casual conversation with a user named '{user.display_name}'. "
+                    "You remember some things about them. Based on the memories below, craft a natural-sounding conversation starter. "
+                    "It could be a question about something you discussed before, a follow-up, or just a random thought related to them. "
+                    "Keep it chill and not too intense. Remember to tag them using `[MENTION: {user.display_name}]`.\n\n"
+                    f"--- YOUR MEMORIES OF {user.display_name} ---\n{memory_summary}\n---"
+                )
+            else:
+                # Fallback prompt if there are no memories
+                prompt = (
+                    f"The current time is {time_str}. You want to start a random, casual conversation with '{user.display_name}' to make the chat more active. "
+                    "Ask a fun, open-ended question. For example, you could ask about their favorite game, what they had for lunch, or what they're currently listening to. "
+                    "Keep it friendly and engaging. Remember to tag them using `[MENTION: {user.display_name}]`."
+                )
             
             async with channel.typing():
                 response = await self.model.generate_content_async(prompt)
@@ -468,7 +483,7 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 
                 if not starter_text:
                     logger.warning("Proactive chat: AI generated an empty conversation starter.")
-                    return False
+                    return False, "AI failed to generate a message."
                 
                 def repl(match):
                     name = match.group(1).strip()
@@ -478,11 +493,11 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 
                 await channel.send(processed_text, allowed_mentions=discord.AllowedMentions(users=True))
                 logger.info(f"Proactive chat: Sent a conversation starter to {user.name} in #{channel.name}.")
-                return True
+                return True, "Success"
 
         except Exception as e:
             logger.error(f"Failed to initiate conversation with {user.name}: {e}")
-            return False
+            return False, f"An internal error occurred: {e}"
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
