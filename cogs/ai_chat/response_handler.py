@@ -6,14 +6,25 @@ from zoneinfo import ZoneInfo
 import io
 from PIL import Image
 import re
+import asyncio
+import random
 from .memory_handler import load_user_memories, summarize_and_save_memory
-from .utils import _find_member, _safe_get_response_text # <-- UPDATED IMPORT
+from .utils import _find_member, _safe_get_response_text
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
 
 async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Message) -> bool:
-    """Uses an AI model to determine if the bot should respond based on conversation context."""
+    """Uses an AI model to determine if the bot should respond based on conversation context, especially for follow-ups."""
+    if message.reference and message.reference.message_id:
+        try:
+            replied_to = await message.channel.fetch_message(message.reference.message_id)
+            if replied_to.author == bot.user:
+                logger.info(f"Direct reply to AnTiMa detected for message '{message.content}'. Responding.")
+                return True
+        except (discord.NotFound, discord.HTTPException):
+            pass
+
     history = [msg async for msg in message.channel.history(limit=6)]
     history.reverse()
 
@@ -34,7 +45,7 @@ async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Me
             if replied_to_author:
                 reply_info = f"(in reply to {replied_to_author}) "
         conversation_log.append(f"{author_name}: {reply_info}{msg.clean_content}")
-    
+
     conversation_str = "\n".join(conversation_log)
 
     prompt = (
@@ -43,8 +54,9 @@ async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Me
         "Rules for responding:\n"
         "1. Respond if the last message directly addresses AnTiMa by name (e.g., 'AnTiMa', 'Anti').\n"
         "2. Respond if the last message asks a general question that AnTiMa could answer (like about code, trivia, or an opinion), especially if no one else is being asked.\n"
-        "3. DO NOT respond if users are clearly having a one-on-one conversation with each other that does not involve AnTiMa.\n"
-        "4. DO NOT respond if the last message is a reply to another user and doesn't mention AnTiMa.\n\n"
+        "3. Respond if the last message is a follow-up or a direct reply to AnTiMa's previous message.\n"
+        "4. DO NOT respond if users are clearly having a one-on-one conversation with each other that does not involve AnTiMa.\n"
+        "5. DO NOT respond if the last message is a reply to another user and doesn't mention AnTiMa.\n\n"
         f"--- CONVERSATION ---\n{conversation_str}\n---\n\n"
         "Based on these rules and the final message, should AnTiMa join in? Answer with only 'yes' or 'no'."
     )
@@ -59,6 +71,7 @@ async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Me
         return False
 
 async def process_message_batch(cog, channel_id: int):
+    # This function remains unchanged from the previous version
     batch = cog.message_batches.pop(channel_id, [])
     cog.batch_timers.pop(channel_id, None)
     if not batch: return
@@ -107,15 +120,22 @@ async def process_message_batch(cog, channel_id: int):
             processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, final_text)
 
             if processed_text:
-                for chunk in [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]:
-                    await last_message.channel.send(chunk, allowed_mentions=discord.AllowedMentions(users=True))
+                chunks = [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]
+                sent_message = None
+                for chunk in chunks:
+                    async with last_message.channel.typing():
+                        await asyncio.sleep(random.uniform(1, 2))
+                        if sent_message is None:
+                            sent_message = await last_message.channel.send(chunk, allowed_mentions=discord.AllowedMentions(users=True))
+                        else:
+                            sent_message = await sent_message.reply(chunk, allowed_mentions=discord.AllowedMentions(users=True))
             
             for author in unique_authors: cog.bot.loop.create_task(summarize_and_save_memory(cog.summarizer_model, author, chat.history))
     except Exception as e:
         logger.error(f"Error in grouped API call: {e}")
         await last_message.channel.send("😥 my brain isn't braining right now.")
 
-async def handle_single_user_response(cog, message: discord.Message, prompt: str, author: discord.User):
+async def handle_single_user_response(cog, message: discord.Message, prompt: str, author: discord.User, intervening_author: discord.User = None, intervening_prompt: str = None):
     try:
         async with message.channel.typing():
             history = [{'role': 'model' if m.author==cog.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=cog.bot.user else m.clean_content]} async for m in message.channel.history(limit=MAX_HISTORY) if m.id != message.id]
@@ -126,18 +146,26 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
             memory_context = f"Here is a summary of your past conversations with {author.display_name}.\n<memory>\n{memory_summary}\n</memory>\n\n" if memory_summary else ""
             
             contextual_prompt_text = ""
-            if message.reference:
+            # NEW: Handle the 3-way interaction first
+            if intervening_author:
+                contextual_prompt_text = (
+                    f"The user {intervening_author.display_name} has mentioned you in a reply to {author.display_name}, asking you to respond to them.\n"
+                    f"The original message from {author.display_name} was: \"{prompt}\"\n"
+                    f"The comment from {intervening_author.display_name} was: \"{intervening_prompt}\"\n\n"
+                    f"Based on this context, and your memories of {author.display_name}, formulate your response directly to {author.display_name}."
+                )
+            elif message.reference:
                 try:
                     replied_to_message = await message.channel.fetch_message(message.reference.message_id)
                     replied_to_author_name = "you (AnTiMa)" if replied_to_message.author == cog.bot.user else replied_to_message.author.display_name
                     contextual_prompt_text = (
-                        f"The user {author.display_name} is replying to {replied_to_author_name}.\n"
-                        f"The original message was: \"{replied_to_message.clean_content}\"\n"
+                        f"The user {author.display_name} is DIRECTLY REPLYING to {replied_to_author_name}.\n"
+                        f"The original message they replied to was: \"{replied_to_message.clean_content}\"\n"
                         f"Their reply is: \"{prompt}\"\n\n"
-                        f"Based on this context, and your memories of {author.display_name}, formulate your response to them."
+                        f"Based on this direct reply context, and your memories of {author.display_name}, formulate your response to them."
                     )
                 except (discord.NotFound, discord.HTTPException):
-                    contextual_prompt_text = f"The user {author.display_name} is replying to a previous message and says: \"{prompt}\"."
+                    contextual_prompt_text = f"The user {author.display_name} is replying to a previous message and says: \"{prompt}\". (The message they replied to could not be fetched, so use general conversation context.)"
             else:
                 contextual_prompt_text = f"The user {author.display_name} is talking to you and says: \"{prompt}\"."
 
@@ -174,7 +202,16 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
             processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, final_text)
             
             if processed_text:
-                await message.reply(processed_text[:2000], allowed_mentions=discord.AllowedMentions(users=True))
+                chunks = [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]
+                sent_message = None
+                if chunks:
+                    sent_message = await message.reply(chunks[0], allowed_mentions=discord.AllowedMentions(users=True))
+
+                if sent_message:
+                    for chunk in chunks[1:]:
+                        async with message.channel.typing():
+                            await asyncio.sleep(random.uniform(1, 2))
+                            sent_message = await sent_message.reply(chunk, allowed_mentions=discord.AllowedMentions(users=True))
             cog.bot.loop.create_task(summarize_and_save_memory(cog.summarizer_model, author, chat.history))
     except Exception as e:
         logger.error(f"Error in single-user API call: {e}")

@@ -106,18 +106,44 @@ class AIChatCog(commands.Cog, name="AIChat"):
         is_mentioned = self.bot.user in message.mentions
         group_chat_enabled = guild_config.get("group_chat_enabled", False)
 
+        # --- NEW: Logic to handle a user tagging the bot in a reply to someone else ---
+        if is_mentioned and message.reference and message.reference.message_id:
+            try:
+                original_message = await message.channel.fetch_message(message.reference.message_id)
+                # This scenario is when Person B replies to Person A and tags the bot.
+                if original_message.author != message.author and original_message.author != self.bot.user:
+                    logger.info(f"3-way interaction detected: {message.author.name} tagged bot in reply to {original_message.author.name}.")
+                    
+                    clean_prompt_by_intervener = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
+                    
+                    # Call the response handler, targeting Person A's message.
+                    await handle_single_user_response(
+                        cog=self, 
+                        message=original_message,  # Reply to Person A's message
+                        prompt=original_message.clean_content, # AI focuses on Person A's content
+                        author=original_message.author, # AI considers Person A the primary user
+                        intervening_author=message.author, # Pass Person B as the one who tagged
+                        intervening_prompt=clean_prompt_by_intervener # Pass Person B's comment
+                    )
+                    return # Stop further processing for this message.
+            except (discord.NotFound, discord.HTTPException) as e:
+                logger.warning(f"Could not fetch replied-to message for 3-way interaction check: {e}")
+
+        # --- End of New Logic ---
+
         is_reply_to_bot = False
         if message.reference and message.reference.message_id:
-            # A cached message can be accessed directly
             if isinstance(message.reference.resolved, discord.Message) and message.reference.resolved.author == self.bot.user:
                  is_reply_to_bot = True
                  logger.info("Determined message is a reply to the bot from cache.")
-            else: # Otherwise, fetch the message
+            else: 
                 try:
-                    replied_to_message = await message.channel.fetch_message(message.reference.message_id)
-                    if replied_to_message.author == self.bot.user:
-                        is_reply_to_bot = True
-                        logger.info("Determined message is a reply to the bot via fetch.")
+                    # Avoid re-fetching if we already did it in the 3-way check
+                    if 'original_message' not in locals():
+                        replied_to_message = await message.channel.fetch_message(message.reference.message_id)
+                        if replied_to_message.author == self.bot.user:
+                            is_reply_to_bot = True
+                            logger.info("Determined message is a reply to the bot via fetch.")
                 except (discord.NotFound, discord.HTTPException):
                     pass
 
