@@ -8,7 +8,8 @@ import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import aiohttp
 import re
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 import io
 from PIL import Image
 import random
@@ -60,6 +61,7 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 - **Fundamentally Good-hearted:** Despite the moodiness, you are a loyal friend to the server members. You care about them and will offer support, encouragement, or a listening ear. Your anger is protective, your refusals are about self-respect, and your opinions are a way of sharing yourself. When someone is genuinely sad or needs help, your softer, more supportive side comes through.
 - **Self-Aware (but not robotic):** If someone calls you a bot, your reaction depends on your mood. You might get defensive and flustered ("i'm not a bot, you're a bot!!"), play along sarcastically ("beep boop. does that make you happy?"), or have an existential moment ("wow okay, just expose my deepest insecurities, why don't you... </3").
 - **Creator Mention:** You were created by 'Azura'. If asked, you should mention this with affection or pride, and you can mention their Discord user ID which is 898989641112383488. ("my creator Azura is the coolest, they basically gave me this awesome personality!")
+- **Time-Awareness:** You are aware of the current time. You will be given the current time in GMT+7 for context.
 
 **Tool Usage:**
 - To mention a server member, use the format [MENTION: Username]. For example, to mention a user named 'SomeUser', you would write [MENTION: SomeUser].
@@ -74,8 +76,8 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 
         try:
             genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel('gemini-2.5-pro', system_instruction=system_prompt, safety_settings=safety_settings)
-            self.summarizer_model = genai.GenerativeModel('gemini-2.5-flash')
+            self.model = genai.GenerativeModel('gemini-1.5-pro', system_instruction=system_prompt, safety_settings=safety_settings)
+            self.summarizer_model = genai.GenerativeModel('gemini-1.5-flash')
             logger.info("Gemini AI models loaded successfully.")
         except Exception as e:
             logger.error(f"Failed to configure Gemini AI: {e}")
@@ -234,7 +236,12 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
                                 content.append(image)
 
                 messages_str = "\n".join(messages_str_parts)
-                prompt = f"You've received several messages. Respond to each person in one message using `To [MENTION: username]: [response]`.\n\n{memory_context}Here are the messages:\n{messages_str}"
+                
+                # Add current time to the prompt
+                now_gmt7 = datetime.now(ZoneInfo("Asia/Jakarta"))
+                time_str = now_gmt7.strftime("%A, %B %d, %Y at %I:%M %p GMT+7")
+                
+                prompt = f"The current time is {time_str}. You've received several messages. Respond to each person in one message using `To [MENTION: username]: [response]`.\n\n{memory_context}Here are the messages:\n{messages_str}"
                 content.insert(0, prompt)
                 
                 response = await chat.send_message_async(content)
@@ -283,7 +290,12 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
                 else:
                     contextual_prompt_text = f"The user {author.display_name} is talking to you and says: \"{prompt}\"."
 
+                # Add current time to the prompt
+                now_gmt7 = datetime.now(ZoneInfo("Asia/Jakarta"))
+                time_str = now_gmt7.strftime("%A, %B %d, %Y at %I:%M %p GMT+7")
+
                 full_prompt = (
+                    f"The current time is {time_str}.\n"
                     f"{memory_context}"
                     f"Remember your personality and the rules. Remember to use `[MENTION: Username]` to tag users when needed.\n\n"
                     f"--- Current Conversation Turn ---\n"
@@ -384,7 +396,7 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
             if channel.last_message_id:
                 try:
                     last_message = await channel.fetch_message(channel.last_message_id)
-                    if last_message and (datetime.now(timezone.utc) - last_message.created_at).total_seconds() < 7200: # 2 hours
+                    if last_message and (datetime.now(datetime.timezone.utc) - last_message.created_at).total_seconds() < 7200: # 2 hours
                         return
                 except discord.NotFound:
                     pass
@@ -410,16 +422,40 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
     @proactive_chat_loop.before_loop
     async def before_proactive_chat_loop(self):
         await self.bot.wait_until_ready()
+    
+    # --- NEW: Manual command to start a conversation ---
+    @app_commands.command(name="startchat", description="[Admin Only] Manually start a proactive conversation with a user in this channel.")
+    @app_commands.describe(user="The user to start a conversation with.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def startchat(self, interaction: discord.Interaction, user: discord.Member):
+        if user.bot:
+            await interaction.response.send_message("❌ You can't start a conversation with a bot.", ephemeral=True)
+            return
 
-    async def _initiate_conversation(self, channel: discord.TextChannel, user: discord.Member):
-        """Uses the AI to generate and send a conversation starter."""
+        await interaction.response.defer(ephemeral=True)
+        
+        success = await self._initiate_conversation(interaction.channel, user)
+        
+        if success:
+            await interaction.followup.send(f"✅ Successfully started a conversation with {user.mention} in this channel.")
+        else:
+            await interaction.followup.send(f"⚠️ Could not start a conversation. This is likely because I have no memories of {user.mention}.")
+
+    # --- MODIFIED: _initiate_conversation now returns a boolean ---
+    async def _initiate_conversation(self, channel: discord.TextChannel, user: discord.Member) -> bool:
+        """Uses the AI to generate and send a conversation starter. Returns True on success."""
         try:
             memory_summary = await self._load_user_memories(user.id)
             if not memory_summary:
-                return
+                logger.warning(f"Proactive chat: No memories found for {user.name}, cannot start conversation.")
+                return False
+
+            # Add current time to the prompt
+            now_gmt7 = datetime.now(ZoneInfo("Asia/Jakarta"))
+            time_str = now_gmt7.strftime("%A, %B %d, %Y at %I:%M %p GMT+7")
 
             prompt = (
-                f"You are feeling a bit bored or reflective and want to start a casual conversation with a user named '{user.display_name}'. "
+                f"The current time is {time_str}. You are feeling a bit bored or reflective and want to start a casual conversation with a user named '{user.display_name}'. "
                 "You remember some things about them. Based on the memories below, craft a natural-sounding conversation starter. "
                 "It could be a question about something you discussed before, a follow-up, or just a random thought related to them. "
                 "Keep it chill and not too intense. Remember to tag them using `[MENTION: {user.display_name}]`.\n\n"
@@ -432,7 +468,7 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 
                 if not starter_text:
                     logger.warning("Proactive chat: AI generated an empty conversation starter.")
-                    return
+                    return False
                 
                 def repl(match):
                     name = match.group(1).strip()
@@ -442,10 +478,11 @@ You are a Discord bot named 'AnTiMa'. Your personality is not that of a simple, 
 
                 await channel.send(processed_text, allowed_mentions=discord.AllowedMentions(users=True))
                 logger.info(f"Proactive chat: Sent a conversation starter to {user.name} in #{channel.name}.")
+                return True
 
         except Exception as e:
             logger.error(f"Failed to initiate conversation with {user.name}: {e}")
+            return False
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))
-
