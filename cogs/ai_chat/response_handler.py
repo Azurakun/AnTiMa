@@ -7,28 +7,10 @@ import io
 from PIL import Image
 import re
 from .memory_handler import load_user_memories, summarize_and_save_memory
+from .utils import _find_member, _safe_get_response_text # <-- UPDATED IMPORT
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
-
-def _find_member(guild: discord.Guild, name: str):
-    """Finds a member in a guild by name or display name, case-insensitively."""
-    name = name.lower()
-    member = discord.utils.find(
-        lambda m: m.name.lower() == name or m.display_name.lower() == name,
-        guild.members
-    )
-    if member is None:
-        logger.warning(f"Could not find member '{name}' in guild '{guild.name}'. The member might not be cached or the name is incorrect.")
-    return member
-
-def _safe_get_response_text(response) -> str:
-    """Safely gets text from a Gemini response, handling blocked content."""
-    try:
-        return response.text
-    except (ValueError, IndexError):
-        logger.warning("Gemini response was empty or blocked.")
-        return ""
 
 async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Message) -> bool:
     """Uses an AI model to determine if the bot should respond based on conversation context."""
@@ -45,7 +27,6 @@ async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Me
         reply_info = ""
         if msg.reference and msg.reference.message_id:
             replied_to_author = None
-            # This is a simplified check; a full fetch would be too slow here.
             for hist_msg in history:
                 if msg.reference.message_id == hist_msg.id:
                     replied_to_author = "AnTiMa" if hist_msg.author == bot.user else hist_msg.author.display_name
@@ -109,7 +90,6 @@ async def process_message_batch(cog, channel_id: int):
 
             messages_str = "\n".join(messages_str_parts)
             
-            # Add current time to the prompt
             now_gmt7 = datetime.now(ZoneInfo("Asia/Jakarta"))
             time_str = now_gmt7.strftime("%A, %B %d, %Y at %I:%M %p GMT+7")
             
@@ -145,7 +125,6 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
             memory_summary = await load_user_memories(author.id)
             memory_context = f"Here is a summary of your past conversations with {author.display_name}.\n<memory>\n{memory_summary}\n</memory>\n\n" if memory_summary else ""
             
-            # --- NEW, MORE CONTEXTUAL PROMPT ---
             contextual_prompt_text = ""
             if message.reference:
                 try:
@@ -162,7 +141,6 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
             else:
                 contextual_prompt_text = f"The user {author.display_name} is talking to you and says: \"{prompt}\"."
 
-            # Add current time to the prompt
             now_gmt7 = datetime.now(ZoneInfo("Asia/Jakarta"))
             time_str = now_gmt7.strftime("%A, %B %d, %Y at %I:%M %p GMT+7")
 

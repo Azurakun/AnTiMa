@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime
 from utils.db import ai_memories_collection
-from .response_handler import _safe_get_response_text
+from .utils import _safe_get_response_text  # <-- UPDATED IMPORT
 
 logger = logging.getLogger(__name__)
 MAX_USER_MEMORIES = 20
