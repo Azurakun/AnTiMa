@@ -4,12 +4,19 @@ import logging
 import os
 import random
 import aiohttp
-from .utils import _safe_get_response_text
 
 logger = logging.getLogger(__name__)
 
 TENOR_API_KEY = os.environ.get("TENOR_API_KEY")
 TENOR_CLIENT_KEY = "AnTiMa-Discord-Bot" # A client key for Tenor's analytics
+
+def _safe_get_response_text(response) -> str:
+    """Safely gets text from a Gemini response, handling blocked content."""
+    try:
+        return response.text
+    except (ValueError, IndexError):
+        logger.warning("Gemini response was empty or blocked.")
+        return ""
 
 async def get_gif_url(http_session: aiohttp.ClientSession, search_term: str) -> str | None:
     """Fetches a random GIF URL from Tenor based on a search term."""
@@ -72,14 +79,6 @@ async def should_send_gif(summarizer_model, channel, bot_response_text, gif_sear
     except Exception as e:
         logger.error(f"GIF Decision Agent failed: {e}")
         return False # Default to not sending GIF on error
-
-def _safe_get_response_text(response) -> str:
-    """Safely gets text from a Gemini response, handling blocked content."""
-    try:
-        return response.text
-    except (ValueError, IndexError):
-        logger.warning("Gemini response was empty or blocked.")
-        return ""
 
 def _find_member(guild: discord.Guild, name: str):
     """Finds a member in a guild by name or display name, case-insensitively."""
