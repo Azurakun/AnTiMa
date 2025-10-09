@@ -7,11 +7,11 @@ import os
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import aiohttp
-from utils.db import ai_config_collection, ai_memories_collection
+from utils.db import ai_config_collection, ai_personal_memories_collection
 from .prompts import SYSTEM_PROMPT
-from .memory_handler import summarize_and_save_memory
 from .response_handler import should_bot_respond_ai_check, process_message_batch, handle_single_user_response
 from .proactive_chat import proactive_chat_loop, _initiate_conversation
+from .personality_updater import personality_update_loop, update_guild_personality
 
 logger = logging.getLogger(__name__)
 
@@ -45,29 +45,56 @@ class AIChatCog(commands.Cog, name="AIChat"):
     def cog_unload(self):
         proactive_chat_loop.cancel()
         self.bot.loop.create_task(self.http_session.close())
-
-    @app_commands.command(name="clearmemories", description="Clear your personal conversation memories with the bot.")
-    @app_commands.describe(user="[Admin Only] Clear memories for a specific user instead of yourself.")
-    async def clearmemories(self, interaction: discord.Interaction, user: discord.User = None):
-        if user and not interaction.user.guild_permissions.manage_guild:
-            await interaction.response.send_message("❌ You don't have permission to clear memories for other users.", ephemeral=True)
-            return
-
-        target_user = user or interaction.user
         
+        
+    @app_commands.command(name="refreshpersonality", description="[Admin Only] Manually update the bot's adaptive personality for this server.")
+    @app_commands.checks.has_permissions(manage_guild=True)
+    async def refreshpersonality(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        await update_guild_personality(self.summarizer_model, interaction.guild)
+        await interaction.followup.send("✅ I've reflected on our recent conversations and updated my personality for this server.")
+
+    @app_commands.command(name="clearmemories", description="Clear personal conversation memories with the bot.")
+    @app_commands.describe(
+        scope="Choose what to clear: 'personal' for just you, or 'guild' for all memories in this server.",
+        user="[Admin Only] Clear personal memories for a specific user in this server."
+    )
+    async def clearmemories(self, interaction: discord.Interaction, scope: str, user: discord.Member = None):
+        scope = scope.lower()
+        if scope not in ['personal', 'guild']:
+            return await interaction.response.send_message("❌ Invalid scope. Choose 'personal' or 'guild'.", ephemeral=True)
+
+        if user and not interaction.user.guild_permissions.manage_guild:
+            return await interaction.response.send_message("❌ You don't have permission to clear memories for other users.", ephemeral=True)
+        
+        if scope == 'guild' and not interaction.user.guild_permissions.manage_guild:
+            return await interaction.response.send_message("❌ You must have 'Manage Guild' permissions to clear all guild memories.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
         try:
-            result = ai_memories_collection.delete_many({"user_id": target_user.id})
+            message = ""
+            if scope == 'guild':
+                result = ai_personal_memories_collection.delete_many({"guild_id": interaction.guild_id})
+                message = f"✅ All personal memories for this server ({interaction.guild.name}) have been cleared. ({result.deleted_count} entries removed)"
+                logger.warning(f"Admin {interaction.user.name} cleared all memories for guild {interaction.guild.name}.")
             
-            if target_user.id == interaction.user.id:
-                message = f"✅ Your personal memories have been cleared. We can start fresh! ({result.deleted_count} entries removed)"
-            else:
-                message = f"✅ Memories for user {target_user.mention} have been cleared. ({result.deleted_count} entries removed)"
+            elif scope == 'personal':
+                target_user = user or interaction.user
+                result = ai_personal_memories_collection.delete_many({"user_id": target_user.id, "guild_id": interaction.guild_id})
                 
-            await interaction.response.send_message(message, ephemeral=True)
-            logger.info(f"User {interaction.user.name} cleared memories for {target_user.name}.")
+                if target_user.id == interaction.user.id:
+                    message = f"✅ Your personal memories in this server have been cleared. ({result.deleted_count} entries removed)"
+                else:
+                    message = f"✅ Personal memories for user {target_user.mention} in this server have been cleared. ({result.deleted_count} entries removed)"
+                
+                logger.info(f"User {interaction.user.name} cleared personal memories for {target_user.name} in guild {interaction.guild.name}.")
+
+            await interaction.followup.send(message)
+
         except Exception as e:
-            logger.error(f"Error clearing memories for user {target_user.id}: {e}")
-            await interaction.response.send_message("❌ An error occurred while trying to clear memories.", ephemeral=True)
+            logger.error(f"Error clearing memories: {e}")
+            await interaction.followup.send("❌ An error occurred while trying to clear memories.")
 
     @app_commands.command(name="togglegroupchat", description="Enable or disable grouped responses in this server.")
     @app_commands.describe(enabled="Set to True to enable, False to disable.")
@@ -106,30 +133,25 @@ class AIChatCog(commands.Cog, name="AIChat"):
         is_mentioned = self.bot.user in message.mentions
         group_chat_enabled = guild_config.get("group_chat_enabled", False)
 
-        # --- NEW: Logic to handle a user tagging the bot in a reply to someone else ---
         if is_mentioned and message.reference and message.reference.message_id:
             try:
                 original_message = await message.channel.fetch_message(message.reference.message_id)
-                # This scenario is when Person B replies to Person A and tags the bot.
                 if original_message.author != message.author and original_message.author != self.bot.user:
                     logger.info(f"3-way interaction detected: {message.author.name} tagged bot in reply to {original_message.author.name}.")
                     
                     clean_prompt_by_intervener = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
                     
-                    # Call the response handler, targeting Person A's message.
                     await handle_single_user_response(
                         cog=self, 
-                        message=original_message,  # Reply to Person A's message
-                        prompt=original_message.clean_content, # AI focuses on Person A's content
-                        author=original_message.author, # AI considers Person A the primary user
-                        intervening_author=message.author, # Pass Person B as the one who tagged
-                        intervening_prompt=clean_prompt_by_intervener # Pass Person B's comment
+                        message=original_message,
+                        prompt=original_message.clean_content,
+                        author=original_message.author,
+                        intervening_author=message.author,
+                        intervening_prompt=clean_prompt_by_intervener
                     )
-                    return # Stop further processing for this message.
+                    return
             except (discord.NotFound, discord.HTTPException) as e:
                 logger.warning(f"Could not fetch replied-to message for 3-way interaction check: {e}")
-
-        # --- End of New Logic ---
 
         is_reply_to_bot = False
         if message.reference and message.reference.message_id:
@@ -138,7 +160,6 @@ class AIChatCog(commands.Cog, name="AIChat"):
                  logger.info("Determined message is a reply to the bot from cache.")
             else: 
                 try:
-                    # Avoid re-fetching if we already did it in the 3-way check
                     if 'original_message' not in locals():
                         replied_to_message = await message.channel.fetch_message(message.reference.message_id)
                         if replied_to_message.author == self.bot.user:

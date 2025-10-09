@@ -8,8 +8,9 @@ from PIL import Image
 import re
 import asyncio
 import random
-from .memory_handler import load_user_memories, summarize_and_save_memory
-from .utils import _find_member, _safe_get_response_text
+from .memory_handler import load_user_memories, load_global_memories, summarize_and_save_memory
+from .utils import _find_member, _safe_get_response_text, get_gif_url
+from utils.db import ai_config_collection
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
@@ -71,7 +72,6 @@ async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Me
         return False
 
 async def process_message_batch(cog, channel_id: int):
-    # This function remains unchanged from the previous version
     batch = cog.message_batches.pop(channel_id, [])
     cog.batch_timers.pop(channel_id, None)
     if not batch: return
@@ -85,10 +85,26 @@ async def process_message_batch(cog, channel_id: int):
 
     try:
         async with last_message.channel.typing():
+            guild_config = ai_config_collection.find_one({"_id": str(last_message.guild.id)}) or {}
+            style_guide = guild_config.get("personality_style_guide")
+
+            style_guide_context = ""
+            if style_guide:
+                style_guide_context = f"--- ADAPTIVE STYLE GUIDE FOR THIS SERVER ---\n{style_guide}\n--------------------------------------------\n\n"
+
             history = [{'role': 'model' if m.author==cog.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=cog.bot.user else m.clean_content]} async for m in last_message.channel.history(limit=MAX_HISTORY) if m.id not in [msg.id for msg in batch]]
             history.reverse()
             chat = cog.model.start_chat(history=history)
-            memory_context = "".join([f"Background on {author.display_name}:\n<memory>\n{await load_user_memories(author.id)}\n</memory>\n\n" for author in unique_authors if await load_user_memories(author.id)])
+            
+            memory_context = ""
+            global_memory_summary = await load_global_memories()
+            if global_memory_summary:
+                memory_context += f"Here is some general knowledge you have:\n<global_knowledge>\n{global_memory_summary}\n</global_knowledge>\n\n"
+
+            for author in unique_authors:
+                user_memory_summary = await load_user_memories(author.id, last_message.guild.id)
+                if user_memory_summary:
+                    memory_context += f"Background on {author.display_name}:\n<personal_memories>\n{user_memory_summary}\n</personal_memories>\n\n"
             
             messages_str_parts = []
             content = []
@@ -106,7 +122,13 @@ async def process_message_batch(cog, channel_id: int):
             now_gmt7 = datetime.now(ZoneInfo("Asia/Jakarta"))
             time_str = now_gmt7.strftime("%A, %B %d, %Y at %I:%M %p GMT+7")
             
-            prompt = f"The current time is {time_str}. You've received several messages. Respond to each person in one message using `To [MENTION: username]: [response]`.\n\n{memory_context}Here are the messages:\n{messages_str}"
+            prompt = (
+                f"The current time is {time_str}.\n"
+                f"{style_guide_context}"
+                f"{memory_context}"
+                f"You've received several messages. Respond to each person in one message using `To [MENTION: username]: [response]`.\n\n"
+                f"Here are the messages:\n{messages_str}"
+            )
             content.insert(0, prompt)
             
             response = await chat.send_message_async(content)
@@ -119,6 +141,13 @@ async def process_message_batch(cog, channel_id: int):
                 return f"<@{member.id}>" if member else name
             processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, final_text)
 
+            gif_url = None
+            gif_match = re.search(r"\[GIF: (.+?)\]", processed_text)
+            if gif_match:
+                search_term = gif_match.group(1).strip()
+                processed_text = processed_text.replace(gif_match.group(0), "").strip()
+                gif_url = await get_gif_url(cog.http_session, search_term)
+
             if processed_text:
                 chunks = [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]
                 sent_message = None
@@ -130,7 +159,11 @@ async def process_message_batch(cog, channel_id: int):
                         else:
                             sent_message = await sent_message.reply(chunk, allowed_mentions=discord.AllowedMentions(users=True))
             
-            for author in unique_authors: cog.bot.loop.create_task(summarize_and_save_memory(cog.summarizer_model, author, chat.history))
+            if gif_url:
+                await last_message.channel.send(gif_url)
+            
+            for author in unique_authors: 
+                cog.bot.loop.create_task(summarize_and_save_memory(cog.summarizer_model, author, last_message.guild.id, chat.history))
     except Exception as e:
         logger.error(f"Error in grouped API call: {e}")
         await last_message.channel.send("😥 my brain isn't braining right now.")
@@ -138,15 +171,27 @@ async def process_message_batch(cog, channel_id: int):
 async def handle_single_user_response(cog, message: discord.Message, prompt: str, author: discord.User, intervening_author: discord.User = None, intervening_prompt: str = None):
     try:
         async with message.channel.typing():
+            guild_config = ai_config_collection.find_one({"_id": str(message.guild.id)}) or {}
+            style_guide = guild_config.get("personality_style_guide")
+            
             history = [{'role': 'model' if m.author==cog.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=cog.bot.user else m.clean_content]} async for m in message.channel.history(limit=MAX_HISTORY) if m.id != message.id]
             history.reverse()
             chat = cog.model.start_chat(history=history)
             
-            memory_summary = await load_user_memories(author.id)
-            memory_context = f"Here is a summary of your past conversations with {author.display_name}.\n<memory>\n{memory_summary}\n</memory>\n\n" if memory_summary else ""
+            user_memory_summary = await load_user_memories(author.id, message.guild.id)
+            global_memory_summary = await load_global_memories()
+
+            memory_context = ""
+            if global_memory_summary:
+                memory_context += f"Here is some general knowledge you have:\n<global_knowledge>\n{global_memory_summary}\n</global_knowledge>\n\n"
+            if user_memory_summary:
+                memory_context += f"Here is a summary of your past conversations with {author.display_name} in this server.\n<personal_memories>\n{user_memory_summary}\n</personal_memories>\n\n"
+            
+            style_guide_context = ""
+            if style_guide:
+                style_guide_context = f"--- ADAPTIVE STYLE GUIDE FOR THIS SERVER ---\n{style_guide}\n--------------------------------------------\n\n"
             
             contextual_prompt_text = ""
-            # NEW: Handle the 3-way interaction first
             if intervening_author:
                 contextual_prompt_text = (
                     f"The user {intervening_author.display_name} has mentioned you in a reply to {author.display_name}, asking you to respond to them.\n"
@@ -175,7 +220,8 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
             full_prompt = (
                 f"The current time is {time_str}.\n"
                 f"{memory_context}"
-                f"Remember your personality and the rules. Remember to use `[MENTION: Username]` to tag users when needed.\n\n"
+                f"{style_guide_context}"
+                f"Remember your core personality and the rules. Remember to use `[MENTION: Username]` to tag users when needed.\n\n"
                 f"--- Current Conversation Turn ---\n"
                 f"{contextual_prompt_text}"
             )
@@ -201,6 +247,13 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
                 return f"<@{member.id}>" if member else name
             processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, final_text)
             
+            gif_url = None
+            gif_match = re.search(r"\[GIF: (.+?)\]", processed_text)
+            if gif_match:
+                search_term = gif_match.group(1).strip()
+                processed_text = processed_text.replace(gif_match.group(0), "").strip()
+                gif_url = await get_gif_url(cog.http_session, search_term)
+            
             if processed_text:
                 chunks = [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]
                 sent_message = None
@@ -212,7 +265,11 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
                         async with message.channel.typing():
                             await asyncio.sleep(random.uniform(1, 2))
                             sent_message = await sent_message.reply(chunk, allowed_mentions=discord.AllowedMentions(users=True))
-            cog.bot.loop.create_task(summarize_and_save_memory(cog.summarizer_model, author, chat.history))
+            
+            if gif_url:
+                await message.channel.send(gif_url)
+            
+            cog.bot.loop.create_task(summarize_and_save_memory(cog.summarizer_model, author, message.guild.id, chat.history))
     except Exception as e:
         logger.error(f"Error in single-user API call: {e}")
         await message.reply("😥 i'm sorry, my brain isn't braining right now.")

@@ -11,9 +11,14 @@ db = client.get_database("antima_db")
 reminders_collection = db.get_collection("reminders")
 user_timezones_collection = db.get_collection("user_timezones")
 ai_config_collection = db.get_collection("ai_config")
-ai_memories_collection = db.get_collection("ai_memories")
-ai_memories_collection.create_index([("user_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
 
+# UPDATED: Stores personal/contextual memories tied to users and guilds.
+ai_personal_memories_collection = db.get_collection("ai_personal_memories")
+ai_personal_memories_collection.create_index([("user_id", pymongo.ASCENDING), ("guild_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
+
+# NEW: Stores general, objective knowledge shared across all guilds.
+ai_global_memories_collection = db.get_collection("ai_global_memories")
+ai_global_memories_collection.create_index([("timestamp", pymongo.DESCENDING)])
 
 logs_collection = db.get_collection("improved_logs")
 print("Logging is configured to use the 'improved_logs' collection in the main database.")
