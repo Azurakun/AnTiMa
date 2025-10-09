@@ -7,6 +7,7 @@ import os
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import aiohttp
+import collections # <-- ADDED
 from utils.db import ai_config_collection, ai_personal_memories_collection
 from .prompts import SYSTEM_PROMPT
 from .response_handler import should_bot_respond_ai_check, process_message_batch, handle_single_user_response
@@ -23,6 +24,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
         self.message_batches = {}
         self.batch_timers = {}
         self.BATCH_DELAY = 5
+        self.ignored_messages = collections.deque(maxlen=500) # <-- ADDED: To track ignored conversations
 
         safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -122,18 +124,14 @@ class AIChatCog(commands.Cog, name="AIChat"):
         else:
             await interaction.followup.send(f"⚠️ Could not start a conversation with {user.mention}. Reason: {reason}")
 
+    # vvvvvv REWRITTEN vvvvvv
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot or self.model is None or not message.guild: return
+        if message.author.bot or self.model is None or not message.guild:
+            return
         
-        guild_id = str(message.guild.id)
-        guild_config = ai_config_collection.find_one({"_id": guild_id}) or {}
-        is_chat_channel = message.channel.id == guild_config.get("channel")
-        is_chat_forum = isinstance(message.channel, discord.Thread) and message.channel.parent_id == guild_config.get("forum")
-        is_mentioned = self.bot.user in message.mentions
-        group_chat_enabled = guild_config.get("group_chat_enabled", False)
-
-        if is_mentioned and message.reference and message.reference.message_id:
+        # Handle 3-way interactions first, as they are a special response case that bypasses normal checks.
+        if self.bot.user in message.mentions and message.reference and message.reference.message_id:
             try:
                 original_message = await message.channel.fetch_message(message.reference.message_id)
                 if original_message.author != message.author and original_message.author != self.bot.user:
@@ -153,33 +151,33 @@ class AIChatCog(commands.Cog, name="AIChat"):
             except (discord.NotFound, discord.HTTPException) as e:
                 logger.warning(f"Could not fetch replied-to message for 3-way interaction check: {e}")
 
-        is_reply_to_bot = False
-        if message.reference and message.reference.message_id:
-            if isinstance(message.reference.resolved, discord.Message) and message.reference.resolved.author == self.bot.user:
-                 is_reply_to_bot = True
-                 logger.info("Determined message is a reply to the bot from cache.")
-            else: 
-                try:
-                    if 'original_message' not in locals():
-                        replied_to_message = await message.channel.fetch_message(message.reference.message_id)
-                        if replied_to_message.author == self.bot.user:
-                            is_reply_to_bot = True
-                            logger.info("Determined message is a reply to the bot via fetch.")
-                except (discord.NotFound, discord.HTTPException):
-                    pass
-
-        should_respond = False
-        if is_mentioned or is_chat_forum or is_reply_to_bot:
-             should_respond = True
-        elif is_chat_channel:
-             should_respond = await should_bot_respond_ai_check(self.bot, self.summarizer_model, message)
-
-        if not should_respond:
+        # Use the single source of truth to decide if we should respond.
+        if not await should_bot_respond_ai_check(self, self.bot, self.summarizer_model, message):
+            self.ignored_messages.append(message.id)
             return
 
+        # If we are here, we have decided to respond.
         clean_prompt = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-        if not clean_prompt and not message.attachments: return
+        if not clean_prompt and not message.attachments:
+            return
 
+        # Now, decide HOW to respond (batch or single).
+        guild_id = str(message.guild.id)
+        guild_config = ai_config_collection.find_one({"_id": guild_id}) or {}
+        group_chat_enabled = guild_config.get("group_chat_enabled", False)
+        is_chat_channel = message.channel.id == guild_config.get("channel")
+
+        # Determine if it's a direct reply to the bot, as this should not be batched.
+        is_reply_to_bot = False
+        if message.reference and message.reference.message_id:
+            try:
+                replied_to_message = message.reference.resolved or await message.channel.fetch_message(message.reference.message_id)
+                if replied_to_message.author == self.bot.user:
+                    is_reply_to_bot = True
+            except (discord.NotFound, discord.HTTPException):
+                pass
+        
+        # Group messages only in the chat channel, if enabled, and if it's not a direct reply.
         if group_chat_enabled and is_chat_channel and not is_reply_to_bot:
             channel_id = message.channel.id
             self.message_batches.setdefault(channel_id, []).append(message)
@@ -187,6 +185,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
             self.batch_timers[channel_id] = self.bot.loop.call_later(self.BATCH_DELAY, lambda: self.bot.loop.create_task(process_message_batch(self, channel_id)))
         else:
             await handle_single_user_response(self, message, clean_prompt, message.author)
+    # ^^^^^^ REWRITTEN ^^^^^^
 
 
 async def setup(bot: commands.Bot):

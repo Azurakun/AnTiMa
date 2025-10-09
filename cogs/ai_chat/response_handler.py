@@ -15,16 +15,42 @@ from utils.db import ai_config_collection
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
 
-async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Message) -> bool:
-    """Uses an AI model to determine if the bot should respond based on conversation context, especially for follow-ups."""
+# vvvvvv REWRITTEN vvvvvv
+async def should_bot_respond_ai_check(cog, bot, summarizer_model, message: discord.Message) -> bool:
+    """
+    Determines if the bot should respond to a given message using a tiered logic system.
+    This is the single source of truth for the response decision.
+    """
+    guild_id = str(message.guild.id)
+    guild_config = ai_config_collection.find_one({"_id": guild_id}) or {}
+    is_chat_channel = message.channel.id == guild_config.get("channel")
+    is_chat_forum = isinstance(message.channel, discord.Thread) and message.channel.parent_id == guild_config.get("forum")
+
+    # --- Step 1: High-priority "YES" conditions (explicit involvement) ---
+    if is_chat_forum:
+        return True
+
+    if bot.user in message.mentions:
+        logger.info(f"Direct mention of AnTiMa detected in '{message.content}'. Responding.")
+        return True
+
     if message.reference and message.reference.message_id:
         try:
-            replied_to = await message.channel.fetch_message(message.reference.message_id)
+            replied_to = message.reference.resolved or await message.channel.fetch_message(message.reference.message_id)
             if replied_to.author == bot.user:
-                logger.info(f"Direct reply to AnTiMa detected for message '{message.content}'. Responding.")
+                logger.info(f"Direct reply to AnTiMa detected for '{message.content}'. Responding.")
                 return True
         except (discord.NotFound, discord.HTTPException):
             pass
+
+    # --- Step 2: High-priority "NO" condition (part of an ignored conversation) ---
+    if message.reference and message.reference.message_id in cog.ignored_messages:
+        logger.info(f"Message '{message.content}' is a reply to an ignored message. Ignoring.")
+        return False
+        
+    # --- Step 3: AI-based decision for ambiguous cases in the main chat channel ---
+    if not is_chat_channel:
+        return False
 
     history = [msg async for msg in message.channel.history(limit=6)]
     history.reverse()
@@ -38,11 +64,7 @@ async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Me
         author_name = "AnTiMa" if msg.author == bot.user else msg.author.display_name
         reply_info = ""
         if msg.reference and msg.reference.message_id:
-            replied_to_author = None
-            for hist_msg in history:
-                if msg.reference.message_id == hist_msg.id:
-                    replied_to_author = "AnTiMa" if hist_msg.author == bot.user else hist_msg.author.display_name
-                    break
+            replied_to_author = next((("AnTiMa" if h.author == bot.user else h.author.display_name) for h in history if h.id == msg.reference.message_id), None)
             if replied_to_author:
                 reply_info = f"(in reply to {replied_to_author}) "
         conversation_log.append(f"{author_name}: {reply_info}{msg.clean_content}")
@@ -50,14 +72,13 @@ async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Me
     conversation_str = "\n".join(conversation_log)
 
     prompt = (
-        "You are a context analysis AI. Your name is AnTiMa. Below is a Discord conversation. "
-        "Based ONLY on the context and the content of the VERY LAST message, determine if AnTiMa should respond. "
-        "Rules for responding:\n"
-        "1. Respond if the last message directly addresses AnTiMa by name (e.g., 'AnTiMa', 'Anti').\n"
-        "2. Respond if the last message asks a general question that AnTiMa could answer (like about code, trivia, or an opinion), especially if no one else is being asked.\n"
-        "3. Respond if the last message is a follow-up or a direct reply to AnTiMa's previous message.\n"
-        "4. DO NOT respond if users are clearly having a one-on-one conversation with each other that does not involve AnTiMa.\n"
-        "5. DO NOT respond if the last message is a reply to another user and doesn't mention AnTiMa.\n\n"
+        "You are a context analysis AI named AnTiMa. Analyze the following Discord conversation. "
+        "Based ONLY on the context and the content of the VERY LAST message, should AnTiMa respond? "
+        "Your decision rules:\n"
+        "1. **Respond (yes)** if the last message asks a general question that AnTiMa could answer (about code, trivia, opinions), especially if no one else is specifically asked.\n"
+        "2. **Respond (yes)** if the last message seems to be a follow-up to something AnTiMa said earlier in the context.\n"
+        "3. **DO NOT Respond (no)** if users are clearly having a direct, one-on-one conversation that doesn't involve or mention AnTiMa.\n"
+        "4. **DO NOT Respond (no)** if the last message is a reply to another user and has no indication it's meant for AnTiMa.\n\n"
         f"--- CONVERSATION ---\n{conversation_str}\n---\n\n"
         "Based on these rules and the final message, should AnTiMa join in? Answer with only 'yes' or 'no'."
     )
@@ -70,6 +91,7 @@ async def should_bot_respond_ai_check(bot, summarizer_model, message: discord.Me
     except Exception as e:
         logger.error(f"Context check AI call failed: {e}")
         return False
+# ^^^^^^ REWRITTEN ^^^^^^
 
 async def process_message_batch(cog, channel_id: int):
     batch = cog.message_batches.pop(channel_id, [])
