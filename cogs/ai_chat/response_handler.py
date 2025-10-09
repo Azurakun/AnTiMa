@@ -9,7 +9,7 @@ import re
 import asyncio
 import random
 from .memory_handler import load_user_memories, load_global_memories, summarize_and_save_memory
-from .utils import _find_member, _safe_get_response_text, get_gif_url
+from .utils import _find_member, _safe_get_response_text, get_gif_url, should_send_gif
 from utils.db import ai_config_collection
 
 logger = logging.getLogger(__name__)
@@ -88,10 +88,8 @@ async def process_message_batch(cog, channel_id: int):
             guild_config = ai_config_collection.find_one({"_id": str(last_message.guild.id)}) or {}
             style_guide = guild_config.get("personality_style_guide")
 
-            style_guide_context = ""
-            if style_guide:
-                style_guide_context = f"--- ADAPTIVE STYLE GUIDE FOR THIS SERVER ---\n{style_guide}\n--------------------------------------------\n\n"
-
+            style_guide_context = f"--- ADAPTIVE STYLE GUIDE FOR THIS SERVER ---\n{style_guide}\n--------------------------------------------\n\n" if style_guide else ""
+            
             history = [{'role': 'model' if m.author==cog.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=cog.bot.user else m.clean_content]} async for m in last_message.channel.history(limit=MAX_HISTORY) if m.id not in [msg.id for msg in batch]]
             history.reverse()
             chat = cog.model.start_chat(history=history)
@@ -135,29 +133,24 @@ async def process_message_batch(cog, channel_id: int):
             final_text = _safe_get_response_text(response)
             if not final_text: return
 
-            def repl(match):
-                name = match.group(1).strip()
-                member = _find_member(last_message.guild, name)
-                return f"<@{member.id}>" if member else name
-            processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, final_text)
+            processed_text = re.sub(r"\[MENTION: (.+?)\]", lambda m: f"<@{_find_member(last_message.guild, m.group(1).strip()).id}>" if _find_member(last_message.guild, m.group(1).strip()) else m.group(1).strip(), final_text)
 
             gif_url = None
             gif_match = re.search(r"\[GIF: (.+?)\]", processed_text)
             if gif_match:
                 search_term = gif_match.group(1).strip()
-                processed_text = processed_text.replace(gif_match.group(0), "").strip()
-                gif_url = await get_gif_url(cog.http_session, search_term)
+                text_without_gif_tag = processed_text.replace(gif_match.group(0), "").strip()
+                
+                if await should_send_gif(cog.summarizer_model, last_message.channel, text_without_gif_tag, search_term):
+                    gif_url = await get_gif_url(cog.http_session, search_term)
+                else:
+                    logger.info(f"GIF agent decided NOT to send a GIF for '{search_term}'.")
+                
+                processed_text = text_without_gif_tag
 
+            processed_text = processed_text.replace('|||', '\n').strip()
             if processed_text:
-                chunks = [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]
-                sent_message = None
-                for chunk in chunks:
-                    async with last_message.channel.typing():
-                        await asyncio.sleep(random.uniform(1, 2))
-                        if sent_message is None:
-                            sent_message = await last_message.channel.send(chunk, allowed_mentions=discord.AllowedMentions(users=True))
-                        else:
-                            sent_message = await sent_message.reply(chunk, allowed_mentions=discord.AllowedMentions(users=True))
+                await last_message.channel.send(processed_text, allowed_mentions=discord.AllowedMentions(users=True))
             
             if gif_url:
                 await last_message.channel.send(gif_url)
@@ -221,7 +214,7 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
                 f"The current time is {time_str}.\n"
                 f"{memory_context}"
                 f"{style_guide_context}"
-                f"Remember your core personality and the rules. Remember to use `[MENTION: Username]` to tag users when needed.\n\n"
+                f"Remember your core personality and the rules, especially the rule to break up your messages with '|||'. Remember to use `[MENTION: Username]` to tag users when needed.\n\n"
                 f"--- Current Conversation Turn ---\n"
                 f"{contextual_prompt_text}"
             )
@@ -241,30 +234,38 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
                 await message.reply("i wanted to say something, but my brain filters went 'nope!' try rephrasing that?")
                 return
 
-            def repl(match):
-                name = match.group(1).strip()
-                member = _find_member(message.guild, name)
-                return f"<@{member.id}>" if member else name
-            processed_text = re.sub(r"\[MENTION: (.+?)\]", repl, final_text)
+            processed_text = re.sub(r"\[MENTION: (.+?)\]", lambda m: f"<@{_find_member(message.guild, m.group(1).strip()).id}>" if _find_member(message.guild, m.group(1).strip()) else m.group(1).strip(), final_text)
             
             gif_url = None
             gif_match = re.search(r"\[GIF: (.+?)\]", processed_text)
             if gif_match:
                 search_term = gif_match.group(1).strip()
-                processed_text = processed_text.replace(gif_match.group(0), "").strip()
-                gif_url = await get_gif_url(cog.http_session, search_term)
+                text_without_gif_tag = processed_text.replace(gif_match.group(0), "").strip()
+                
+                if await should_send_gif(cog.summarizer_model, message.channel, text_without_gif_tag, search_term):
+                    gif_url = await get_gif_url(cog.http_session, search_term)
+                else:
+                    logger.info(f"GIF agent decided NOT to send a GIF for '{search_term}'.")
+                
+                processed_text = text_without_gif_tag
             
-            if processed_text:
-                chunks = [processed_text[i:i+2000] for i in range(0, len(processed_text), 2000)]
-                sent_message = None
-                if chunks:
-                    sent_message = await message.reply(chunks[0], allowed_mentions=discord.AllowedMentions(users=True))
+            message_parts = processed_text.split('|||')
+            is_first_part = True
 
-                if sent_message:
-                    for chunk in chunks[1:]:
-                        async with message.channel.typing():
-                            await asyncio.sleep(random.uniform(1, 2))
-                            sent_message = await sent_message.reply(chunk, allowed_mentions=discord.AllowedMentions(users=True))
+            for part in message_parts:
+                part = part.strip()
+                if not part:
+                    continue
+
+                delay = max(1.0, min(len(part) * 0.02, 3.0)) + random.uniform(0.2, 0.5)
+
+                async with message.channel.typing():
+                    await asyncio.sleep(delay)
+                    if is_first_part:
+                        await message.reply(part, allowed_mentions=discord.AllowedMentions(users=True))
+                        is_first_part = False
+                    else:
+                        await message.channel.send(part)
             
             if gif_url:
                 await message.channel.send(gif_url)
