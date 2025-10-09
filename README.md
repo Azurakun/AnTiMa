@@ -1,10 +1,10 @@
 # AnTiMa - The Interactive AI Discord Bot
 
-\<div align="center"\>
-\<img src="[https://img.shields.io/badge/Discord.py-2.5.2-7289DA?style=for-the-badge\&logo=discord\&logoColor=white](https://img.shields.io/badge/Discord.py-2.5.2-7289DA?style=for-the-badge&logo=discord&logoColor=white)" alt="Discord.py"\>
-\<img src="[https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge\&logo=python\&logoColor=white](https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white)" alt="Python"\>
-\<img src="[https://img.shields.io/badge/Google-Gemini\_AI-4285F4?style=for-the-badge\&logo=google\&logoColor=white](https://img.shields.io/badge/Google-Gemini_AI-4285F4?style=for-the-badge&logo=google&logoColor=white)" alt="Gemini AI"\>
-\</div\>
+<p align="center">
+  <img src="https://img.shields.io/badge/Discord.py-2.5.2-7289DA?style=for-the-badge&logo=discord&logoColor=white" alt="Discord.py">
+  <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/Google-Gemini_AI-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Gemini AI">
+</p>
 
 **AnTiMa** is not just another Discord bot; it's a fully interactive companion for your server, powered by Google's Gemini AI. With a customizable personality, real-time voice conversations, and a suite of powerful moderation and utility tools, AnTiMa is designed to bring your community to life.
 
