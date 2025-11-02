@@ -16,3 +16,5 @@ pydub
 elevenlabs
 webrtcvad
 Pillow
+packaging
+googlesearch-python

@@ -8,8 +8,8 @@ import re
 from datetime import datetime, timedelta # Added timedelta
 from zoneinfo import ZoneInfo
 from utils.db import ai_config_collection
-from .utils import _find_member, _safe_get_response_text # <-- UPDATED IMPORT
-from .memory_handler import load_user_memories
+from ..utils import _find_member, _safe_get_response_text # <-- UPDATED IMPORT
+from ..memory_handler import load_user_memories
 
 logger = logging.getLogger(__name__)
 

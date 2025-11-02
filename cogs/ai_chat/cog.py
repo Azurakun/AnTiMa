@@ -11,7 +11,7 @@ import collections # <-- ADDED
 from utils.db import ai_config_collection, ai_personal_memories_collection
 from .prompts import SYSTEM_PROMPT
 from .response_handler import should_bot_respond_ai_check, process_message_batch, handle_single_user_response
-from .proactive_chat import proactive_chat_loop, _initiate_conversation
+from .deprecated.proactive_chat import proactive_chat_loop, _initiate_conversation
 from .personality_updater import personality_update_loop, update_guild_personality
 
 logger = logging.getLogger(__name__)

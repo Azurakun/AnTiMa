@@ -11,6 +11,7 @@ import random
 from .memory_handler import load_user_memories, load_global_memories, summarize_and_save_memory
 from .utils import _find_member, _safe_get_response_text, get_gif_url, should_send_gif
 from utils.db import ai_config_collection
+from .rate_limiter import can_make_request
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
@@ -151,6 +152,15 @@ async def process_message_batch(cog, channel_id: int):
             )
             content.insert(0, prompt)
             
+            # --- RATE LIMIT CHECK ---
+            is_allowed, count = can_make_request()
+            if not is_allowed:
+                logger.warning(f"Gemini Pro request (batch) denied. Daily limit (50) reached.")
+                await last_message.channel.send("i'm feeling a bit tired... my brain needs a break for today. 😵‍💫 try again tomorrow!")
+                return
+            logger.info(f"Gemini Pro request (batch) #{count} for the day.")
+        # --- END RATE LIMIT CHECK ---
+            
             response = await chat.send_message_async(content)
             final_text = _safe_get_response_text(response)
             if not final_text: return
@@ -249,6 +259,15 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
                         image_data = await attachment.read()
                         image = Image.open(io.BytesIO(image_data))
                         content.append(image)
+                        
+                    # --- RATE LIMIT CHECK ---
+            is_allowed, count = can_make_request()
+            if not is_allowed:
+                logger.warning(f"Gemini Pro request denied. Daily limit (50) reached. User: {author.name}")
+                await message.reply("i'm feeling a bit tired... my brain needs a break for today. 😵‍💫 try again tomorrow!")
+                return
+            logger.info(f"Gemini Pro request #{count} for the day.")
+            # --- END RATE LIMIT CHECK ---
             
             response = await chat.send_message_async(content)
             final_text = _safe_get_response_text(response)
