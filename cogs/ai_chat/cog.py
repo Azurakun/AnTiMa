@@ -1,30 +1,39 @@
 # cogs/ai_chat/cog.py
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import logging
 import os
+import random
+import asyncio
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import aiohttp
-import collections # <-- ADDED
+import collections
 from utils.db import ai_config_collection, ai_personal_memories_collection
 from .prompts import SYSTEM_PROMPT
 from .response_handler import should_bot_respond_ai_check, process_message_batch, handle_single_user_response
-from .deprecated.proactive_chat import proactive_chat_loop, _initiate_conversation
+from .proactive_chat import _initiate_conversation
 from .personality_updater import personality_update_loop, update_guild_personality
 
 logger = logging.getLogger(__name__)
 
+# Configurable interval range (in minutes)
+MIN_INTERVAL_MINUTES = 90
+MAX_INTERVAL_MINUTES = 360
+
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
+        print("DEBUG: AIChatCog initializing...")
         self.bot = bot
         self.conversations = {}
         self.http_session = aiohttp.ClientSession()
         self.message_batches = {}
         self.batch_timers = {}
         self.BATCH_DELAY = 5
-        self.ignored_messages = collections.deque(maxlen=500) # <-- ADDED: To track ignored conversations
+        self.ignored_messages = collections.deque(maxlen=500)
 
         safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
@@ -42,12 +51,115 @@ class AIChatCog(commands.Cog, name="AIChat"):
             logger.error(f"Failed to configure Gemini AI: {e}")
             self.model = None
         
-        proactive_chat_loop.start(self)
+        print("DEBUG: Starting proactive_chat_loop...")
+        self.proactive_chat_loop.start()
+        print("DEBUG: proactive_chat_loop started call complete.")
 
     def cog_unload(self):
-        proactive_chat_loop.cancel()
+        self.proactive_chat_loop.cancel()
         self.bot.loop.create_task(self.http_session.close())
+
+    def _schedule_next_run(self):
+        """Randomizes the interval for the next loop iteration."""
+        next_interval = random.randint(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES)
+        self.proactive_chat_loop.change_interval(minutes=next_interval)
+        logger.info(f"Proactive chat: Next run scheduled in {next_interval} minutes.")
+
+    @tasks.loop(minutes=1)
+    async def proactive_chat_loop(self):
+        """Periodically and randomly initiates a conversation in a quiet, configured chat channel."""
+        try:
+            print("DEBUG: Proactive chat loop iteration started")
+            logger.info("Proactive chat: Loop started.")
+            # 1. Select a random guild configuration
+            guild_configs = list(ai_config_collection.find({"channel": {"$exists": True, "$ne": None}}))
+            if not guild_configs:
+                logger.info("Proactive chat: No guild configs found.")
+                return
+
+            config = random.choice(guild_configs)
+            guild_id_int = int(config['_id'])
+            guild = self.bot.get_guild(guild_id_int)
+            
+            channel_id = config.get('channel')
+            if not channel_id:
+                logger.info(f"Proactive chat: Config for guild {guild_id_int} has no channel ID.")
+                return
+            channel = self.bot.get_channel(int(channel_id))
+
+            if not guild or not channel:
+                logger.info(f"Proactive chat: Could not find guild {guild_id_int} or channel {channel_id}.")
+                return
+
+            logger.info(f"Proactive chat: Selected guild {guild.name} and channel #{channel.name}.")
+
+            # 2. Check for recent activity to avoid interrupting
+            if channel.last_message_id:
+                try:
+                    last_message = await channel.fetch_message(channel.last_message_id)
+                    # If active in the last 20 minutes, skip this turn
+                    if last_message and (datetime.now(timezone.utc) - last_message.created_at) < timedelta(minutes=20):
+                        logger.info(f"Proactive chat: Channel #{channel.name} is recently active. Skipping.")
+                        return
+                except discord.NotFound:
+                    pass
+                except Exception as e:
+                    logger.error(f"Proactive chat: Error checking activity: {e}")
+                    return
+
+            # 3. Find potential users (History + Database)
+            potential_user_ids = set()
+
+            # A. From recent channel history
+            async for msg in channel.history(limit=50):
+                if msg.author == self.bot.user and msg.reference:
+                    try:
+                        replied_to_message = msg.reference.resolved or await channel.fetch_message(msg.reference.message_id)
+                        if replied_to_message and not replied_to_message.author.bot:
+                             potential_user_ids.add(replied_to_message.author.id)
+                    except (discord.NotFound, discord.HTTPException):
+                        continue
+                elif self.bot.user in msg.mentions and not msg.author.bot:
+                     potential_user_ids.add(msg.author.id)
+
+            # B. From Database Memories (Users who have interacted before)
+            db_user_ids = ai_personal_memories_collection.distinct("user_id", {"guild_id": guild_id_int})
+            logger.info(f"Proactive chat: Found {len(db_user_ids)} users in database for this guild.")
+            potential_user_ids.update(db_user_ids)
+
+            # 4. Filter for Online/Idle Members
+            target_candidates = []
+            for user_id in potential_user_ids:
+                member = guild.get_member(user_id)
+                if member and member.status != discord.Status.offline and not member.bot:
+                    target_candidates.append(member)
+                elif member is None:
+                    pass
+
+            logger.info(f"Proactive chat: Found {len(target_candidates)} online/idle candidates out of {len(potential_user_ids)} potential users.")
+
+            if not target_candidates:
+                logger.info(f"Proactive chat: No available users found in #{channel.name}.")
+                return
+
+            # 5. Select User and Initiate
+            target_user = random.choice(target_candidates)
+            logger.info(f"Proactive chat: Starting conversation with {target_user.name} in {guild.name}.")
+
+            await _initiate_conversation(self, channel, target_user)
+
+        except Exception as e:
+            logger.error(f"An error occurred in the proactive chat loop: {e}", exc_info=True)
         
+        finally:
+            self._schedule_next_run()
+
+    @proactive_chat_loop.before_loop
+    async def before_proactive_chat_loop(self):
+        print("DEBUG: Waiting for bot to be ready...")
+        await self.bot.wait_until_ready()
+        print("DEBUG: Bot is ready! Starting loop...")
+
         
     @app_commands.command(name="refreshpersonality", description="[Admin Only] Manually update the bot's adaptive personality for this server.")
     @app_commands.checks.has_permissions(manage_guild=True)
@@ -124,7 +236,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
         else:
             await interaction.followup.send(f"⚠️ Could not start a conversation with {user.mention}. Reason: {reason}")
 
-    # vvvvvv REWRITTEN vvvvvv
+    
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.author.bot or self.model is None or not message.guild:
@@ -185,7 +297,6 @@ class AIChatCog(commands.Cog, name="AIChat"):
             self.batch_timers[channel_id] = self.bot.loop.call_later(self.BATCH_DELAY, lambda: self.bot.loop.create_task(process_message_batch(self, channel_id)))
         else:
             await handle_single_user_response(self, message, clean_prompt, message.author)
-    # ^^^^^^ REWRITTEN ^^^^^^
 
 
 async def setup(bot: commands.Bot):
