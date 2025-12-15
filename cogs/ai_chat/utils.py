@@ -122,6 +122,7 @@ def _find_member(guild: discord.Guild, name: str):
 async def fetch_website_content(url: str) -> str:
     """
     Visits a URL and extracts the main text content using BeautifulSoup.
+    This helps the AI read the actual article instead of just the snippet.
     """
     logger.info(f"DEBUG: Scraper visiting {url}")
     try:
@@ -133,7 +134,7 @@ async def fetch_website_content(url: str) -> str:
                 if response.status != 200:
                     return f"Failed to open link (Status {response.status})"
                 
-                # Safety: Check content size
+                # Safety: Check content size to prevent freezing on massive files
                 if int(response.headers.get("Content-Length", 0)) > 4_000_000:
                     return "Page too large to read safely."
 
@@ -142,22 +143,24 @@ async def fetch_website_content(url: str) -> str:
         # Parse HTML
         soup = BeautifulSoup(html, 'html.parser')
         
-        # Remove unwanted elements
+        # Remove unwanted elements that clutter the text
         for script in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe", "noscript", "svg"]):
             script.extract()
             
-        # Strategy: Find paragraphs
+        # Strategy: Find paragraphs. Usually the best way to get article content.
         paragraphs = [p.get_text().strip() for p in soup.find_all('p')]
+        
+        # Filter empty or very short junk lines (e.g., "Read more", "Share")
         clean_text = "\n".join([p for p in paragraphs if len(p) > 60])
         
-        # Fallback
+        # Fallback: if paragraph strategy failed, try getting all text
         if not clean_text or len(clean_text) < 200:
             clean_text = soup.get_text(separator='\n')
         
-        # Cleanup
+        # Cleanup: Remove excessive newlines
         clean_text = re.sub(r'\n\s*\n', '\n\n', clean_text)
         
-        # Truncate
+        # Truncate to avoid exceeding token limits (approx 3500 chars is safe for context)
         return clean_text[:3500] + ("..." if len(clean_text) > 3500 else "")
 
     except asyncio.TimeoutError:
@@ -168,7 +171,7 @@ async def fetch_website_content(url: str) -> str:
 
 async def perform_web_search(query: str) -> str:
     """
-    Performs a DuckDuckGo search with robust fallback backends and scrapes the content.
+    Performs a DuckDuckGo search using the default stable backend and scrapes the content.
     """
     if DDGS is None:
         return "Search tool error: `ddgs` library not found. Please install `ddgs`."
@@ -177,59 +180,46 @@ async def perform_web_search(query: str) -> str:
     loop = asyncio.get_running_loop()
 
     try:
-        # 1. Perform Search with Backend Retry Loop
+        # 1. Perform Search (Sync operation in executor)
         def run_ddg_sync():
             results = []
-            # We try backends in order. 'api' is fast, 'html' is robust, 'lite' is fallback.
-            backends = ['api', 'html', 'lite']
-            
-            with DDGS() as ddgs:
-                for backend in backends:
-                    try:
-                        logger.info(f"DEBUG: Trying DDG backend: '{backend}'")
-                        # Try to get up to 6 results
-                        ddgs_gen = ddgs.text(query, max_results=6, backend=backend)
-                        
-                        if ddgs_gen:
-                            # Convert generator to list to ensure we actually have data
-                            backend_results = list(ddgs_gen)
-                            
-                            if backend_results:
-                                results = backend_results
-                                logger.info(f"DEBUG: Backend '{backend}' succeeded with {len(results)} results.")
-                                break # Stop if we found results
-                            else:
-                                logger.warning(f"DEBUG: Backend '{backend}' returned empty list.")
-                        else:
-                            logger.warning(f"DEBUG: Backend '{backend}' returned None.")
-                            
-                    except Exception as backend_error:
-                        logger.error(f"DEBUG: Backend '{backend}' failed with error: {backend_error}")
-                        continue # Try next backend
-            
+            try:
+                # Use default 'auto' backend by not specifying 'backend' argument
+                with DDGS() as ddgs:
+                    # Fetch slightly more results (6) so we have candidates to filter
+                    ddgs_gen = ddgs.text(query, max_results=6)
+                    if ddgs_gen:
+                        results = list(ddgs_gen)
+            except Exception as e:
+                logger.error(f"DDG Search failed: {e}")
             return results
 
         search_results = await loop.run_in_executor(None, run_ddg_sync)
         
         if not search_results:
-            return "No results found (All search backends failed)."
+            return "No results found."
 
-        # 2. Format Snippets
+        # 2. Format Snippets for AI Overview
         formatted_snippets = "### Search Results Overview:\n"
         for i, r in enumerate(search_results):
-            # Handle different dictionary keys from different backends if necessary
+            # Normalize keys just in case
             title = r.get('title') or r.get('headline') or "No Title"
             link = r.get('href') or r.get('url') or "No Link"
             body = r.get('body') or r.get('snippet') or "No Snippet"
             formatted_snippets += f"{i+1}. {title} - {link}\n   Snippet: {body}\n"
 
         # 3. Smart Selection Logic
-        priorities = ['wiki', 'fandom', 'hoyolab', 'reddit', 'guide', 'screenrant', 'game8']
-        blacklist = ['scmp.com', 'cnn.com', 'bbc.com', 'nytimes.com', 'forbes.com', 'bloomberg.com']
+        # We want to avoid generic news (like SCMP, CNN) if the user is asking for specific game lore/guides.
+        
+        # Priority 1: High-value specific sites
+        priorities = ['wiki', 'fandom', 'hoyolab', 'reddit', 'guide', 'screenrant', 'game8', 'pockettactics']
+        
+        # Priority 2: Generic News Blacklist (avoid unless necessary)
+        blacklist = ['scmp.com', 'cnn.com', 'bbc.com', 'nytimes.com', 'forbes.com', 'bloomberg.com', 'yahoo.com']
 
         best_result = None
         
-        # Pass 1: Priority
+        # Pass 1: Look for Priority sites
         for r in search_results:
             url_lower = (r.get('href') or r.get('url') or '').lower()
             if any(p in url_lower for p in priorities):
@@ -237,21 +227,21 @@ async def perform_web_search(query: str) -> str:
                 logger.info(f"DEBUG: Selected Priority result: {r.get('title')}")
                 break
         
-        # Pass 2: Non-blacklisted
+        # Pass 2: If no priority result found, pick first result that IS NOT in blacklist
         if not best_result:
             for r in search_results:
                 url_lower = (r.get('href') or r.get('url') or '').lower()
                 if not any(b in url_lower for b in blacklist):
                     best_result = r
-                    logger.info(f"DEBUG: Selected fallback result: {r.get('title')}")
+                    logger.info(f"DEBUG: Selected fallback result (non-blacklisted): {r.get('title')}")
                     break
         
-        # Pass 3: Default
+        # Pass 3: If everything was blacklisted (or list empty), just take the first one
         if not best_result:
             best_result = search_results[0]
             logger.info(f"DEBUG: Defaulted to first result: {best_result.get('title')}")
 
-        # 4. Fetch Content
+        # 4. Fetch Content of the Best Result
         target_url = best_result.get('href') or best_result.get('url')
         target_title = best_result.get('title') or "Selected Result"
         
