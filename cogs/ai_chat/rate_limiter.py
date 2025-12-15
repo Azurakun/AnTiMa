@@ -1,70 +1,34 @@
-
-import json
-import os
+# cogs/ai_chat/rate_limiter.py
 import logging
-from datetime import datetime
-import threading
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-DAILY_LIMIT = 50  # Your 50 RPD limit
-QUOTA_FILE = 'gemini_pro_quota.json'
+# Simple in-memory storage for rate limiting
+# Format: { "date_str": count }
+_daily_usage = {}
+DAILY_LIMIT = 100
 
-# Use a lock to prevent a race condition if two messages
-# are processed at the exact same time.
-_lock = threading.Lock()
-
-def get_quota_data():
-    """Reads the quota data from the file."""
-    if not os.path.exists(QUOTA_FILE):
-        return {'request_count': 0, 'last_reset_date': ''}
-    try:
-        with open(QUOTA_FILE, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        # Handle empty or corrupted file
-        return {'request_count': 0, 'last_reset_date': ''}
-
-def save_quota_data(data):
-    """Saves the quota data to the file."""
-    try:
-        with open(QUOTA_FILE, 'w') as f:
-            json.dump(data, f, indent=2)
-    except IOError as e:
-        logger.error(f"Failed to save quota data: {e}")
-
-def can_make_request():
+def can_make_request() -> tuple[bool, int]:
     """
-    Checks if an API request can be made based on the 50 RPD limit.
-    This function is thread-safe.
-
-    Returns:
-        tuple[bool, int]: (is_allowed, current_count)
+    Checks if the global daily limit for Gemini Pro has been reached.
+    Returns (is_allowed, current_count).
     """
-    # Acquire the lock to ensure only one process
-    # can check/update the file at a time.
-    with _lock:
-        data = get_quota_data()
-        # Use UTC date as API quotas almost always reset in UTC
-        today_utc = datetime.utcnow().strftime('%Y-%m-%d')
-        
-        last_reset_date = data.get('last_reset_date')
-        request_count = data.get('request_count', 0)
-        
-        if last_reset_date != today_utc:
-            # It's a new day, reset the counter
-            logger.info("New day detected. Resetting Gemini Pro quota.")
-            data['request_count'] = 1
-            data['last_reset_date'] = today_utc
-            save_quota_data(data)
-            return True, 1
-        else:
-            # It's the same day, check the count
-            if request_count < DAILY_LIMIT:
-                data['request_count'] += 1
-                save_quota_data(data)
-                return True, data['request_count']
-            else:
-                # Limit reached
-                logger.warning(f"Gemini Pro 50 RPD limit reached. Count: {request_count}")
-                return False, request_count
+    global _daily_usage
+    
+    # Use timezone-aware UTC now to avoid DeprecationWarning
+    today_utc = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    
+    # Reset if it's a new day (primitive check, but works for simple blocking)
+    if today_utc not in _daily_usage:
+        _daily_usage = {today_utc: 0}
+        logger.info("New day detected. Resetting Gemini Pro quota.")
+    
+    current_count = _daily_usage[today_utc]
+    
+    if current_count >= DAILY_LIMIT:
+        return False, current_count
+    
+    # Increment usage
+    _daily_usage[today_utc] += 1
+    return True, _daily_usage[today_utc]

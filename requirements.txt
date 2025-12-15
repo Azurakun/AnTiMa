@@ -17,4 +17,6 @@ elevenlabs
 webrtcvad
 Pillow
 packaging
-googlesearch-python
+ddgs>=1.0.0
+beautifulsoup4
+fake-useragent

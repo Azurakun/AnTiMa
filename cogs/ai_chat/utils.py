@@ -4,18 +4,46 @@ import logging
 import os
 import random
 import aiohttp
+import asyncio
+import functools
+import traceback
+import warnings
+import re
+from bs4 import BeautifulSoup
+from fake_useragent import UserAgent
+
+# Suppress the specific RuntimeWarning from duckduckgo_search regarding 'ddgs' renaming
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
+
+# Robust import for DDGS
+try:
+    from duckduckgo_search import DDGS
+except ImportError:
+    try:
+        from ddgs import DDGS
+    except ImportError:
+        DDGS = None
 
 logger = logging.getLogger(__name__)
 
 TENOR_API_KEY = os.environ.get("TENOR_API_KEY")
-TENOR_CLIENT_KEY = "AnTiMa-Discord-Bot" # A client key for Tenor's analytics
+TENOR_CLIENT_KEY = "AnTiMa-Discord-Bot"
 
 def _safe_get_response_text(response) -> str:
     """Safely gets text from a Gemini response, handling blocked content."""
     try:
-        return response.text
-    except (ValueError, IndexError):
-        logger.warning("Gemini response was empty or blocked.")
+        if not response.parts:
+            return ""
+        text_parts = []
+        for part in response.parts:
+            if part.text:
+                text_parts.append(part.text)
+        
+        if text_parts:
+            return "\n".join(text_parts)
+        return ""
+    except (ValueError, IndexError, AttributeError):
+        logger.warning("Gemini response was empty, blocked, or contained only function calls.")
         return ""
 
 async def get_gif_url(http_session: aiohttp.ClientSession, search_term: str) -> str | None:
@@ -78,7 +106,7 @@ async def should_send_gif(summarizer_model, channel, bot_response_text, gif_sear
 
     except Exception as e:
         logger.error(f"GIF Decision Agent failed: {e}")
-        return False # Default to not sending GIF on error
+        return False
 
 def _find_member(guild: discord.Guild, name: str):
     """Finds a member in a guild by name or display name, case-insensitively."""
@@ -90,3 +118,154 @@ def _find_member(guild: discord.Guild, name: str):
     if member is None:
         logger.warning(f"Could not find member '{name}' in guild '{guild.name}'. The member might not be cached or the name is incorrect.")
     return member
+
+async def fetch_website_content(url: str) -> str:
+    """
+    Visits a URL and extracts the main text content using BeautifulSoup.
+    """
+    logger.info(f"DEBUG: Scraper visiting {url}")
+    try:
+        ua = UserAgent()
+        headers = {'User-Agent': ua.random}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=6) as response:
+                if response.status != 200:
+                    return f"Failed to open link (Status {response.status})"
+                
+                # Safety: Check content size
+                if int(response.headers.get("Content-Length", 0)) > 4_000_000:
+                    return "Page too large to read safely."
+
+                html = await response.text()
+                
+        # Parse HTML
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Remove unwanted elements
+        for script in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe", "noscript", "svg"]):
+            script.extract()
+            
+        # Strategy: Find paragraphs
+        paragraphs = [p.get_text().strip() for p in soup.find_all('p')]
+        clean_text = "\n".join([p for p in paragraphs if len(p) > 60])
+        
+        # Fallback
+        if not clean_text or len(clean_text) < 200:
+            clean_text = soup.get_text(separator='\n')
+        
+        # Cleanup
+        clean_text = re.sub(r'\n\s*\n', '\n\n', clean_text)
+        
+        # Truncate
+        return clean_text[:3500] + ("..." if len(clean_text) > 3500 else "")
+
+    except asyncio.TimeoutError:
+        return "Reading the page timed out."
+    except Exception as e:
+        logger.error(f"Scraper error on {url}: {e}")
+        return f"Could not read page content: {str(e)}"
+
+async def perform_web_search(query: str) -> str:
+    """
+    Performs a DuckDuckGo search with robust fallback backends and scrapes the content.
+    """
+    if DDGS is None:
+        return "Search tool error: `ddgs` library not found. Please install `ddgs`."
+
+    logger.info(f"DEBUG: AI Search Query: '{query}'")
+    loop = asyncio.get_running_loop()
+
+    try:
+        # 1. Perform Search with Backend Retry Loop
+        def run_ddg_sync():
+            results = []
+            # We try backends in order. 'api' is fast, 'html' is robust, 'lite' is fallback.
+            backends = ['api', 'html', 'lite']
+            
+            with DDGS() as ddgs:
+                for backend in backends:
+                    try:
+                        logger.info(f"DEBUG: Trying DDG backend: '{backend}'")
+                        # Try to get up to 6 results
+                        ddgs_gen = ddgs.text(query, max_results=6, backend=backend)
+                        
+                        if ddgs_gen:
+                            # Convert generator to list to ensure we actually have data
+                            backend_results = list(ddgs_gen)
+                            
+                            if backend_results:
+                                results = backend_results
+                                logger.info(f"DEBUG: Backend '{backend}' succeeded with {len(results)} results.")
+                                break # Stop if we found results
+                            else:
+                                logger.warning(f"DEBUG: Backend '{backend}' returned empty list.")
+                        else:
+                            logger.warning(f"DEBUG: Backend '{backend}' returned None.")
+                            
+                    except Exception as backend_error:
+                        logger.error(f"DEBUG: Backend '{backend}' failed with error: {backend_error}")
+                        continue # Try next backend
+            
+            return results
+
+        search_results = await loop.run_in_executor(None, run_ddg_sync)
+        
+        if not search_results:
+            return "No results found (All search backends failed)."
+
+        # 2. Format Snippets
+        formatted_snippets = "### Search Results Overview:\n"
+        for i, r in enumerate(search_results):
+            # Handle different dictionary keys from different backends if necessary
+            title = r.get('title') or r.get('headline') or "No Title"
+            link = r.get('href') or r.get('url') or "No Link"
+            body = r.get('body') or r.get('snippet') or "No Snippet"
+            formatted_snippets += f"{i+1}. {title} - {link}\n   Snippet: {body}\n"
+
+        # 3. Smart Selection Logic
+        priorities = ['wiki', 'fandom', 'hoyolab', 'reddit', 'guide', 'screenrant', 'game8']
+        blacklist = ['scmp.com', 'cnn.com', 'bbc.com', 'nytimes.com', 'forbes.com', 'bloomberg.com']
+
+        best_result = None
+        
+        # Pass 1: Priority
+        for r in search_results:
+            url_lower = (r.get('href') or r.get('url') or '').lower()
+            if any(p in url_lower for p in priorities):
+                best_result = r
+                logger.info(f"DEBUG: Selected Priority result: {r.get('title')}")
+                break
+        
+        # Pass 2: Non-blacklisted
+        if not best_result:
+            for r in search_results:
+                url_lower = (r.get('href') or r.get('url') or '').lower()
+                if not any(b in url_lower for b in blacklist):
+                    best_result = r
+                    logger.info(f"DEBUG: Selected fallback result: {r.get('title')}")
+                    break
+        
+        # Pass 3: Default
+        if not best_result:
+            best_result = search_results[0]
+            logger.info(f"DEBUG: Defaulted to first result: {best_result.get('title')}")
+
+        # 4. Fetch Content
+        target_url = best_result.get('href') or best_result.get('url')
+        target_title = best_result.get('title') or "Selected Result"
+        
+        article_content = await fetch_website_content(target_url)
+        
+        final_output = (
+            f"{formatted_snippets}\n"
+            f"### Deep Dive Content (from {target_title}):\n"
+            f"{article_content}"
+        )
+        
+        return final_output
+
+    except Exception as e:
+        logger.error(f"Search failed: {e}")
+        traceback.print_exc()
+        return f"Search System Error: {str(e)}"

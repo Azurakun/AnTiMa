@@ -1,70 +1,57 @@
 # cogs/logging_cog.py
-import logging
-from logging import Handler, LogRecord
-from datetime import datetime
+import discord
 from discord.ext import commands
-from utils.db import logs_collection # This now points to the correct DB connection
+import logging
+import datetime
+from utils.db import logs_collection
 
-logger = logging.getLogger(__name__)
+class MongoHandler(logging.Handler):
+    def __init__(self, bot):
+        super().__init__()
+        self.bot = bot
 
-class MongoHandler(Handler):
-    """A logging handler that appends logs to a new document in MongoDB every 10 minutes."""
-
-    def __init__(self, collection, level=logging.NOTSET):
-        super().__init__(level)
-        self.collection = collection
-
-    def emit(self, record: LogRecord):
-        """Appends a log record to the document for the current 10-minute interval."""
+    def emit(self, record):
         try:
-            # Use the current date and 10-minute interval as the document ID
-            timestamp = datetime.utcfromtimestamp(record.created)
-            log_id = f"{timestamp.strftime('%Y-%m-%d-%H')}-{timestamp.minute // 10}"
+            # FIX: Use timezone-aware datetime instead of utcfromtimestamp
+            timestamp = datetime.datetime.fromtimestamp(record.created, datetime.timezone.utc)
             
             log_entry = {
-                'timestamp': record.created,
-                'level': record.levelname,
-                'message': self.format(record),
-                'module': record.module,
-                'funcName': record.funcName,
-                'lineNo': record.lineno
+                # Format ID as YYYY-MM-DD-HH-M (10-minute buckets)
+                "_id": f"{timestamp.strftime('%Y-%m-%d-%H')}-{timestamp.minute // 10}",
+                "timestamp": timestamp,
+                "level": record.levelname,
+                "logger": record.name,
+                "message": self.format(record),
+                "guild_id": getattr(record, "guild_id", None),
+                "user_id": getattr(record, "user_id", None)
             }
-
-            # Find the document for today and push the new log into its 'logs' array.
-            # If the document doesn't exist, upsert=True will create it.
-            self.collection.update_one(
-                {'_id': log_id},
-                {'$push': {'logs': log_entry}},
+            
+            # Use update_one with upsert to create or append to the bucket
+            logs_collection.update_one(
+                {"_id": log_entry["_id"]},
+                {
+                    "$push": {"logs": log_entry},
+                    "$setOnInsert": {"created_at": timestamp}
+                },
                 upsert=True
             )
-        except Exception as e:
-            # Fallback to console if DB logging fails
-            print(f"Failed to log to MongoDB: {e}")
-            print(f"Log Record: {self.format(record)}")
+        except Exception:
+            self.handleError(record)
 
-class LoggingCog(commands.Cog, name="Logging"):
-    def __init__(self, bot: commands.Bot):
+class LoggingCog(commands.Cog):
+    def __init__(self, bot):
         self.bot = bot
-        self.setup_logging()
-
-    def setup_logging(self):
-        """Sets up the MongoDB logging handler."""
-        if logs_collection is None:
-            logger.error("Logs collection is not available. Cannot set up MongoDB logging.")
-            return
-
-        root_logger = logging.getLogger()
+        self.mongo_handler = MongoHandler(bot)
         
-        # Avoid adding handlers multiple times on reload
-        if any(isinstance(h, MongoHandler) for h in root_logger.handlers):
-            logger.info("MongoHandler already configured.")
-            return
+        # Add the custom handler to the root logger
+        logging.getLogger().addHandler(self.mongo_handler)
+        
+        # Set logging level (INFO captures most things, DEBUG is for verbose output)
+        logging.getLogger().setLevel(logging.INFO)
 
-        root_logger.setLevel(logging.INFO)
-        mongo_handler = MongoHandler(collection=logs_collection)
-        root_logger.addHandler(mongo_handler)
-
-        logger.info("Logging to MongoDB has been configured.")
+    def cog_unload(self):
+        # Remove the handler when the cog is unloaded to prevent duplicates
+        logging.getLogger().removeHandler(self.mongo_handler)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(LoggingCog(bot))

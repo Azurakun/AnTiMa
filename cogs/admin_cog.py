@@ -21,8 +21,6 @@ class AdminCog(commands.Cog):
     @app_commands.checks.has_permissions(manage_roles=True)
     async def setemojirole(self, interaction: discord.Interaction, message_id: str, emoji: str, role: discord.Role):
         # The reaction_roles_cog will handle the actual logic. This command just sets it up.
-        # We'll need a way to share the emoji_role_map. For now, let's assume the other cog can access it.
-        # A better way would be to use a database, but for now, we find the cog.
         reaction_cog = self.bot.get_cog("ReactionRolesCog")
         if not reaction_cog:
             await interaction.response.send_message("Reaction Roles system is not loaded.", ephemeral=True)
@@ -36,8 +34,6 @@ class AdminCog(commands.Cog):
 
         guild_id = interaction.guild_id
         reaction_cog.emoji_role_map.setdefault(guild_id, {}).setdefault(msg_id, {})[emoji] = role.id
-        
-        # You would ideally save this to a file or database here so it persists restarts.
         
         await interaction.response.send_message(f"Linked emoji {emoji} with role {role.name} on message ID {msg_id}.", ephemeral=True)
 
@@ -127,6 +123,42 @@ class AdminCog(commands.Cog):
         except Exception as e:
             logger.error(f"Error purging logs: {e}")
             await interaction.followup.send("❌ An error occurred while trying to purge the logs.")
+
+    @app_commands.command(name="listservers", description="Lists all servers the bot has currently joined.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def listservers(self, interaction: discord.Interaction):
+        """Lists all joined guilds (servers) and their IDs."""
+        await interaction.response.defer(ephemeral=True)
+        
+        guilds = self.bot.guilds
+        if not guilds:
+            await interaction.followup.send("I haven't joined any servers yet.")
+            return
+
+        # Build the message
+        lines = [f"**🤖 Joined Servers ({len(guilds)})**"]
+        for guild in guilds:
+            lines.append(f"• **{guild.name}** (ID: `{guild.id}`)")
+        
+        full_text = "\n".join(lines)
+
+        # Discord message limit is 2000 chars. Split if necessary.
+        if len(full_text) > 2000:
+            chunks = []
+            current_chunk = ""
+            for line in lines:
+                if len(current_chunk) + len(line) + 1 > 2000:
+                    chunks.append(current_chunk)
+                    current_chunk = line + "\n"
+                else:
+                    current_chunk += line + "\n"
+            if current_chunk:
+                chunks.append(current_chunk)
+            
+            for chunk in chunks:
+                await interaction.followup.send(chunk, ephemeral=True)
+        else:
+            await interaction.followup.send(full_text, ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))

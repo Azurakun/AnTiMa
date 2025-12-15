@@ -9,12 +9,78 @@ import re
 import asyncio
 import random
 from .memory_handler import load_user_memories, load_global_memories, summarize_and_save_memory
-from .utils import _find_member, _safe_get_response_text, get_gif_url, should_send_gif
+from .utils import _find_member, _safe_get_response_text, get_gif_url, should_send_gif, perform_web_search
 from utils.db import ai_config_collection
 from .rate_limiter import can_make_request
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
+
+async def _send_and_handle_tool_loop(chat, prompt_content, message_channel, notify_message=None):
+    """
+    Sends a message to the chat model and handles any resulting function calls (tools)
+    in a loop until a text response is received or the loop breaks.
+    """
+    # Initial request
+    response = await chat.send_message_async(prompt_content)
+    
+    # Loop to check for function calls
+    loop_count = 0
+    max_loops = 3  # Prevent infinite loops
+    
+    while loop_count < max_loops:
+        # Check all parts for a function call, not just the first one
+        function_call = None
+        if response.parts:
+            for part in response.parts:
+                if part.function_call:
+                    function_call = part.function_call
+                    break
+        
+        if not function_call:
+            break
+
+        loop_count += 1
+        
+        if function_call.name == 'perform_web_search':
+            if notify_message:
+                # Notify the user that we are searching
+                try:
+                    await notify_message.reply("🔍 wait up, let me search that up real quick... 🌐")
+                except Exception:
+                    pass # Ignore if we can't reply
+            elif message_channel:
+                 try:
+                    await message_channel.send("🔍 searching the web for latest info... give me a sec.")
+                 except Exception:
+                    pass
+
+            # Execute the search
+            query = function_call.args.get('query', '')
+            logger.info(f"AI requested web search for: {query}")
+            
+            # --- Perform Search ---
+            search_result = await perform_web_search(query)
+            # ----------------------
+            
+            # Log the result so we know what the AI is seeing
+            preview = search_result[:200].replace('\n', ' ') + "..." if len(search_result) > 200 else search_result.replace('\n', ' ')
+            logger.info(f"DEBUG: Tool Output sent to AI: {preview}")
+
+            # Send the tool output back to the model
+            response = await chat.send_message_async(
+                {
+                    "function_response": {
+                        "name": "perform_web_search",
+                        "response": {"result": search_result}
+                    }
+                }
+            )
+        else:
+            # Unknown tool or other function call we don't handle explicitly here
+            break
+            
+    return response
 
 # vvvvvv REWRITTEN vvvvvv
 async def should_bot_respond_ai_check(cog, bot, summarizer_model, message: discord.Message) -> bool:
@@ -159,9 +225,11 @@ async def process_message_batch(cog, channel_id: int):
                 await last_message.channel.send("i'm feeling a bit tired... my brain needs a break for today. 😵‍💫 try again tomorrow!")
                 return
             logger.info(f"Gemini Pro request (batch) #{count} for the day.")
-        # --- END RATE LIMIT CHECK ---
+            # --- END RATE LIMIT CHECK ---
             
-            response = await chat.send_message_async(content)
+            # Use the helper to handle the response and potential tool calls
+            response = await _send_and_handle_tool_loop(chat, content, message_channel=last_message.channel)
+            
             final_text = _safe_get_response_text(response)
             if not final_text: return
 
@@ -260,7 +328,7 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
                         image = Image.open(io.BytesIO(image_data))
                         content.append(image)
                         
-                    # --- RATE LIMIT CHECK ---
+            # --- RATE LIMIT CHECK ---
             is_allowed, count = can_make_request()
             if not is_allowed:
                 logger.warning(f"Gemini Pro request denied. Daily limit (50) reached. User: {author.name}")
@@ -269,7 +337,10 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
             logger.info(f"Gemini Pro request #{count} for the day.")
             # --- END RATE LIMIT CHECK ---
             
-            response = await chat.send_message_async(content)
+            # Use the helper to handle response + tool loop
+            # We pass 'message' so we can reply with the "Searching..." notification
+            response = await _send_and_handle_tool_loop(chat, content, message_channel=message.channel, notify_message=message)
+            
             final_text = _safe_get_response_text(response)
             if not final_text:
                 await message.reply("i wanted to say something, but my brain filters went 'nope!' try rephrasing that?")
