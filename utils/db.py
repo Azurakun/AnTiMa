@@ -10,6 +10,7 @@ db = client.get_database("antima_db")
 # Collections for the main database
 reminders_collection = db.get_collection("reminders")
 user_timezones_collection = db.get_collection("user_timezones")
+server_lore_collection = db.get_collection("server_lore")
 ai_config_collection = db.get_collection("ai_config")
 
 # UPDATED: Stores personal/contextual memories tied to users and guilds.

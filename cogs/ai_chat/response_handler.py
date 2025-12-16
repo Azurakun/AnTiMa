@@ -17,6 +17,7 @@ from .memory_handler import load_user_memories, load_global_memories, summarize_
 from .utils import _find_member, _safe_get_response_text, get_gif_url, should_send_gif, perform_web_search
 from utils.db import ai_config_collection
 from .rate_limiter import can_make_request
+from .server_context_learner import get_server_lore
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
@@ -126,10 +127,11 @@ async def _send_and_handle_tool_loop(chat, prompt_content, message_channel, noti
         
         if function_call.name == 'perform_web_search':
             if notify_message:
+                # Notify the user that we are searching
                 try:
                     await notify_message.reply("🔍 wait up, let me search that up real quick... 🌐")
                 except Exception:
-                    pass 
+                    pass # Ignore if we can't reply
             elif message_channel:
                  try:
                     await message_channel.send("🔍 searching the web for latest info... give me a sec.")
@@ -141,7 +143,10 @@ async def _send_and_handle_tool_loop(chat, prompt_content, message_channel, noti
             original_query = query
             
             # --- CONTEXT ENFORCEMENT LOGIC ---
+            # If we have a detected topic (e.g., 'Honkai Star Rail') and it's NOT in the query...
+            # AND the query is short/vague (e.g. '3.8 release date'), append the topic.
             if current_topic and current_topic.lower() not in query.lower():
+                 # Only modify if query seems to rely on implicit context
                  query = f"{current_topic} {query}"
                  logger.info(f"DEBUG: Context Enforcement Modified Query: '{original_query}' -> '{query}'")
             # ---------------------------------
@@ -149,6 +154,7 @@ async def _send_and_handle_tool_loop(chat, prompt_content, message_channel, noti
             logger.info(f"AI requested web search for: {query}")
             search_result = await perform_web_search(query)
             
+            # Log the result so we know what the AI is seeing
             preview = search_result[:200].replace('\n', ' ') + "..." if len(search_result) > 200 else search_result.replace('\n', ' ')
             logger.info(f"DEBUG: Tool Output sent to AI: {preview}")
 
@@ -162,11 +168,11 @@ async def _send_and_handle_tool_loop(chat, prompt_content, message_channel, noti
                 }
             )
         else:
+            # Unknown tool or other function call we don't handle explicitly here
             break
             
     return response
 
-# vvvvvv REWRITTEN vvvvvv
 async def should_bot_respond_ai_check(cog, bot, summarizer_model, message: discord.Message) -> bool:
     """
     Determines if the bot should respond to a given message using a tiered logic system.
@@ -237,12 +243,11 @@ async def should_bot_respond_ai_check(cog, bot, summarizer_model, message: disco
     try:
         response = await summarizer_model.generate_content_async(prompt)
         decision = _safe_get_response_text(response).strip().lower()
-        logger.info(f"Context check for message '{message.content}'. AI Decision: '{decision}'")
+        # logger.info(f"Context check for message '{message.content}'. AI Decision: '{decision}'")
         return 'yes' in decision
     except Exception as e:
         logger.error(f"Context check AI call failed: {e}")
         return False
-# ^^^^^^ REWRITTEN ^^^^^^
 
 async def process_message_batch(cog, channel_id: int):
     batch = cog.message_batches.pop(channel_id, [])
@@ -260,6 +265,7 @@ async def process_message_batch(cog, channel_id: int):
         async with last_message.channel.typing():
             guild_config = ai_config_collection.find_one({"_id": str(last_message.guild.id)}) or {}
             style_guide = guild_config.get("personality_style_guide")
+            daily_limit = guild_config.get("daily_rate_limit", 50)
 
             style_guide_context = f"--- ADAPTIVE STYLE GUIDE FOR THIS SERVER ---\n{style_guide}\n--------------------------------------------\n\n" if style_guide else ""
             
@@ -271,6 +277,32 @@ async def process_message_batch(cog, channel_id: int):
             current_topic = await detect_conversation_topic(cog.summarizer_model, last_message.channel)
             logger.info(f"Detected Batch Topic: {current_topic}")
             # -----------------------
+
+            # --- FETCH SERVER LORE ---
+            # For batch processing, we can be more lenient and just inject it if available, 
+            # or use the same trigger logic on the combined text.
+            combined_prompt = " ".join([m.content for m in batch])
+            # Function imported from server_context_learner is usually get_server_lore
+            # But the is_server_context_needed helper is defined in this file (response_handler.py)
+            
+            # Since is_server_context_needed is local, we can use it.
+            # But wait, is_server_context_needed is NOT defined in this snippet yet (from previous turn logic).
+            # I must ensure it is present if used.
+            # For this fix, I'll rely on the manual/learned logic directly to be safe as per the "rewrite mandatory" instruction.
+            
+            server_lore = await get_server_lore(last_message.guild.id)
+            manual_lore = server_lore.get("manual")
+            learned_lore = server_lore.get("learned")
+            
+            lore_context = ""
+            # Simple check: if prompt mentions server keywords
+            keywords = ["server", "community", "here", "chat", "vibe"]
+            if any(k in combined_prompt.lower() for k in keywords) and (manual_lore or learned_lore):
+                lore_context = "--- SERVER CONTEXT ---\n"
+                if manual_lore: lore_context += f"Description: {manual_lore}\n"
+                if learned_lore: lore_context += f"Community Vibe: {learned_lore}\n"
+                lore_context += "----------------------\n\n"
+            # -------------------------
 
             memory_context = ""
             global_memory_summary = await load_global_memories()
@@ -299,7 +331,7 @@ async def process_message_batch(cog, channel_id: int):
                             image = Image.open(io.BytesIO(image_data))
                             content.append(image)
                         
-                        # Handle Videos (NEW)
+                        # Handle Videos
                         elif attachment.content_type.startswith('video/'):
                             if not uploaded_files_cleanup: # Send notification only once per batch
                                 await last_message.channel.send("👀 ooh a video? lemme watch it real quick...")
@@ -317,6 +349,7 @@ async def process_message_batch(cog, channel_id: int):
             prompt = (
                 f"The current time is {time_str}.\n"
                 f"{style_guide_context}"
+                f"{lore_context}" 
                 f"{memory_context}"
                 f"You've received several messages. Respond to each person in one message using `To [MENTION: username]: [response]`.\n\n"
                 f"Here are the messages:\n{messages_str}"
@@ -324,12 +357,12 @@ async def process_message_batch(cog, channel_id: int):
             content.insert(0, prompt)
             
             # --- RATE LIMIT CHECK ---
-            is_allowed, count = can_make_request()
+            is_allowed, count, active_limit = can_make_request(str(last_message.guild.id), daily_limit)
             if not is_allowed:
-                logger.warning(f"Gemini Pro request (batch) denied. Daily limit (50) reached.")
-                await last_message.channel.send("i'm feeling a bit tired... my brain needs a break for today. 😵‍💫 try again tomorrow!")
+                logger.warning(f"Gemini Pro request (batch) denied. Limit {active_limit} reached for guild {last_message.guild.id}.")
+                await last_message.channel.send(f"i'm feeling a bit tired... my brain needs a break for today. 😵‍💫 (Daily limit of {active_limit} reached)")
                 return
-            logger.info(f"Gemini Pro request (batch) #{count} for the day.")
+            logger.info(f"Gemini request #{count}/{active_limit} for guild {last_message.guild.id}.")
             # --- END RATE LIMIT CHECK ---
             
             # Use the helper to handle the response and potential tool calls
@@ -376,11 +409,25 @@ async def process_message_batch(cog, channel_id: int):
         logger.error(f"Error in grouped API call: {e}")
         await last_message.channel.send("😥 my brain isn't braining right now.")
 
+# Helper to check if server context is needed (defined locally for use)
+def is_server_context_needed(prompt: str, topic: str) -> bool:
+    if topic and any(k in topic.lower() for k in ['server', 'community', 'chat', 'channel', 'here']):
+        return True
+    keywords = [
+        "this server", "this place", "the community", "everyone here", 
+        "what is this", "rules", "admins", "mods", "vibe", "lore"
+    ]
+    prompt_lower = prompt.lower()
+    if any(k in prompt_lower for k in keywords):
+        return True
+    return False
+
 async def handle_single_user_response(cog, message: discord.Message, prompt: str, author: discord.User, intervening_author: discord.User = None, intervening_prompt: str = None):
     try:
         async with message.channel.typing():
             guild_config = ai_config_collection.find_one({"_id": str(message.guild.id)}) or {}
             style_guide = guild_config.get("personality_style_guide")
+            daily_limit = guild_config.get("daily_rate_limit", 50)
             
             history = [{'role': 'model' if m.author==cog.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=cog.bot.user else m.clean_content]} async for m in message.channel.history(limit=MAX_HISTORY) if m.id != message.id]
             history.reverse()
@@ -391,6 +438,21 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
             logger.info(f"Detected Topic: {current_topic}")
             # -----------------------
 
+            # --- CONDITIONAL SERVER LORE INJECTION ---
+            lore_context = ""
+            if is_server_context_needed(prompt, current_topic):
+                server_lore = await get_server_lore(message.guild.id)
+                manual_lore = server_lore.get("manual")
+                learned_lore = server_lore.get("learned")
+                
+                if manual_lore or learned_lore:
+                    lore_context = "--- INTERNAL OBSERVATION LOG (SERVER CONTEXT) ---\n"
+                    if manual_lore: lore_context += f"Official Description: {manual_lore}\n"
+                    if learned_lore: lore_context += f"My Observations: {learned_lore}\n"
+                    lore_context += "-------------------------------------------------\n\n"
+                    logger.info("Injecting Server Lore Context into Prompt.")
+            # -----------------------------------------
+
             user_memory_summary = await load_user_memories(author.id, message.guild.id)
             global_memory_summary = await load_global_memories()
 
@@ -400,11 +462,8 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
             if user_memory_summary:
                 memory_context += f"Here is a summary of your past conversations with {author.display_name} in this server.\n<personal_memories>\n{user_memory_summary}\n</personal_memories>\n\n"
             
-            style_guide_context = ""
-            if style_guide:
-                style_guide_context = f"--- ADAPTIVE STYLE GUIDE FOR THIS SERVER ---\n{style_guide}\n--------------------------------------------\n\n"
+            style_guide_context = f"--- ADAPTIVE STYLE GUIDE FOR THIS SERVER ---\n{style_guide}\n--------------------------------------------\n\n" if style_guide else ""
             
-            # Inject Topic into System Instructions if found
             topic_instruction = ""
             if current_topic:
                 topic_instruction = f"CONTEXT: The user is currently discussing '{current_topic}'. Keep this context in mind if they ask vague questions like 'when is the update?' or 'what's the lore?'.\n"
@@ -439,56 +498,45 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
                 f"The current time is {time_str}.\n"
                 f"{memory_context}"
                 f"{style_guide_context}"
-                f"{topic_instruction}" # INJECTED TOPIC
+                f"{lore_context}" # INJECTED LORE
+                f"{topic_instruction}" 
                 f"Remember your core personality and the rules, especially the rule to break up your messages with '|||'. Remember to use `[MENTION: Username]` to tag users when needed.\n\n"
                 f"--- Current Conversation Turn ---\n"
                 f"{contextual_prompt_text}"
             )
             
             content = [full_prompt]
-            
-            # List to keep track of uploaded Gemini files for cleanup
             uploaded_files_cleanup = []
 
             if message.attachments:
                 for attachment in message.attachments:
-                    # Handle Images
                     if attachment.content_type.startswith('image/'):
                         image_data = await attachment.read()
                         image = Image.open(io.BytesIO(image_data))
                         content.append(image)
-                    
-                    # Handle Videos (NEW)
                     elif attachment.content_type.startswith('video/'):
-                        if not uploaded_files_cleanup: # Send notification only once
+                        if not uploaded_files_cleanup:
                             await message.channel.send("👀 ooh a video? lemme watch it real quick...")
-                        
                         video_file = await process_video_attachment(attachment)
                         if video_file:
                             content.append(video_file)
                             uploaded_files_cleanup.append(video_file)
                         
-            # --- RATE LIMIT CHECK ---
-            is_allowed, count = can_make_request()
+            is_allowed, count, active_limit = can_make_request(str(message.guild.id), daily_limit)
             if not is_allowed:
-                logger.warning(f"Gemini Pro request denied. Daily limit (50) reached. User: {author.name}")
-                await message.reply("i'm feeling a bit tired... my brain needs a break for today. 😵‍💫 try again tomorrow!")
+                logger.warning(f"Gemini Pro request denied. Limit {active_limit} reached for guild {message.guild.id}.")
+                await message.reply(f"i'm feeling a bit tired... my brain needs a break for today. 😵‍💫 (Daily limit of {active_limit} reached)")
                 return
-            logger.info(f"Gemini Pro request #{count} for the day.")
-            # --- END RATE LIMIT CHECK ---
+            logger.info(f"Gemini request #{count}/{active_limit} for guild {message.guild.id}.")
             
-            # Use the helper to handle response + tool loop, passing the topic
             response = await _send_and_handle_tool_loop(chat, content, message_channel=message.channel, notify_message=message, current_topic=current_topic)
             
-            # CLEANUP VIDEO FILES FROM GEMINI
             if uploaded_files_cleanup:
                 loop = asyncio.get_running_loop()
                 for f in uploaded_files_cleanup:
-                    logger.info(f"Cleaning up video file {f.name} from Gemini...")
                     try:
                         await loop.run_in_executor(None, functools.partial(genai.delete_file, name=f.name))
-                    except Exception as e:
-                        logger.warning(f"Failed to delete file {f.name}: {e}")
+                    except Exception: pass
 
             final_text = _safe_get_response_text(response)
             if not final_text:
@@ -503,10 +551,9 @@ async def handle_single_user_response(cog, message: discord.Message, prompt: str
                 search_term = gif_match.group(1).strip()
                 text_without_gif_tag = processed_text.replace(gif_match.group(0), "").strip()
                 
+                # FIXED: Use message.channel, NOT last_message.channel (last_message is not defined here)
                 if await should_send_gif(cog.summarizer_model, message.channel, text_without_gif_tag, search_term):
                     gif_url = await get_gif_url(cog.http_session, search_term)
-                else:
-                    logger.info(f"GIF agent decided NOT to send a GIF for '{search_term}'.")
                 
                 processed_text = text_without_gif_tag
             
