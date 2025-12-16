@@ -209,12 +209,7 @@ async def perform_web_search(query: str) -> str:
             formatted_snippets += f"{i+1}. {title} - {link}\n   Snippet: {body}\n"
 
         # 3. Smart Selection Logic
-        # We want to avoid generic news (like SCMP, CNN) if the user is asking for specific game lore/guides.
-        
-        # Priority 1: High-value specific sites
         priorities = ['wiki', 'fandom', 'hoyolab', 'reddit', 'guide', 'screenrant', 'game8', 'pockettactics']
-        
-        # Priority 2: Generic News Blacklist (avoid unless necessary)
         blacklist = ['scmp.com', 'cnn.com', 'bbc.com', 'nytimes.com', 'forbes.com', 'bloomberg.com', 'yahoo.com']
 
         best_result = None
@@ -259,3 +254,20 @@ async def perform_web_search(query: str) -> str:
         logger.error(f"Search failed: {e}")
         traceback.print_exc()
         return f"Search System Error: {str(e)}"
+
+# --- NEW TOOL ---
+async def identify_visual_content(visual_description: str) -> str:
+    """
+    Use this tool when you see an Image or Video and need to identify what it is.
+    It performs a targeted web search based on your visual description to find the source/name.
+    
+    Args:
+        visual_description (str): A detailed description of what you see (e.g. "anime girl pink hair robot suit green eyes character name").
+    """
+    logger.info(f"Visual Search triggered for: {visual_description}")
+    
+    # Enhance the query for identification purposes
+    search_query = f"{visual_description} character name wiki origin"
+    
+    # Reuse the existing robust search logic
+    return await perform_web_search(search_query)
