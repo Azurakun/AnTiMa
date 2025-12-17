@@ -9,6 +9,7 @@ import asyncio
 import random
 from datetime import datetime
 from utils.db import ai_config_collection, rpg_sessions_collection, rpg_inventory_collection
+from utils.limiter import limiter  # Import the rate limiter utility
 
 # --- CONFIGURATION ---
 
@@ -30,7 +31,9 @@ SCENARIOS = [
 ]
 
 # --- AI TOOLS ---
+
 def grant_item_to_player(user_id: str, item_name: str, description: str):
+    """Grants an item to a player's inventory in the DB."""
     try:
         rpg_inventory_collection.update_one(
             {"user_id": int(user_id)},
@@ -41,19 +44,29 @@ def grant_item_to_player(user_id: str, item_name: str, description: str):
     except Exception as e: return f"System Error: {e}"
 
 def update_player_stats(thread_id: str, user_id: str, hp_change: int, mp_change: int):
+    """Internal helper to modify HP/MP in the session DB."""
     try:
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
         if not session: return "Error: Session not found."
+        
         uid = str(user_id)
         if uid not in session["player_stats"]: return f"Error: Player {uid} not found."
+
         stats = session["player_stats"][uid]
         old_hp = stats["hp"]
+        
+        # Clamp values between 0 and Max
         stats["hp"] = max(0, min(stats["max_hp"], stats["hp"] + int(hp_change)))
         stats["mp"] = max(0, min(stats["max_mp"], stats["mp"] + int(mp_change)))
-        rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {"$set": {f"player_stats.{uid}": stats}})
+        
+        rpg_sessions_collection.update_one(
+            {"thread_id": int(thread_id)},
+            {"$set": {f"player_stats.{uid}": stats}}
+        )
         return f"System: Player {uid} HP {old_hp}->{stats['hp']}, MP change {mp_change}."
     except Exception as e: return f"System Error: {e}"
 
+# Wrappers for specific AI actions
 def apply_damage(thread_id: str, user_id: str, damage_amount: int):
     return update_player_stats(thread_id, user_id, hp_change=-int(damage_amount), mp_change=0)
 
@@ -67,21 +80,28 @@ def roll_d20(check_type: str, difficulty: int):
     return random.randint(1, 20) 
 
 def update_journal(thread_id: str, log_entry: str, npc_update: str = None, quest_update: str = None):
+    """
+    Saves story events, NPC details, and Quest updates to the permanent database.
+    """
     try:
         updates = {}
         if log_entry:
             entry = f"[{datetime.now().strftime('%H:%M')}] {log_entry}"
             updates["$push"] = {"campaign_log": entry}
+        
         if npc_update:
+            # Check if pushing to existing list or creating new
             if "$push" not in updates: updates["$push"] = {}
             updates["$push"]["npc_registry"] = npc_update
+
         if quest_update:
             if "$push" not in updates: updates["$push"] = {}
             updates["$push"]["quest_log"] = quest_update
+
         if updates:
             rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, updates)
-            return "System: Journal updated."
-        return "System: No updates."
+            return "System: Journal updated successfully."
+        return "System: No updates provided."
     except Exception as e: return f"System Error: {e}"
 
 # --- UI COMPONENTS ---
@@ -94,20 +114,20 @@ class RPGGameView(discord.ui.View):
 
     @discord.ui.button(label="🎲 Reroll Story", style=discord.ButtonStyle.danger, row=0)
     async def reroll_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Disable button immediately to prevent spam
+        # Prevent double clicks
         button.disabled = True
         await interaction.response.edit_message(view=self)
         await self.reroll_callback(interaction)
 
     async def reroll_callback(self, interaction: discord.Interaction):
+        # Verify ownership via DB (handles restarts)
         session_db = rpg_sessions_collection.find_one({"thread_id": self.thread_id})
         if not session_db or interaction.user.id != session_db['owner_id']:
-             return await interaction.followup.send("Only the leader can reroll!", ephemeral=True)
+             return await interaction.followup.send("Only the party leader can reroll!", ephemeral=True)
         
-        # We don't use defer here because we edited the message above
         await self.cog.reroll_turn(self.thread_id, interaction.channel)
 
-# --- CREATION SYSTEM ---
+# --- CHARACTER CREATION UI ---
 
 class CustomCharModal(discord.ui.Modal, title="Design Your Character"):
     char_name = discord.ui.TextInput(label="Character Name / Class", placeholder="e.g. Cyber-Samurai, Idol, Detective", max_length=30)
@@ -119,6 +139,7 @@ class CustomCharModal(discord.ui.Modal, title="Design Your Character"):
         self.archetype = archetype 
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Apply Archetype stats
         base_stats = {"STR": 12, "DEX": 12, "INT": 12, "CHA": 12}
         hp, mp = 100, 50
 
@@ -141,6 +162,7 @@ class CustomCharModal(discord.ui.Modal, title="Design Your Character"):
             "stats": base_stats,
             "skills": ["Custom Action", "Improvise"]
         }
+        
         self.parent_view.selected_profiles[interaction.user.id] = custom_data
         await interaction.response.defer()
         await self.parent_view.update_view_message(interaction)
@@ -165,7 +187,7 @@ class ArchetypeView(discord.ui.View):
         super().__init__(timeout=60)
         self.add_item(ArchetypeSelect(parent_view))
 
-# --- MAIN SETUP VIEW ---
+# --- SETUP LOBBY UI ---
 
 class LoreModal(discord.ui.Modal, title="Write Your Legend"):
     lore_input = discord.ui.TextInput(label="World Setting", style=discord.TextStyle.paragraph, max_length=1000)
@@ -194,6 +216,7 @@ class AdventureSetupView(discord.ui.View):
         s_title = self.selected_scenario_name or "Not Set"
         s_desc = (self.selected_lore[:80] + "...") if self.selected_lore else "Waiting for Host..."
         embed.add_field(name=f"🌍 Scenario: {s_title}", value=s_desc, inline=False)
+        
         party_desc = []
         all_ready = True
         for p in self.players:
@@ -205,6 +228,7 @@ class AdventureSetupView(discord.ui.View):
                 status = "⏳ Choosing..."
                 all_ready = False
             party_desc.append(f"{p.mention}: {status}")
+            
         embed.add_field(name="👥 Party Members", value="\n".join(party_desc), inline=False)
         self.start_btn.disabled = (self.selected_lore is None) or (not all_ready)
         return embed
@@ -293,8 +317,11 @@ class RPGAdventureCog(commands.Cog):
             print(f"Failed to load Gemini for RPG: {e}")
 
     async def _restore_session(self, channel):
+        """Restores AI memory from DB Logs + Chat History after restart."""
         session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
         if not session_db: return None
+
+        # Fetch recent chat context to remind AI of the immediate situation
         history_msgs = []
         try:
             async for msg in channel.history(limit=10):
@@ -303,13 +330,33 @@ class RPGAdventureCog(commands.Cog):
         except: pass
         history_msgs.reverse()
         chat_context = "\n".join(history_msgs)
+
         chat_session = self.model.start_chat(history=[{"role": "user", "parts": ["System: Restore Game."]}])
+        
+        # Build Context from DB
         stats_context = str(session_db.get("player_stats", {}))
-        prime_prompt = f"SYSTEM: RESTORING SESSION. STATS: {stats_context}. CONTEXT: {chat_context}"
+        campaign_log = "\n".join(session_db.get("campaign_log", [])[-15:])
+        npc_list = "\n".join(session_db.get("npc_registry", []))
+        quest_log = "\n".join(session_db.get("quest_log", []))
+
+        prime_prompt = (
+            f"SYSTEM: RESTORING SESSION.\n"
+            f"STATS: {stats_context}\n"
+            f"STORY LOG: {campaign_log}\n"
+            f"NPCs: {npc_list}\n"
+            f"QUESTS: {quest_log}\n"
+            f"RECENT CHAT:\n{chat_context}\n\n"
+            "INSTRUCTIONS: Resume the story immediately from the last user input."
+        )
+        
         try: await chat_session.send_message_async(prime_prompt)
         except: pass
         self.active_sessions[channel.id] = {'session': chat_session, 'owner_id': session_db['owner_id'], 'last_prompt': "Resume"}
         return True
+
+    def parse_response(self, text):
+        # We removed options, so this just cleans formatting if needed
+        return text, []
 
     def get_status_embed(self, thread_id):
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
@@ -341,11 +388,20 @@ class RPGAdventureCog(commands.Cog):
         return embed
 
     async def process_game_turn(self, channel, prompt, user=None, is_reroll=False):
+        # 1. RATE LIMIT CHECK (PEEK)
+        if user:
+            # Check availability first using the limiter utility
+            if not limiter.check_available(user.id, channel.guild.id, "rpg"):
+                await channel.send("⏳ **Cooldown:** The Dungeon Master needs a rest. (Rate Limit Hit)")
+                return
+
+        # 2. RESTORE SESSION IF NEEDED
         if channel.id not in self.active_sessions:
             if not await self._restore_session(channel): return
         data = self.active_sessions[channel.id]
         chat_session = data['session']
         
+        # 3. REROLL LOGIC
         forced_roll_context = ""
         if not is_reroll:
             try: data['history_snapshot'] = list(chat_session.history)
@@ -354,32 +410,47 @@ class RPGAdventureCog(commands.Cog):
             data['last_roll_result'] = None
         else:
             if data.get('last_roll_result'):
-                forced_roll_context = f"\n**LOCKED FATE:** Dice Result: {data['last_roll_result']}. DO NOT ROLL AGAIN."
+                forced_roll_context = (
+                    f"\n**LOCKED FATE:** Dice Result: {data['last_roll_result']}.\n"
+                    "**MANDATORY:** You MUST NOT call `roll_d20` again. Use the stored result."
+                )
 
         async with channel.typing():
             session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
             stats_context = str(session_db.get("player_stats", {}))
-            campaign_log = "\n".join(session_db.get("campaign_log", [])[-10:])
+            
+            # Context Injection
+            campaign_log = "\n".join(session_db.get("campaign_log", [])[-15:])
+            npc_list = "\n".join(session_db.get("npc_registry", []))
+            quest_log = "\n".join(session_db.get("quest_log", []))
+            scenario_type = session_db.get("scenario_type", "Fantasy")
             reroll_instr = "IMPORTANT: Reroll requested. Generate a DIFFERENT outcome." if is_reroll else ""
             
+            mechanics_note = "Standard D&D rules apply."
+            if scenario_type == "Slice of Life":
+                mechanics_note = "SLICE OF LIFE RULES: HP=Composure, MP=Social Battery. Combat=Arguments/Romance."
+
             full_prompt = (
                 f"User Action: {prompt}\n"
-                f"[WORLD STATE]:\nSTORY: {campaign_log}\nSTATS: {stats_context}\n"
+                f"[WORLD STATE]:\nSTORY: {campaign_log}\nNPCs: {npc_list}\nQUESTS: {quest_log}\nSTATS: {stats_context}\n"
                 "SYSTEM INSTRUCTIONS:\n"
-                "1. **Dice:** Call `roll_d20` for ANY risk.\n"
+                f"{mechanics_note}\n"
+                "1. **Universal Dice Logic:** Check for failure in ALL contexts (Social, Exploration, Combat). If ANY risk exists, Call `roll_d20(type, difficulty)`.\n"
                 "2. **Tools:** Use `apply_damage`, `apply_healing`, `deduct_mana`.\n"
-                "3. **Narrative:** Professional DM. Vivid, atmospheric. **Bold** enemies.\n"
+                "3. **MEMORY:** YOU MUST use `update_journal` to save NPCs, Quests, and Plot Points permanently.\n"
+                "4. **Narrative:** Professional DM tone. Heroic Fantasy or Drama style (PG-13). **Bold** key terms.\n"
                 f"{forced_roll_context}\n"
                 f"{reroll_instr}\n"
-                "4. End with narrative. NO OPTIONS."
+                "5. End with the narrative. Do NOT provide options."
             )
             
             try:
                 response = await chat_session.send_message_async(full_prompt)
+                
+                # --- TOOL LOOP ---
                 turns = 0
                 text_content = ""
                 
-                # --- FIX: ROBUST TOOL LOOP ---
                 while response.parts and response.parts[0].function_call and turns < 6:
                     turns += 1
                     fn = response.parts[0].function_call
@@ -410,32 +481,32 @@ class RPGAdventureCog(commands.Cog):
                     elif fn.name == "update_journal":
                         res_txt = update_journal(str(channel.id), fn.args.get("log_entry"), fn.args.get("npc_update"), fn.args.get("quest_update"))
                     
-                    # Feed result back to model
                     response = await chat_session.send_message_async(
                         genai.protos.Content(parts=[genai.protos.Part(function_response=genai.protos.FunctionResponse(name=fn.name, response={'result': res_txt}))])
                     )
 
-                # --- FIX: FORCE TEXT GENERATION ---
+                # --- FORCE TEXT GENERATION ---
                 try: 
                     text_content = response.text
                 except ValueError:
-                    # If response was purely functional or blocked, check history or force generation
-                    print("RPG: No text in response. Forcing narrative...")
                     try:
-                        # Ask specifically for the story part now that tools are done
                         final_resp = await chat_session.send_message_async("System: Tools execution finished. Now generate the narrative description of the outcome.")
                         text_content = final_resp.text
                     except ValueError:
-                        # Absolute fallback if even that fails
-                        text_content = "**[System]** The action was processed, but the narrative description was filtered. Please check your stats for changes."
+                        text_content = "**[System]** The action was processed, but the narrative description was filtered."
 
                 if not text_content.strip():
-                     text_content = "**[System]** The Dungeon Master nods, but speaks no words. (Empty response received)."
+                     text_content = "**[System]** The Dungeon Master nods, but speaks no words."
 
                 view = RPGGameView(self, channel.id)
                 story_emb = discord.Embed(description=text_content, color=discord.Color.from_rgb(47, 49, 54))
                 story_emb.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None)
                 await channel.send(embeds=[story_emb, self.get_status_embed(channel.id)], view=view)
+                
+                # 4. CONSUME LIMIT (Only on Success)
+                if user:
+                    limit_source = limiter.consume(user.id, channel.guild.id, "rpg")
+                    print(f"RPG Turn Consumed from: {limit_source.upper()}")
                     
             except Exception as e:
                 await channel.send(f"⚠️ Game Error: {e}")
@@ -461,7 +532,7 @@ class RPGAdventureCog(commands.Cog):
     async def startadventure(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=False) 
         config = ai_config_collection.find_one({"_id": str(interaction.guild_id)})
-        if not config or "rpg_channel_id" not in config: return await interaction.followup.send("⚠️ Admin must set channel first.", ephemeral=True)
+        if not config or "rpg_channel_id" not in config: return await interaction.followup.send("⚠️ Admin must set channel first using `/setrpgchannel`.", ephemeral=True)
         view = AdventureSetupView(self.bot, interaction.user)
         view.message = await interaction.followup.send(content=f"⚔️ **RPG Lobby Open!** {interaction.user.mention} is host.", embed=view._get_party_embed(), view=view)
 
@@ -471,6 +542,7 @@ class RPGAdventureCog(commands.Cog):
         if not channel: return
 
         try:
+            # Dynamic Title
             prompt = f"Generate a unique 5-word title for an RPG adventure. Scenario: {scenario_name}. Lore: {lore[:100]}."
             resp = await self.model.generate_content_async(prompt)
             title = resp.text.strip().replace('"', '')[:50]
@@ -491,7 +563,7 @@ class RPGAdventureCog(commands.Cog):
             "players": [p.id for p in players],
             "player_stats": player_stats_db,
             "scenario_type": scenario_name,
-            "campaign_log": [], # Init empty memory
+            "campaign_log": [],
             "npc_registry": [],
             "quest_log": []
         }
@@ -503,11 +575,12 @@ class RPGAdventureCog(commands.Cog):
             "You are the **Dungeon Master**. Professional, immersive, neutral tone.\n"
             f"**SCENARIO:** {scenario_name}\n"
             "**GUIDELINES:**\n"
-            "1. **Universal Dice Logic:** Check for failure in ALL contexts. If ANY risk exists, Call `roll_d20(type, difficulty)`.\n"
+            "1. **Universal Dice Logic:** Check for failure in ALL contexts (Social, Exploration, Combat). If ANY risk exists, Call `roll_d20(type, difficulty)`.\n"
             "2. **Tools:** Use `apply_damage`, `apply_healing`, `deduct_mana`.\n"
             "3. **MEMORY:** YOU MUST use `update_journal` to save NPCs, Quests, and Plot Points permanently.\n"
             "4. **Format:** Vivid, atmospheric, PG-13. **Bold** enemies.\n"
             "5. End with the narrative. Do NOT provide options."
+            f"**LORE:** {lore}\n**PARTY:** {p_desc}"
         )
 
         chat_session = self.model.start_chat(history=[{"role": "user", "parts": ["System: Start."]}])
@@ -527,6 +600,8 @@ class RPGAdventureCog(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message):
         if message.author.bot or not isinstance(message.channel, discord.Thread): return
+        
+        # Check if this thread belongs to RPG system (handles persistence even after restart)
         session_exists = rpg_sessions_collection.find_one({"thread_id": message.channel.id})
         if session_exists:
             if message.author.id not in session_exists.get("players", []): return
