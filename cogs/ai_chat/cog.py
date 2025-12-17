@@ -20,6 +20,7 @@ from .proactive_chat import _initiate_conversation
 from .personality_updater import personality_update_loop, update_guild_personality
 from .server_context_learner import update_server_lore_summary
 from .utils import perform_web_search, identify_visual_content # Added new tool
+from utils.db import ai_config_collection
 
 logger = logging.getLogger(__name__)
 
@@ -292,6 +293,14 @@ class AIChatCog(commands.Cog, name="AIChat"):
         guild_id = str(message.guild.id)
         guild_config = await self.run_db(ai_config_collection.find_one, {"_id": guild_id})
         guild_config = guild_config or {}
+
+        # Ignore threads that start with "Quest:" or look like RPG threads
+        if isinstance(message.channel, discord.Thread):
+             
+             # Fetch RPG config to see if this thread is inside the RPG Channel
+             config = ai_config_collection.find_one({"_id": str(message.guild.id)})
+             if config and message.channel.parent_id == config.get("rpg_channel_id"):
+                 return # EXIT: Do not let AnTiMa reply here
         
         if guild_config.get("bot_disabled", False):
             is_chat = message.channel.id == guild_config.get("channel")

@@ -12,6 +12,8 @@ reminders_collection = db.get_collection("reminders")
 user_timezones_collection = db.get_collection("user_timezones")
 server_lore_collection = db.get_collection("server_lore")
 ai_config_collection = db.get_collection("ai_config")
+rpg_sessions_collection = db["rpg_sessions"]     # Stores active game threads
+rpg_inventory_collection = db["rpg_inventory"]   # Stores user items
 
 # UPDATED: Stores personal/contextual memories tied to users and guilds.
 ai_personal_memories_collection = db.get_collection("ai_personal_memories")
