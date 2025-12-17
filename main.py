@@ -1,73 +1,73 @@
+# main.py
 import discord
 from discord.ext import commands
 import os
-from flask import Flask
-from threading import Thread
-import logging
 import asyncio
+import logging
 from dotenv import load_dotenv
+from utils.db import init_db
+import subprocess
+import sys
 
+# Load .env
 load_dotenv()
 
-# Configure logging
+# Setup Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = os.environ["TOKEN"]
+intents = discord.Intents.default()
+intents.message_content = True
+intents.members = True
+intents.guilds = True
+intents.reactions = True
 
-# We use commands.Bot instead of discord.Client to use the cogs extension system
-class MyBot(commands.Bot):
+class AnTiMaBot(commands.Bot):
     def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.guilds = True
-        intents.members = True
-        intents.reactions = True
-        intents.voice_states = True # Required for voice
-        # The command_prefix is required but won't be used for slash commands
-        super().__init__(command_prefix="!", intents=intents)
-
-    async def on_ready(self):
-        logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
-        logger.info("------")
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
 
     async def setup_hook(self):
-        # This is the best place to load cogs and sync commands
-        
-        # Load the new ai_chat cog
-        await self.load_extension("cogs.ai_chat.cog")
-        
-        # Load other cogs
-        cogs_folder = "cogs"
-        for filename in os.listdir(cogs_folder):
-            if filename.endswith(".py") and filename != "ai_chat_cog.py": # Make sure not to load the old one
-                await self.load_extension(f"{cogs_folder}.{filename[:-3]}")
-        
-        # Sync the commands to Discord
+        extensions = [
+            'cogs.ai_chat.cog',
+            'cogs.rpg_adventure_cog',
+            'cogs.stats_cog',          # Ensure this matches file name
+            'cogs.admin_cog',
+            'cogs.welcome_cog',
+            'cogs.reminders_cog',
+            'cogs.logging_cog',
+            'cogs.reaction_roles_cog',
+            'cogs.anime_cog'
+        ]
+        for ext in extensions:
+            try:
+                await self.load_extension(ext)
+                logger.info(f"✅ Loaded: {ext}")
+            except Exception as e:
+                logger.error(f"❌ Failed to load {ext}: {e}")
+
         await self.tree.sync()
 
-client = MyBot()
+    async def on_ready(self):
+        logger.info(f'Logged in as {self.user} (ID: {self.user.id})')
 
-# --- Flask Web Server for Uptime ---
-app = Flask('')
+bot = AnTiMaBot()
 
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_flask():
-    try:
-        app.run(host='0.0.0.0', port=5000)
-    except Exception as e:
-        logger.error(f"Flask server error: {e}")
-
-# --- Main Execution ---
-if __name__ == "__main__":
-    # Start Flask in a separate thread
-    Thread(target=run_flask).start()
+async def run_bot():
+    init_db()
     
-    # Run the bot
+    # Dashboard Launcher
+    print("🌐 Launching Dashboard...")
+    dashboard_process = subprocess.Popen([sys.executable, "dashboard.py"])
+    
     try:
-        client.run(TOKEN)
-    except Exception as e:
-        logger.error(f"Main execution error: {e}")
+        async with bot:
+            await bot.start(os.getenv("DISCORD_TOKEN"))
+    finally:
+        print("🛑 Stopping Dashboard...")
+        dashboard_process.kill()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(run_bot())
+    except KeyboardInterrupt:
+        pass

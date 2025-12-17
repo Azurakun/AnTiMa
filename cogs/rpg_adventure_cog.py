@@ -349,7 +349,6 @@ class RPGAdventureCog(commands.Cog):
         return embed
 
     async def process_game_turn(self, channel, prompt, user=None, is_reroll=False):
-        # RATE LIMIT CHECK
         if user:
             if not limiter.check_available(user.id, channel.guild.id, "rpg_gen"):
                 await channel.send("⏳ **Cooldown:** The Dungeon Master needs a rest. (Rate Limit Hit)")
@@ -359,6 +358,12 @@ class RPGAdventureCog(commands.Cog):
             if not await self._restore_session(channel): return
         data = self.active_sessions[channel.id]
         chat_session = data['session']
+        
+        # Update Last Active for Dashboard
+        rpg_sessions_collection.update_one(
+            {"thread_id": channel.id},
+            {"$set": {"last_active": datetime.utcnow()}}
+        )
         
         forced_roll_context = ""
         if not is_reroll:
@@ -436,7 +441,8 @@ class RPGAdventureCog(commands.Cog):
                         genai.protos.Content(parts=[genai.protos.Part(function_response=genai.protos.FunctionResponse(name=fn.name, response={'result': res_txt}))])
                     )
 
-                try: text_content = response.text
+                try: 
+                    text_content = response.text
                 except ValueError:
                     try:
                         final_resp = await chat_session.send_message_async("System: Tools execution finished. Now generate the narrative description of the outcome.")
@@ -452,10 +458,9 @@ class RPGAdventureCog(commands.Cog):
                 story_emb.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None)
                 await channel.send(embeds=[story_emb, self.get_status_embed(channel.id)], view=view)
                 
-                # CONSUME LIMIT ON SUCCESS
                 if user:
                     limit_source = limiter.consume(user.id, channel.guild.id, "rpg_gen")
-                    print(f"RPG Turn Consumed: {limit_source.upper()} | User: {user.name} ({user.id}) | Guild: {channel.guild.name} ({channel.guild.id})")
+                    print(f"RPG Turn Consumed from: {limit_source.upper()}")
                     
             except Exception as e:
                 await channel.send(f"⚠️ Game Error: {e}")
@@ -498,12 +503,16 @@ class RPGAdventureCog(commands.Cog):
             "thread_id": thread.id,
             "guild_id": interaction.guild_id,
             "owner_id": interaction.user.id,
+            "owner_name": interaction.user.name, # Save Name for Dashboard
+            "title": title,                      # Save Title for Dashboard
             "players": [p.id for p in players],
             "player_stats": player_stats_db,
             "scenario_type": scenario_name,
             "campaign_log": [],
             "npc_registry": [],
-            "quest_log": []
+            "quest_log": [],
+            "created_at": datetime.utcnow(),
+            "last_active": datetime.utcnow()     # Init timestamp
         }
         rpg_sessions_collection.insert_one(session_data)
 

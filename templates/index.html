@@ -5,185 +5,255 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AnTiMa Live Dashboard</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
-            theme: { extend: { colors: { discord: '#5865F2', darkbg: '#202225', card: '#2f3136' } } }
+            theme: { extend: { colors: { discord: '#5865F2', darkbg: '#202225', card: '#2f3136', hover: '#36393f' } } }
         }
     </script>
     <style>
-        /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #2f3136; }
         ::-webkit-scrollbar-thumb { background: #5865F2; border-radius: 4px; }
+        .clickable-card { cursor: pointer; transition: transform 0.2s; border-left-width: 4px; }
+        .clickable-card:hover { transform: translateY(-5px); filter: brightness(1.1); }
     </style>
 </head>
-<body class="bg-darkbg text-gray-100 font-sans antialiased">
+<body class="bg-darkbg text-gray-100 font-sans antialiased h-screen flex flex-col">
 
-    <nav class="bg-card border-b border-gray-700 p-4 flex justify-between items-center shadow-lg sticky top-0 z-50">
+    <nav class="bg-card border-b border-gray-700 p-4 flex justify-between items-center shadow-md">
         <div class="flex items-center gap-3">
             <div class="h-3 w-3 rounded-full bg-green-500 animate-pulse"></div>
-            <h1 class="text-2xl font-bold tracking-wider text-white">AnTiMa <span class="text-discord">Dashboard</span></h1>
+            <h1 class="text-2xl font-bold tracking-wide text-white">AnTiMa <span class="text-discord">Dashboard</span></h1>
         </div>
-        <div class="text-xs text-gray-400 font-mono">Status: <span id="ws-status" class="text-yellow-500">Connecting...</span></div>
+        <div class="text-xs text-gray-400 font-mono flex items-center gap-2">
+            <span id="ws-status" class="text-yellow-500">Connecting...</span>
+        </div>
     </nav>
 
-    <div class="container mx-auto p-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
+    <div class="flex-1 overflow-y-auto p-6">
+        <div class="container mx-auto grid grid-cols-1 lg:grid-cols-4 gap-6">
 
-        <div class="col-span-1 lg:col-span-4 grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div class="bg-card p-6 rounded-xl shadow-lg border-l-4 border-discord transform hover:scale-105 transition duration-300">
-                <h3 class="text-gray-400 text-sm uppercase font-semibold">Total Messages</h3>
-                <p class="text-4xl font-bold mt-2" id="stat-messages">0</p>
-            </div>
-            <div class="bg-card p-6 rounded-xl shadow-lg border-l-4 border-green-500 transform hover:scale-105 transition duration-300">
-                <h3 class="text-gray-400 text-sm uppercase font-semibold">Active RPGs</h3>
-                <p class="text-4xl font-bold mt-2" id="stat-rpg">0</p>
-            </div>
-            <div class="bg-card p-6 rounded-xl shadow-lg border-l-4 border-purple-500 transform hover:scale-105 transition duration-300">
-                <h3 class="text-gray-400 text-sm uppercase font-semibold">Total Users</h3>
-                <p class="text-4xl font-bold mt-2" id="stat-users">0</p>
-            </div>
-            <div class="bg-card p-6 rounded-xl shadow-lg border-l-4 border-yellow-500 transform hover:scale-105 transition duration-300">
-                <h3 class="text-gray-400 text-sm uppercase font-semibold">Commands Used</h3>
-                <p class="text-4xl font-bold mt-2" id="stat-commands">0</p>
-            </div>
-        </div>
-
-        <div class="col-span-1 lg:col-span-3 space-y-6">
-            
-            <div class="bg-card rounded-xl shadow-lg overflow-hidden">
-                <div class="p-4 border-b border-gray-700 flex justify-between items-center bg-opacity-50 bg-black">
-                    <h2 class="text-lg font-bold flex items-center gap-2">
-                        <svg class="w-5 h-5 text-red-500" fill="currentColor" viewBox="0 0 20 20"><path d="M10 18a8 8 0 100-16 8 8 0 000 16zM9.555 7.168A1 1 0 008 8v4a1 1 0 001.555.832l3-2a1 1 0 000-1.664l-3-2z" /></svg>
-                        Live Activity Feed
-                    </h2>
-                    <span class="text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded">Real-time</span>
+            <div class="bg-card p-6 rounded-xl shadow-lg border-discord clickable-card" onclick="showDetails('guilds')">
+                <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Messages</h3>
+                <p class="text-4xl font-bold mt-2 text-white" id="stat-messages">0</p>
+                <div class="mt-4 flex items-center text-xs text-gray-500 hover:text-discord transition">
+                    <span>View Server Stats</span>
+                    <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
                 </div>
-                <div class="p-0">
-                    <ul id="activity-feed" class="divide-y divide-gray-700 h-64 overflow-y-auto">
+            </div>
+
+            <div class="bg-card p-6 rounded-xl shadow-lg border-green-500 clickable-card" onclick="showDetails('rpgs')">
+                <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">RPG Sessions</h3>
+                <p class="text-4xl font-bold mt-2 text-white" id="stat-rpg">0</p>
+                <div class="mt-4 flex items-center text-xs text-gray-500 hover:text-green-400 transition">
+                    <span>View Active Quests</span>
+                    <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </div>
+            </div>
+
+            <div class="bg-card p-6 rounded-xl shadow-lg border-purple-500 clickable-card" onclick="showDetails('users')">
+                <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Users</h3>
+                <p class="text-4xl font-bold mt-2 text-white" id="stat-users">0</p>
+                <div class="mt-4 flex items-center text-xs text-gray-500 hover:text-purple-400 transition">
+                    <span>View User Directory</span>
+                    <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </div>
+            </div>
+
+            <div class="bg-card p-6 rounded-xl shadow-lg border-yellow-500 clickable-card" onclick="showDetails('commands')">
+                <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Commands Used</h3>
+                <p class="text-4xl font-bold mt-2 text-white" id="stat-commands">0</p>
+                <div class="mt-4 flex items-center text-xs text-gray-500 hover:text-yellow-400 transition">
+                    <span>View Usage Logs</span>
+                    <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                </div>
+            </div>
+
+            <div class="col-span-1 lg:col-span-4 mt-4">
+                <div class="bg-card rounded-xl shadow-lg overflow-hidden border border-gray-700">
+                    <div class="p-4 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
+                        <h2 class="text-sm font-bold uppercase tracking-wide text-gray-300 flex items-center gap-2">
+                            <span class="relative flex h-3 w-3">
+                              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                              <span class="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
+                            </span>
+                            Live Activity Feed
+                        </h2>
+                    </div>
+                    <ul id="activity-feed" class="divide-y divide-gray-700 max-h-96 overflow-y-auto bg-darkbg">
                         </ul>
                 </div>
             </div>
-
-            <div class="bg-card rounded-xl shadow-lg p-6">
-                <h2 class="text-xl font-bold mb-4 text-discord">Top Servers</h2>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left text-sm text-gray-400">
-                        <thead class="bg-gray-800 text-gray-200 uppercase">
-                            <tr>
-                                <th class="px-4 py-3">Server Name</th>
-                                <th class="px-4 py-3 text-right">Messages</th>
-                                <th class="px-4 py-3 text-right">Last Active</th>
-                            </tr>
-                        </thead>
-                        <tbody id="guilds-table" class="divide-y divide-gray-700">
-                            </tbody>
-                    </table>
-                </div>
-            </div>
         </div>
+    </div>
 
-        <div class="col-span-1 space-y-6">
-            <div class="bg-card rounded-xl shadow-lg p-6">
-                <h2 class="text-xl font-bold mb-4 text-yellow-500">Top Chatters</h2>
-                <ul id="users-list" class="space-y-3">
-                    </ul>
-            </div>
+    <div id="modal-overlay" class="fixed inset-0 bg-black bg-opacity-80 hidden z-50 flex justify-center items-center backdrop-blur-sm p-4" onclick="closeModal(event)">
+        <div class="bg-card w-full max-w-4xl rounded-xl shadow-2xl border border-gray-700 flex flex-col max-h-[90vh]" onclick="event.stopPropagation()">
             
-            <div class="bg-card rounded-xl shadow-lg p-6 bg-gradient-to-br from-indigo-900 to-card">
-                <h2 class="text-xl font-bold mb-2">System Status</h2>
-                <div class="space-y-2 text-sm">
-                    <div class="flex justify-between"><span>Bot Status</span> <span class="text-green-400">Online</span></div>
-                    <div class="flex justify-between"><span>Database</span> <span class="text-green-400">Connected</span></div>
-                    <div class="flex justify-between"><span>Latency</span> <span class="text-gray-300">~24ms</span></div>
+            <div class="p-5 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-xl">
+                <h2 id="modal-title" class="text-xl font-bold text-white">Details</h2>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-white transition">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+
+            <div id="modal-content" class="p-6 overflow-y-auto flex-1 bg-darkbg">
+                <div class="flex justify-center p-10">
+                    <div class="animate-spin rounded-full h-10 w-10 border-b-2 border-discord"></div>
                 </div>
             </div>
         </div>
-
     </div>
 
     <script>
+        // --- WEBSOCKET CONNECTION ---
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
-
         const statusEl = document.getElementById('ws-status');
-        
-        socket.onopen = () => {
-            statusEl.innerText = "Connected • Live";
-            statusEl.classList.remove('text-yellow-500', 'text-red-500');
-            statusEl.classList.add('text-green-500');
-        };
 
-        socket.onclose = () => {
-            statusEl.innerText = "Disconnected";
-            statusEl.classList.remove('text-green-500');
-            statusEl.classList.add('text-red-500');
+        socket.onopen = () => {
+            statusEl.innerText = "Live";
+            statusEl.className = "text-green-500 font-bold";
         };
 
         socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            updateDashboard(data);
-        };
-
-        function updateDashboard(data) {
-            // 1. Update Top Stats
-            document.getElementById('stat-messages').innerText = data.global.messages.toLocaleString();
-            document.getElementById('stat-rpg').innerText = data.global.active_rpgs.toLocaleString();
-            document.getElementById('stat-users').innerText = data.global.users.toLocaleString();
-            document.getElementById('stat-commands').innerText = data.global.commands.toLocaleString();
-
-            // 2. Update Activity Feed (Animation logic)
-            const feed = document.getElementById('activity-feed');
-            feed.innerHTML = ''; // Clear current
             
+            // Update Overview Counters
+            const counters = data.overview;
+            if(counters) {
+                document.getElementById('stat-messages').innerText = counters.messages.toLocaleString();
+                document.getElementById('stat-rpg').innerText = counters.active_rpgs.toLocaleString();
+                document.getElementById('stat-users').innerText = counters.users.toLocaleString();
+                document.getElementById('stat-commands').innerText = counters.commands.toLocaleString();
+            }
+
+            // Update Feed
+            const feed = document.getElementById('activity-feed');
+            feed.innerHTML = '';
             data.activities.forEach(act => {
                 const li = document.createElement('li');
-                li.className = "px-4 py-3 hover:bg-gray-700 transition duration-150 flex justify-between items-center";
+                li.className = "px-4 py-3 flex justify-between items-center hover:bg-hover transition duration-150";
                 li.innerHTML = `
-                    <div class="flex flex-col">
-                        <span class="font-medium text-white">${act.user}</span>
-                        <span class="text-xs text-gray-500">${act.action} in <span class="text-discord">${act.guild}</span></span>
+                    <div>
+                        <span class="text-discord font-semibold">${act.user}</span>
+                        <span class="text-gray-400 text-sm ml-2">${act.action}</span>
+                        <span class="text-gray-600 text-xs ml-2">in ${act.guild}</span>
                     </div>
-                    <span class="text-xs font-mono text-gray-600">${act.timestamp}</span>
+                    <span class="text-xs text-gray-500 font-mono">${act.timestamp}</span>
                 `;
                 feed.appendChild(li);
             });
+        };
 
-            // 3. Update Guilds Table
-            const guildTable = document.getElementById('guilds-table');
-            guildTable.innerHTML = '';
-            data.top_guilds.forEach(g => {
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td class="px-4 py-3 font-medium text-white">${g.name}</td>
-                    <td class="px-4 py-3 text-right text-discord font-bold">${g.messages.toLocaleString()}</td>
-                    <td class="px-4 py-3 text-right text-xs text-gray-500">Live</td>
-                `;
-                guildTable.appendChild(tr);
-            });
+        // --- MODAL LOGIC ---
+        
+        async function showDetails(type) {
+            const modal = document.getElementById('modal-overlay');
+            const content = document.getElementById('modal-content');
+            const title = document.getElementById('modal-title');
+            
+            modal.classList.remove('hidden');
+            content.innerHTML = '<div class="flex justify-center p-10"><div class="animate-spin rounded-full h-10 w-10 border-b-2 border-discord"></div></div>';
+            
+            const titles = {
+                'users': 'User Directory',
+                'guilds': 'Server Statistics',
+                'rpgs': 'RPG Adventures',
+                'commands': 'Command Usage Logs'
+            };
+            title.innerText = titles[type];
 
-            // 4. Update Top Users
-            const userList = document.getElementById('users-list');
-            userList.innerHTML = '';
-            data.top_users.forEach((u, index) => {
-                const li = document.createElement('li');
-                li.className = "flex items-center gap-3 p-2 rounded bg-gray-800 bg-opacity-50";
-                
-                // Avatar handling (fallback)
-                const avatarUrl = u.avatar ? u.avatar : "https://cdn.discordapp.com/embed/avatars/0.png";
-                
-                li.innerHTML = `
-                    <div class="font-bold text-gray-500 w-4">#${index + 1}</div>
-                    <img src="${avatarUrl}" class="w-8 h-8 rounded-full">
-                    <div class="flex-1">
-                        <div class="text-sm font-semibold text-white">${u.name}</div>
-                        <div class="text-xs text-gray-400">${u.messages.toLocaleString()} msgs</div>
-                    </div>
-                `;
-                userList.appendChild(li);
-            });
+            try {
+                const response = await fetch(`/api/details/${type}`);
+                const data = await response.json();
+                renderTable(type, data);
+            } catch (err) {
+                content.innerHTML = `<p class="text-red-500 text-center">Failed to load data: ${err}</p>`;
+            }
         }
+
+        function renderTable(type, data) {
+            const content = document.getElementById('modal-content');
+            
+            if (data.length === 0) {
+                content.innerHTML = '<p class="text-center text-gray-500 italic p-4">No records found yet. Bot must be active to collect data.</p>';
+                return;
+            }
+
+            let html = '';
+
+            if (type === 'rpgs') {
+                const active = data.filter(d => d.status === 'Active');
+                const inactive = data.filter(d => d.status === 'Inactive');
+
+                html += `<div class="mb-8"><h3 class="text-green-400 font-bold mb-3 uppercase text-sm tracking-wide">🟢 Active Sessions (${active.length})</h3>`;
+                html += buildHtmlTable(active, ['Title', 'Host', 'Scenario', 'Last Active']);
+                html += `</div>`;
+                
+                html += `<div><h3 class="text-gray-500 font-bold mb-3 uppercase text-sm tracking-wide">⚪ Past Sessions (${inactive.length})</h3>`;
+                html += buildHtmlTable(inactive, ['Title', 'Host', 'Scenario', 'Last Active']);
+                html += `</div>`;
+            } else {
+                // Determine headers based on type
+                let headers = [];
+                if (type === 'users') headers = ['Name', 'User ID', 'Messages', 'Last Active'];
+                else if (type === 'guilds') headers = ['Server Name', 'Server ID', 'Messages', 'Last Active'];
+                else if (type === 'commands') headers = ['Command', 'Usage Count', 'Last Used'];
+                
+                html = buildHtmlTable(data, headers);
+            }
+            
+            content.innerHTML = html;
+        }
+
+        function buildHtmlTable(data, headers) {
+            if (data.length === 0) return '<p class="text-gray-600 text-sm italic">Nothing here.</p>';
+
+            let html = '<div class="overflow-x-auto rounded-lg border border-gray-700"><table class="w-full text-left border-collapse">';
+            
+            // Header
+            html += '<thead class="bg-gray-800 text-gray-400 text-xs uppercase"><tr>';
+            headers.forEach(h => html += `<th class="p-3 font-semibold border-b border-gray-700">${h}</th>`);
+            html += '</tr></thead>';
+            
+            // Body
+            html += '<tbody class="text-sm text-gray-300 divide-y divide-gray-700">';
+            data.forEach((row, i) => {
+                const bg = i % 2 === 0 ? 'bg-card' : 'bg-darkbg';
+                html += `<tr class="${bg} hover:bg-hover transition">`;
+                
+                if (row.title) { // RPG
+                    html += `<td class="p-3 font-medium text-white">${row.title}</td>`;
+                    html += `<td class="p-3">${row.host}</td>`;
+                    html += `<td class="p-3 text-discord">${row.scenario}</td>`;
+                    html += `<td class="p-3 font-mono text-xs text-gray-500">${row.last_active}</td>`;
+                } else if (row.usage_count !== undefined) { // Commands
+                    html += `<td class="p-3 font-mono text-yellow-400">/${row.name}</td>`;
+                    html += `<td class="p-3 font-bold">${row.usage_count}</td>`;
+                    html += `<td class="p-3 font-mono text-xs text-gray-500">${row.last_used}</td>`;
+                } else { // Users / Guilds
+                    html += `<td class="p-3 font-medium text-white flex items-center gap-2">${row.name}</td>`;
+                    html += `<td class="p-3 font-mono text-xs text-gray-500 select-all">${row.id}</td>`;
+                    html += `<td class="p-3 font-bold text-discord">${row.messages.toLocaleString()}</td>`;
+                    html += `<td class="p-3 font-mono text-xs text-gray-500">${row.last_active}</td>`;
+                }
+                html += '</tr>';
+            });
+            html += '</tbody></table></div>';
+            return html;
+        }
+
+        function closeModal(e) {
+            if (e && e.target.id !== 'modal-overlay') return; // Only close if clicking overlay or button
+            document.getElementById('modal-overlay').classList.add('hidden');
+        }
+        
+        // Escape key close
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') document.getElementById('modal-overlay').classList.add('hidden');
+        });
     </script>
 </body>
 </html>

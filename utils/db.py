@@ -1,27 +1,46 @@
 # utils/db.py
-import pymongo
 import os
+from pymongo import MongoClient
+from dotenv import load_dotenv
 
-# --- Main Database Connection ---
-MONGO_URL = os.environ.get("MONGO_URL")
-client = pymongo.MongoClient(MONGO_URL)
-db = client.get_database("antima_db")
+# Load environment variables
+load_dotenv()
 
-# Collections for the main database
-reminders_collection = db.get_collection("reminders")
-user_timezones_collection = db.get_collection("user_timezones")
-server_lore_collection = db.get_collection("server_lore")
-ai_config_collection = db.get_collection("ai_config")
-rpg_sessions_collection = db["rpg_sessions"]     # Stores active game threads
-rpg_inventory_collection = db["rpg_inventory"]   # Stores user items
+MONGO_URI = os.getenv("MONGO_URI")
+DB_NAME = "antima_db"
 
-# UPDATED: Stores personal/contextual memories tied to users and guilds.
-ai_personal_memories_collection = db.get_collection("ai_personal_memories")
-ai_personal_memories_collection.create_index([("user_id", pymongo.ASCENDING), ("guild_id", pymongo.ASCENDING), ("timestamp", pymongo.ASCENDING)])
+if not MONGO_URI:
+    print("⚠️ Warning: MONGO_URI not found in .env. Defaulting to localhost.")
+    client = MongoClient("mongodb://localhost:27017/")
+else:
+    client = MongoClient(MONGO_URI)
 
-# NEW: Stores general, objective knowledge shared across all guilds.
-ai_global_memories_collection = db.get_collection("ai_global_memories")
-ai_global_memories_collection.create_index([("timestamp", pymongo.DESCENDING)])
+db = client[DB_NAME]
 
-logs_collection = db.get_collection("improved_logs")
-print("Logging is configured to use the 'improved_logs' collection in the main database.")
+# --- COLLECTIONS ---
+# Core AI Config
+ai_config_collection = db["ai_config"]
+ai_personal_memories_collection = db["ai_personal_memories"]
+ai_global_memories_collection = db["ai_global_memories"] # Fixed missing import
+server_lore_collection = db["server_lore"]
+
+# RPG System
+rpg_sessions_collection = db["rpg_sessions"]
+rpg_inventory_collection = db["rpg_inventory"]
+
+# Utility Cogs
+logs_collection = db["logs"]             # Fixed missing import
+reminders_collection = db["reminders"]   # Fixed missing import
+welcome_config_collection = db["welcome_config"]
+
+# Dashboard Stats
+stats_collection = db["bot_stats"]
+live_activity_collection = db["live_activity"]
+
+def init_db():
+    """Checks database connection on startup."""
+    try:
+        client.admin.command('ping')
+        print(f"✅ MongoDB Connected to: {DB_NAME}")
+    except Exception as e:
+        print(f"❌ MongoDB Connection Failed: {e}")
