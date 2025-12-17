@@ -20,3 +20,7 @@ packaging
 ddgs>=1.0.0
 beautifulsoup4
 fake-useragent
+fastapi
+uvicorn
+jinja2
+websockets
