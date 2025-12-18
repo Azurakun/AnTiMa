@@ -21,6 +21,7 @@ from .server_context_learner import get_server_lore
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
+
 async def detect_conversation_topic(summarizer_model, channel):
     """Identifies the main subject(s) of the current conversation turn."""
     try:
