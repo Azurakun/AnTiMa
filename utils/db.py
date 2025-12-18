@@ -3,14 +3,13 @@ import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = "antima_db"
 
 if not MONGO_URI:
-    print("⚠️ Warning: MONGO_URI not found in .env. Defaulting to localhost.")
+    print("❌ Error: MONGO_URI not found in .env file.")
     client = MongoClient("mongodb://localhost:27017/")
 else:
     client = MongoClient(MONGO_URI)
@@ -18,24 +17,25 @@ else:
 db = client[DB_NAME]
 
 # --- COLLECTIONS ---
-# Core AI Config
+
+# AI & Chat
 ai_config_collection = db["ai_config"]
 ai_personal_memories_collection = db["ai_personal_memories"]
-ai_global_memories_collection = db["ai_global_memories"] # Fixed missing import
+ai_global_memories_collection = db["ai_global_memories"] # Added to fix ImportError
 server_lore_collection = db["server_lore"]
 
-# RPG System
+# RPG
 rpg_sessions_collection = db["rpg_sessions"]
 rpg_inventory_collection = db["rpg_inventory"]
 
-# Utility Cogs
-logs_collection = db["logs"]             # Fixed missing import
-reminders_collection = db["reminders"]   # Fixed missing import
-welcome_config_collection = db["welcome_config"]
-
-# Dashboard Stats
-stats_collection = db["bot_stats"]
+# Stats & Dashboard (Fixed Name)
+stats_collection = db["bot_stats"] 
 live_activity_collection = db["live_activity"]
+
+# Reminders & Utilities
+user_timezones_collection = db["user_timezones"]
+reminders_collection = db["reminders"]
+logs_collection = db["improved_logs"]
 
 def init_db():
     """Checks database connection on startup."""

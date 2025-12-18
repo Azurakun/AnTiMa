@@ -14,23 +14,24 @@ import functools
 import google.generativeai as genai
 
 from .memory_handler import load_user_memories, load_global_memories, summarize_and_save_memory
-from .utils import _find_member, _safe_get_response_text, get_gif_url, should_send_gif, perform_web_search, identify_visual_content # Import new tool
+from .utils import _find_member, _safe_get_response_text, get_gif_url, should_send_gif, perform_web_search, identify_visual_content
 from utils.db import ai_config_collection
 from .rate_limiter import can_make_request
 from .server_context_learner import get_server_lore
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
-
 async def detect_conversation_topic(summarizer_model, channel):
+    """Identifies the main subject(s) of the current conversation turn."""
     try:
         history = [msg async for msg in channel.history(limit=6)]
         history.reverse()
         chat_text = "\n".join([f"{msg.author.display_name}: {msg.clean_content}" for msg in history])
-        prompt = f"Analyze chat. Identify MAIN Subject.\nChat:\n{chat_text}"
+        # Updated prompt to handle multiple subjects
+        prompt = f"Analyze chat. Identify the MAIN Subject or subjects (if multiple). Keep it very concise.\nChat:\n{chat_text}"
         response = await summarizer_model.generate_content_async(prompt)
         topic = _safe_get_response_text(response).strip()
-        if "None" in topic or len(topic) > 40: return None
+        if "None" in topic or len(topic) > 50: return None
         return topic
     except: return None
 
@@ -55,63 +56,92 @@ async def process_video_attachment(attachment):
         if os.path.exists(temp_path): os.remove(temp_path)
 
 async def _send_and_handle_tool_loop(chat, prompt_content, message_channel, summarizer_model, notify_message=None, current_topic=None):
+    """
+    Enhanced tool loop that supports Parallel Function Calling.
+    If the AI requests multiple searches (e.g., Acheron and Firefly), 
+    they are executed concurrently with separate contexts.
+    """
     response = await chat.send_message_async(prompt_content)
     loop_count = 0
-    max_loops = 3
+    max_loops = 5 # Increased slightly to allow for multi-step research
     
     while loop_count < max_loops:
-        function_call = None
-        has_text = False
-        if response.parts:
-            for part in response.parts:
-                if part.function_call: function_call = part.function_call
-                if part.text: has_text = True
+        # 1. Identify all function calls in this model turn
+        function_calls = [part.function_call for part in response.parts if part.function_call]
+        has_text = any(part.text for part in response.parts)
         
-        # STOP CONDITION: If no function call, this is the final answer. 
-        # Break loop so the caller sends it (prevents double sending).
-        if not function_call: break
+        # STOP CONDITION: No more tool calls
+        if not function_calls:
+            break
 
-        # INTERMEDIATE MESSAGE: If there's text AND a tool call, send text now.
+        # 2. Handle Intermediate Text (AI narrating its actions)
         if has_text and message_channel:
-            for part in response.parts:
-                if part.text:
-                    clean = part.text.replace('|||', '\n').strip()
-                    if clean: 
-                        async with message_channel.typing(): await message_channel.send(clean)
+            text_parts = [part.text for part in response.parts if part.text]
+            clean = "".join(text_parts).replace('|||', '\n').strip()
+            if clean: 
+                async with message_channel.typing(): 
+                    await message_channel.send(clean)
 
         loop_count += 1
         
-        if function_call.name == 'perform_web_search' or function_call.name == 'identify_visual_content':
-            tool_name = function_call.name
-            query = function_call.args.get('query') or function_call.args.get('visual_description', '')
+        # 3. Process all tool calls in parallel
+        tool_tasks = []
+        pending_queries = []
+
+        for fc in function_calls:
+            tool_name = fc.name
+            if tool_name in ['perform_web_search', 'identify_visual_content']:
+                # Extract query from either tool's arguments
+                query = fc.args.get('query') or fc.args.get('visual_description', '')
+                
+                # Context enforcement: Apply the detected topic if not already in query
+                search_query = query
+                if tool_name == 'perform_web_search' and current_topic and current_topic.lower() not in query.lower():
+                    search_query = f"{current_topic} {query}"
+
+                pending_queries.append(search_query)
+
+                # Execution wrapper for parallel gathering
+                async def execute_tool_task(name, q):
+                    logger.info(f"Parallel Tool {name} triggered: {q}")
+                    if name == 'perform_web_search':
+                        return await perform_web_search(q)
+                    else:
+                        return await identify_visual_content(q)
+                
+                tool_tasks.append(execute_tool_task(tool_name, search_query))
+
+        # 4. Dynamic Wait Message for the batch of queries
+        if pending_queries and message_channel and not (has_text and loop_count == 1):
+            try:
+                # Use first few queries for the wait message context
+                q_list = ", ".join(pending_queries[:2]) + ("..." if len(pending_queries) > 2 else "")
+                wait_prompt = f"AnTiMa. You are researching multiple things: {q_list}. Write a short, lowercase casual wait message. Output only msg."
+                wait_res = await summarizer_model.generate_content_async(wait_prompt)
+                await message_channel.send(f"🔍 {_safe_get_response_text(wait_res).strip()}")
+            except:
+                await message_channel.send(f"🔍 one sec, checking a few things for you...")
+
+        # 5. Gather results and return to AI
+        if tool_tasks:
+            results = await asyncio.gather(*tool_tasks)
             
-            # Context enforcement only for text search
-            if tool_name == 'perform_web_search' and current_topic and current_topic.lower() not in query.lower():
-                query = f"{current_topic} {query}"
-
-            # Dynamic Wait (only if no text sent)
-            if not has_text and message_channel:
-                try:
-                    action = "looking that up" if tool_name == 'perform_web_search' else "analyzing that image"
-                    wait_res = await summarizer_model.generate_content_async(f"AnTiMa. You are {action}: '{query}'. Casual short wait msg. Output only msg.")
-                    await message_channel.send(f"🔍 {_safe_get_response_text(wait_res).strip()}")
-                except: await message_channel.send(f"🔍 one sec, {action}...")
-
-            logger.info(f"Tool {tool_name} requested: {query}")
+            # Construct the multi-part function response
+            response_payload = []
+            for i, fc in enumerate(function_calls):
+                response_payload.append({
+                    "function_response": {
+                        "name": fc.name,
+                        "response": {"result": results[i]}
+                    }
+                })
             
-            # Execute correct tool
-            if tool_name == 'perform_web_search':
-                result = await perform_web_search(query)
-            else:
-                result = await identify_visual_content(query)
+            # Send results back to the AI in one batch
+            response = await chat.send_message_async(response_payload)
+        else:
+            # If function calls were non-search (unsupported), stop the loop
+            break
 
-            response = await chat.send_message_async({
-                "function_response": {
-                    "name": tool_name,
-                    "response": {"result": result}
-                }
-            })
-        else: break
     return response
 
 async def should_bot_respond_ai_check(cog, bot, summarizer_model, message: discord.Message) -> bool:
@@ -162,9 +192,8 @@ async def handle_single_user_response(cog, message, prompt, author, intervening_
             if intervening_author: content = [f"{intervening_author.display_name} interrupted {author.display_name}. Respond to {author.display_name}."]
             
             uploaded_files_cleanup = []
-            
-            # --- DYNAMIC TOOL HINTS ---
             tools_active = []
+            
             if message.attachments:
                 for attachment in message.attachments:
                     if attachment.content_type.startswith('image/'):
@@ -172,24 +201,22 @@ async def handle_single_user_response(cog, message, prompt, author, intervening_
                         image = Image.open(io.BytesIO(image_data))
                         content.append(image)
                         tools_active.append("`[VisualProcessor]: ENABLED`")
-                        tools_active.append("`[VisualSearch]: ENABLED (Use identify_visual_content if needed)`")
+                        tools_active.append("`[VisualSearch]: ENABLED`")
                     elif attachment.content_type.startswith('video/'):
-                        # DYNAMIC AI WAIT MESSAGE
                         try:
-                            wait_prompt = "You are AnTiMa. Someone sent a video. Write a short, lowercase reaction. Ex: 'ooh a video? lemme watch', 'loading clip...'. Output ONLY the message."
+                            wait_prompt = "AnTiMa. Someone sent a video. Write a short, lowercase reaction. Output ONLY the message."
                             wait_res = await cog.summarizer_model.generate_content_async(wait_prompt)
-                            await message.channel.send(f"👀 {_safe_get_response_text(wait_res).strip()}")
+                            await message.channel.send(f"🎬 {_safe_get_response_text(wait_res).strip()}")
                         except:
-                            await message.channel.send("👀 ooh a video? lemme watch it...")
+                            await message.channel.send("🎬 ooh a video? lemme watch it...")
 
                         video_file = await process_video_attachment(attachment)
                         if video_file:
                             content.append(video_file)
                             uploaded_files_cleanup.append(video_file)
                             tools_active.append("`[VideoWatcher]: ENABLED`")
-                            tools_active.append("`[VisualSearch]: ENABLED (Use identify_visual_content if needed)`")
+                            tools_active.append("`[VisualSearch]: ENABLED`")
 
-            # Inject Tool Hints into Prompt
             if tools_active:
                 content[0] += "\n\n**SYSTEM NOTIFICATION:**\n" + "\n".join(tools_active) + "\n"
 
@@ -209,7 +236,7 @@ async def handle_single_user_response(cog, message, prompt, author, intervening_
 
             processed_text = re.sub(r"\[MENTION: (.+?)\]", lambda m: f"<@{_find_member(message.guild, m.group(1).strip()).id}>" if _find_member(message.guild, m.group(1).strip()) else m.group(1).strip(), final_text)
             
-            # GIF Handling
+            # Multi-message splitting
             parts = processed_text.split('|||')
             for part in parts:
                 if part.strip():
@@ -223,7 +250,6 @@ async def handle_single_user_response(cog, message, prompt, author, intervening_
         logger.error(f"Error in single user response: {e}")
 
 async def process_message_batch(cog, channel_id):
-    # Batch processing logic applying similar structure
     batch = cog.message_batches.pop(channel_id, [])
     cog.batch_timers.pop(channel_id, None)
     if not batch: return
@@ -238,7 +264,6 @@ async def process_message_batch(cog, channel_id):
     try:
         async with last_message.channel.typing():
             guild_config = ai_config_collection.find_one({"_id": str(last_message.guild.id)}) or {}
-            style_guide = guild_config.get("personality_style_guide")
             daily_limit = guild_config.get("daily_rate_limit", 50)
             
             history = [{'role': 'model' if m.author==cog.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=cog.bot.user else m.clean_content]} async for m in last_message.channel.history(limit=MAX_HISTORY) if m.id not in [msg.id for msg in batch]]
