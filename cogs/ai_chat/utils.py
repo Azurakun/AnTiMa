@@ -11,11 +11,11 @@ import warnings
 import re
 from bs4 import BeautifulSoup
 from fake_useragent import UserAgent
+import google.generativeai as genai
 
-# Suppress the specific RuntimeWarning from duckduckgo_search regarding 'ddgs' renaming
+# Suppress DuckDuckGo warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
 
-# Robust import for DDGS
 try:
     from duckduckgo_search import DDGS
 except ImportError:
@@ -26,54 +26,161 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Constants for APIs
 TENOR_API_KEY = os.environ.get("TENOR_API_KEY")
 TENOR_CLIENT_KEY = "AnTiMa-Discord-Bot"
+GOOGLE_SEARCH_API_KEY = os.environ.get("GOOGLE_SEARCH_API_KEY")
+GOOGLE_SEARCH_CX = os.environ.get("GOOGLE_SEARCH_CX")
 
 def _safe_get_response_text(response) -> str:
     """Safely gets text from a Gemini response, handling blocked content."""
     try:
         if not response.parts:
             return ""
-        text_parts = []
-        for part in response.parts:
-            if part.text:
-                text_parts.append(part.text)
-        
-        if text_parts:
-            return "\n".join(text_parts)
-        return ""
+        text_parts = [part.text for part in response.parts if part.text]
+        return "\n".join(text_parts) if text_parts else ""
     except (ValueError, IndexError, AttributeError):
-        logger.warning("Gemini response was empty, blocked, or contained only function calls.")
         return ""
 
-async def get_gif_url(http_session: aiohttp.ClientSession, search_term: str) -> str | None:
-    """Fetches a random GIF URL from Tenor based on a search term."""
-    if not TENOR_API_KEY:
-        logger.warning("TENOR_API_KEY is not set in environment variables. Cannot fetch GIFs.")
-        return None
+async def fetch_website_content(url: str) -> str:
+    """Visits a URL and extracts the main text content with high precision."""
+    try:
+        ua = UserAgent()
+        headers = {'User-Agent': ua.random}
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=8) as response:
+                if response.status != 200:
+                    return f"Failed to open link (Status {response.status})"
+                
+                if int(response.headers.get("Content-Length", 0)) > 5_000_000:
+                    return "Page too large to read safely."
 
-    url = "https://tenor.googleapis.com/v2/search"
+                html = await response.text()
+                
+        soup = BeautifulSoup(html, 'html.parser')
+        
+        # Clean the DOM
+        for element in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe", "noscript", "svg"]):
+            element.extract()
+            
+        # Prioritize main content areas
+        main_content = soup.find('main') or soup.find('article') or soup.find('div', class_=re.compile(r'content|article|body', re.I))
+        target = main_content if main_content else soup
+        
+        paragraphs = [p.get_text().strip() for p in target.find_all('p') if len(p.get_text().strip()) > 40]
+        clean_text = "\n\n".join(paragraphs)
+        
+        if not clean_text or len(clean_text) < 300:
+            clean_text = target.get_text(separator='\n', strip=True)
+        
+        # Cleanup whitespace
+        clean_text = re.sub(r'\n\s*\n', '\n\n', clean_text)
+        return clean_text[:4000] + ("..." if len(clean_text) > 4000 else "")
+
+    except Exception as e:
+        logger.error(f"Scraper error on {url}: {e}")
+        return f"Could not read page: {str(e)}"
+
+async def _get_google_search_results(query: str) -> list:
+    """Fetches raw results from Google Custom Search API."""
+    if not GOOGLE_SEARCH_API_KEY or not GOOGLE_SEARCH_CX:
+        logger.warning("Google Search API credentials missing.")
+        return []
+
+    url = "https://www.googleapis.com/customsearch/v1"
     params = {
-        "q": search_term,
-        "key": TENOR_API_KEY,
-        "client_key": TENOR_CLIENT_KEY,
-        "limit": 8,
-        "media_filter": "minimal",
-        "random": "true"
+        'q': query,
+        'key': GOOGLE_SEARCH_API_KEY,
+        'cx': GOOGLE_SEARCH_CX,
+        'num': 5
     }
 
     try:
-        async with http_session.get(url, params=params) as response:
-            if response.status == 200:
-                data = await response.json()
-                if data.get("results"):
-                    gif = random.choice(data["results"])
-                    return gif["media_formats"]["gif"]["url"]
-            else:
-                logger.error(f"Tenor API request failed with status {response.status}: {await response.text()}")
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    return data.get('items', [])
+                logger.error(f"Google Search API error: {resp.status}")
+                return []
     except Exception as e:
-        logger.error(f"An error occurred while fetching a GIF from Tenor: {e}")
-    return None
+        logger.error(f"Google Search request failed: {e}")
+        return []
+
+async def _get_ddg_search_results(query: str) -> list:
+    """Fallback search using DuckDuckGo."""
+    if DDGS is None: return []
+    loop = asyncio.get_running_loop()
+    try:
+        def run_ddg():
+            with DDGS() as ddgs:
+                return list(ddgs.text(query, max_results=5))
+        return await loop.run_in_executor(None, run_ddg)
+    except:
+        return []
+
+async def perform_web_search(query: str) -> str:
+    """
+    Advanced search tool that uses Google, scrapes multiple sources, 
+    and verifies information accuracy before returning results.
+    """
+    logger.info(f"Initiating verified search for: '{query}'")
+    
+    results = await _get_google_search_results(query)
+    source_engine = "Google"
+    if not results:
+        results = await _get_ddg_search_results(query)
+        source_engine = "DuckDuckGo"
+
+    if not results:
+        return "Search failed: No results found on Google or DuckDuckGo."
+
+    search_data = []
+    fetch_tasks = []
+    
+    for i, r in enumerate(results[:3]):
+        title = r.get('title') or r.get('headline', 'No Title')
+        link = r.get('link') or r.get('href', 'No Link')
+        snippet = r.get('snippet') or r.get('body', '')
+        search_data.append({"title": title, "link": link, "snippet": snippet})
+        fetch_tasks.append(fetch_website_content(link))
+
+    scraped_contents = await asyncio.gather(*fetch_tasks)
+    
+    try:
+        verification_model = genai.GenerativeModel('gemini-2.5-flash')
+        context_blob = ""
+        for i, data in enumerate(search_data):
+            context_blob += f"SOURCE {i+1} [{data['title']}]:\n{scraped_contents[i]}\n---\n"
+
+        verify_prompt = (
+            f"You are a fact-checking module for AnTiMa. Based on the following search data from {source_engine}, "
+            f"provide a highly accurate, verified, and detailed answer to the query: '{query}'.\n\n"
+            "INSTRUCTIONS:\n"
+            "1. Cross-reference the sources. If they conflict, highlight the most reliable one (wikis/official sites).\n"
+            "2. Remove any irrelevant SEO fluff or ads.\n"
+            "3. Ensure the information is directly related to the user's intent.\n"
+            "4. Include key details and specific facts.\n\n"
+            f"DATA:\n{context_blob}"
+        )
+
+        response = await verification_model.generate_content_async(verify_prompt)
+        final_info = _safe_get_response_text(response)
+        
+        if not final_info:
+            final_info = "Verification failed, falling back to raw snippets.\n" + "\n".join([f"- {d['title']}: {d['snippet']}" for d in search_data])
+
+        return f"### VERIFIED INFORMATION (via {source_engine}):\n{final_info}\n\nSources explored: " + ", ".join([d['link'] for d in search_data])
+
+    except Exception as e:
+        logger.error(f"Verification step failed: {e}")
+        return "Internal error during information verification."
+
+async def identify_visual_content(visual_description: str) -> str:
+    """Identifies visual content by performing a targeted search for origin/source."""
+    search_query = f"what is {visual_description} character series name origin wiki"
+    return await perform_web_search(search_query)
 
 async def should_send_gif(summarizer_model, channel, bot_response_text, gif_search_term) -> bool:
     """Uses an AI agent to determine if sending a GIF is appropriate for the context."""
@@ -87,16 +194,15 @@ async def should_send_gif(summarizer_model, channel, bot_response_text, gif_sear
             "You are a social context analysis AI. Your job is to decide if sending a GIF is appropriate for the current conversation mood. "
             "I will provide the recent chat history, my planned text response, and the GIF I want to send (as a search term).\n\n"
             "**Rules for your decision:**\n"
-            "1. **APPROVE (yes)** if the conversation is casual, friendly, or emotional where a GIF would enhance the expression (e.g., sharing joy, offering comfort, making a joke).\n"
-            "2. **REJECT (no)** if the conversation is serious, technical, formal, or argumentative. A GIF would be inappropriate or distracting.\n"
-            "3. **REJECT (no)** if the user seems frustrated or angry. A GIF could escalate the situation unless it's clearly apologetic.\n"
-            "4. **REJECT (no)** if the GIF's implied emotion (from the search term) clashes badly with the text response (e.g., text is sad, GIF is 'laughing').\n\n"
+            "1. **APPROVE (yes)** if the conversation is casual, friendly, or emotional where a GIF would enhance the expression.\n"
+            "2. **REJECT (no)** if the conversation is serious, technical, formal, or argumentative.\n"
+            "3. **REJECT (no)** if the user seems frustrated or angry.\n"
+            "4. **REJECT (no)** if the GIF's implied emotion clashes with the text response.\n\n"
             f"--- CONTEXT ---\n"
             f"**Recent Chat:**\n{conversation_log}\n\n"
             f"**My Planned Text Response:**\n\"{bot_response_text}\"\n\n"
             f"**Proposed GIF Search Term:** `{gif_search_term}`\n"
-            f"---------------\n\n"
-            "Based on your rules, is sending this GIF appropriate right now? Answer with only 'yes' or 'no'."
+            "Answer with only 'yes' or 'no'."
         )
 
         response = await summarizer_model.generate_content_async(prompt)
@@ -108,166 +214,19 @@ async def should_send_gif(summarizer_model, channel, bot_response_text, gif_sear
         logger.error(f"GIF Decision Agent failed: {e}")
         return False
 
+async def get_gif_url(http_session: aiohttp.ClientSession, search_term: str) -> str | None:
+    if not TENOR_API_KEY: return None
+    url = "https://tenor.googleapis.com/v2/search"
+    params = {"q": search_term, "key": TENOR_API_KEY, "client_key": TENOR_CLIENT_KEY, "limit": 8, "random": "true"}
+    try:
+        async with http_session.get(url, params=params) as response:
+            if response.status == 200:
+                data = await response.json()
+                if data.get("results"):
+                    return random.choice(data["results"])["media_formats"]["gif"]["url"]
+    except: pass
+    return None
+
 def _find_member(guild: discord.Guild, name: str):
-    """Finds a member in a guild by name or display name, case-insensitively."""
     name = name.lower()
-    member = discord.utils.find(
-        lambda m: m.name.lower() == name or m.display_name.lower() == name,
-        guild.members
-    )
-    if member is None:
-        logger.warning(f"Could not find member '{name}' in guild '{guild.name}'. The member might not be cached or the name is incorrect.")
-    return member
-
-async def fetch_website_content(url: str) -> str:
-    """
-    Visits a URL and extracts the main text content using BeautifulSoup.
-    This helps the AI read the actual article instead of just the snippet.
-    """
-    logger.info(f"DEBUG: Scraper visiting {url}")
-    try:
-        ua = UserAgent()
-        headers = {'User-Agent': ua.random}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=6) as response:
-                if response.status != 200:
-                    return f"Failed to open link (Status {response.status})"
-                
-                # Safety: Check content size to prevent freezing on massive files
-                if int(response.headers.get("Content-Length", 0)) > 4_000_000:
-                    return "Page too large to read safely."
-
-                html = await response.text()
-                
-        # Parse HTML
-        soup = BeautifulSoup(html, 'html.parser')
-        
-        # Remove unwanted elements that clutter the text
-        for script in soup(["script", "style", "nav", "footer", "header", "aside", "form", "iframe", "noscript", "svg"]):
-            script.extract()
-            
-        # Strategy: Find paragraphs. Usually the best way to get article content.
-        paragraphs = [p.get_text().strip() for p in soup.find_all('p')]
-        
-        # Filter empty or very short junk lines (e.g., "Read more", "Share")
-        clean_text = "\n".join([p for p in paragraphs if len(p) > 60])
-        
-        # Fallback: if paragraph strategy failed, try getting all text
-        if not clean_text or len(clean_text) < 200:
-            clean_text = soup.get_text(separator='\n')
-        
-        # Cleanup: Remove excessive newlines
-        clean_text = re.sub(r'\n\s*\n', '\n\n', clean_text)
-        
-        # Truncate to avoid exceeding token limits (approx 3500 chars is safe for context)
-        return clean_text[:3500] + ("..." if len(clean_text) > 3500 else "")
-
-    except asyncio.TimeoutError:
-        return "Reading the page timed out."
-    except Exception as e:
-        logger.error(f"Scraper error on {url}: {e}")
-        return f"Could not read page content: {str(e)}"
-
-async def perform_web_search(query: str) -> str:
-    """
-    Performs a DuckDuckGo search using the default stable backend and scrapes the content.
-    """
-    if DDGS is None:
-        return "Search tool error: `ddgs` library not found. Please install `ddgs`."
-
-    logger.info(f"DEBUG: AI Search Query: '{query}'")
-    loop = asyncio.get_running_loop()
-
-    try:
-        # 1. Perform Search (Sync operation in executor)
-        def run_ddg_sync():
-            results = []
-            try:
-                # Use default 'auto' backend by not specifying 'backend' argument
-                with DDGS() as ddgs:
-                    # Fetch slightly more results (6) so we have candidates to filter
-                    ddgs_gen = ddgs.text(query, max_results=6)
-                    if ddgs_gen:
-                        results = list(ddgs_gen)
-            except Exception as e:
-                logger.error(f"DDG Search failed: {e}")
-            return results
-
-        search_results = await loop.run_in_executor(None, run_ddg_sync)
-        
-        if not search_results:
-            return "No results found."
-
-        # 2. Format Snippets for AI Overview
-        formatted_snippets = "### Search Results Overview:\n"
-        for i, r in enumerate(search_results):
-            # Normalize keys just in case
-            title = r.get('title') or r.get('headline') or "No Title"
-            link = r.get('href') or r.get('url') or "No Link"
-            body = r.get('body') or r.get('snippet') or "No Snippet"
-            formatted_snippets += f"{i+1}. {title} - {link}\n   Snippet: {body}\n"
-
-        # 3. Smart Selection Logic
-        priorities = ['wiki', 'fandom', 'hoyolab', 'reddit', 'guide', 'screenrant', 'game8', 'pockettactics']
-        blacklist = ['scmp.com', 'cnn.com', 'bbc.com', 'nytimes.com', 'forbes.com', 'bloomberg.com', 'yahoo.com']
-
-        best_result = None
-        
-        # Pass 1: Look for Priority sites
-        for r in search_results:
-            url_lower = (r.get('href') or r.get('url') or '').lower()
-            if any(p in url_lower for p in priorities):
-                best_result = r
-                logger.info(f"DEBUG: Selected Priority result: {r.get('title')}")
-                break
-        
-        # Pass 2: If no priority result found, pick first result that IS NOT in blacklist
-        if not best_result:
-            for r in search_results:
-                url_lower = (r.get('href') or r.get('url') or '').lower()
-                if not any(b in url_lower for b in blacklist):
-                    best_result = r
-                    logger.info(f"DEBUG: Selected fallback result (non-blacklisted): {r.get('title')}")
-                    break
-        
-        # Pass 3: If everything was blacklisted (or list empty), just take the first one
-        if not best_result:
-            best_result = search_results[0]
-            logger.info(f"DEBUG: Defaulted to first result: {best_result.get('title')}")
-
-        # 4. Fetch Content of the Best Result
-        target_url = best_result.get('href') or best_result.get('url')
-        target_title = best_result.get('title') or "Selected Result"
-        
-        article_content = await fetch_website_content(target_url)
-        
-        final_output = (
-            f"{formatted_snippets}\n"
-            f"### Deep Dive Content (from {target_title}):\n"
-            f"{article_content}"
-        )
-        
-        return final_output
-
-    except Exception as e:
-        logger.error(f"Search failed: {e}")
-        traceback.print_exc()
-        return f"Search System Error: {str(e)}"
-
-# --- NEW TOOL ---
-async def identify_visual_content(visual_description: str) -> str:
-    """
-    Use this tool when you see an Image or Video and need to identify what it is.
-    It performs a targeted web search based on your visual description to find the source/name.
-    
-    Args:
-        visual_description (str): A detailed description of what you see (e.g. "anime girl pink hair robot suit green eyes character name").
-    """
-    logger.info(f"Visual Search triggered for: {visual_description}")
-    
-    # Enhance the query for identification purposes
-    search_query = f"{visual_description} character name wiki origin"
-    
-    # Reuse the existing robust search logic
-    return await perform_web_search(search_query)
+    return discord.utils.find(lambda m: m.name.lower() == name or m.display_name.lower() == name, guild.members)
