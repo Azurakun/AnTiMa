@@ -21,14 +21,17 @@ db = client[DB_NAME]
 # AI & Chat
 ai_config_collection = db["ai_config"]
 ai_personal_memories_collection = db["ai_personal_memories"]
-ai_global_memories_collection = db["ai_global_memories"] # Added to fix ImportError
+ai_global_memories_collection = db["ai_global_memories"]
 server_lore_collection = db["server_lore"]
+
+# Search & Debug (New collection for Dashboard Debug Menu)
+search_debug_collection = db["search_debug"] 
 
 # RPG
 rpg_sessions_collection = db["rpg_sessions"]
 rpg_inventory_collection = db["rpg_inventory"]
 
-# Stats & Dashboard (Fixed Name)
+# Stats & Dashboard
 stats_collection = db["bot_stats"] 
 live_activity_collection = db["live_activity"]
 

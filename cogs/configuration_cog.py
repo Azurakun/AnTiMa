@@ -7,7 +7,7 @@ from utils.limiter import limiter
 from datetime import datetime, timedelta, timezone
 import random
 
-CREATOR_ID = 123456789012345678 # REPLACE WITH YOUR ID
+CREATOR_ID = 898989641112383488 # REPLACE WITH YOUR ID
 
 class ConfigurationCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
