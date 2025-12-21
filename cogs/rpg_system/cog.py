@@ -1,7 +1,7 @@
 # cogs/rpg_system/cog.py
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import google.generativeai as genai
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import asyncio
@@ -11,7 +11,7 @@ from utils.db import ai_config_collection, rpg_sessions_collection, rpg_inventor
 from utils.limiter import limiter
 from .config import RPG_CLASSES
 from . import tools
-from .ui import RPGGameView, AdventureSetupView
+from .ui import RPGGameView, AdventureSetupView, CloseVoteView
 
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -35,6 +35,46 @@ class RPGAdventureCog(commands.Cog):
             self.active_sessions = {} 
         except Exception as e:
             print(f"Failed to load Gemini for RPG: {e}")
+        
+        # Start background clean up task
+        self.cleanup_deleted_sessions.start()
+
+    def cog_unload(self):
+        self.cleanup_deleted_sessions.cancel()
+
+    @tasks.loop(seconds=5)
+    async def cleanup_deleted_sessions(self):
+        """
+        Background Task: Checks DB for sessions flagged by Dashboard.
+        1. Deletes Discord Thread.
+        2. Deletes Database Entry.
+        """
+        try:
+            to_delete = rpg_sessions_collection.find({"delete_requested": True})
+            for session in to_delete:
+                thread_id = session['thread_id']
+                print(f"🗑️ [RPG Cleanup] Dashboard requested deletion for Thread ID: {thread_id}")
+                
+                # 1. Attempt Discord Deletion
+                try:
+                    thread = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
+                    if thread:
+                        await thread.delete()
+                        print(f"✅ [RPG Cleanup] Discord Thread {thread_id} deleted successfully.")
+                except discord.NotFound:
+                    print(f"⚠️ [RPG Cleanup] Thread {thread_id} not found on Discord (already deleted?).")
+                except Exception as e:
+                    print(f"❌ [RPG Cleanup] Failed to delete thread {thread_id}: {e}")
+
+                # 2. Database Deletion
+                rpg_sessions_collection.delete_one({"thread_id": thread_id})
+                
+                # 3. Memory Cleanup
+                if thread_id in self.active_sessions:
+                    del self.active_sessions[thread_id]
+
+        except Exception as e:
+            print(f"ERROR in cleanup task: {e}")
 
     async def _restore_session(self, channel):
         """Restores AI memory from DB Logs + Chat History."""
@@ -75,41 +115,77 @@ class RPGAdventureCog(commands.Cog):
             embed.add_field(name=f"{name} ({stats['class']})", value=f"**HP:** `{stats['hp']}` {hp_bar}\n**MP:** `{stats['mp']}` {mp_bar}", inline=False)
         return embed
 
+    async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name):
+        """Creates the thread and initializes the game session in DB."""
+        config = ai_config_collection.find_one({"_id": str(interaction.guild_id)})
+        channel = self.bot.get_channel(config.get("rpg_channel_id"))
+        if not channel: 
+            return await interaction.followup.send("RPG Channel not set!", ephemeral=True)
+
+        try:
+            prompt = f"Generate a unique 5-word title for an RPG adventure. Scenario: {scenario_name}. Lore: {lore[:100]}."
+            resp = await self.model.generate_content_async(prompt)
+            title = resp.text.strip().replace('"', '')[:50]
+        except: title = f"Quest: {interaction.user.name}"
+
+        thread = await channel.create_thread(name=title, type=discord.ChannelType.private_thread, auto_archive_duration=10080)
+        for p in players: await thread.add_user(p)
+
+        player_stats_db = {}
+        for p in players:
+            data = profiles.get(p.id, RPG_CLASSES["Freelancer"])
+            player_stats_db[str(p.id)] = data
+
+        session_data = {
+            "thread_id": thread.id, 
+            "guild_id": interaction.guild_id, 
+            "owner_id": interaction.user.id, 
+            "owner_name": interaction.user.name,
+            "title": title, 
+            "players": [p.id for p in players], 
+            "player_stats": player_stats_db, 
+            "scenario_type": scenario_name,
+            "campaign_log": [], 
+            "npc_registry": [], 
+            "quest_log": [], 
+            "created_at": datetime.utcnow(), 
+            "last_active": datetime.utcnow(),
+            "active": True, 
+            "delete_requested": False
+        }
+        rpg_sessions_collection.insert_one(session_data)
+
+        p_desc = ", ".join([f"{p.name} [ID: {p.id}] ({profiles.get(p.id, {}).get('class', 'Unknown')})" for p in players])
+        sys_prompt = f"You are the **Dungeon Master**. Professional tone.\n**SCENARIO:** {scenario_name}\n**GUIDELINES:**\n1. Call `roll_d20` for risk.\n2. Use tools.\n3. Update Journal.\n4. Narrative style.\n**LORE:** {lore}\n**PARTY:** {p_desc}"
+        chat_session = self.model.start_chat(history=[{"role": "user", "parts": ["System: Start."]}])
+        self.active_sessions[thread.id] = {'session': chat_session, 'last_prompt': "Start", 'owner_id': interaction.user.id}
+        await self.process_game_turn(thread, sys_prompt)
+
     async def reroll_turn_callback(self, interaction, thread_id):
-        """Called by the UI button to reroll."""
         session_db = rpg_sessions_collection.find_one({"thread_id": thread_id})
         if not session_db or interaction.user.id != session_db['owner_id']:
              return await interaction.followup.send("Only the party leader can reroll!", ephemeral=True)
         
         if thread_id not in self.active_sessions: return
         data = self.active_sessions[thread_id]
-        
         if 'history_snapshot' in data: data['session'].history = list(data['history_snapshot'])
         else:
             try: data['session'].rewind()
             except: pass
-            
         await interaction.channel.send("🎲 **Rewinding Time...**")
         await self.process_game_turn(interaction.channel, data.get('last_prompt', "Continue"), is_reroll=True)
 
-    async def reroll_turn(self, thread_id, channel):
-        """Internal helper for rerolling."""
-        pass
-
     async def process_game_turn(self, channel, prompt, user=None, is_reroll=False):
-        # 1. Rate Limit Check (Peek)
         if user:
             if not limiter.check_available(user.id, channel.guild.id, "rpg_gen"):
                 await channel.send("⏳ **Cooldown:** The Dungeon Master needs a rest. (Rate Limit Hit)")
                 return
 
-        # 2. Restore Session if needed
         if channel.id not in self.active_sessions:
             if not await self._restore_session(channel): return
         data = self.active_sessions[channel.id]
         chat_session = data['session']
         
-        # 3. Update Dashboard Activity
         rpg_sessions_collection.update_one({"thread_id": channel.id}, {"$set": {"last_active": datetime.utcnow()}})
         
         forced_roll_context = ""
@@ -176,7 +252,6 @@ class RPGAdventureCog(commands.Cog):
                 story_emb.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None)
                 await channel.send(embeds=[story_emb, self.get_status_embed(channel.id)], view=view)
                 
-                # 4. Consume Limit & Log Detailed Info
                 if user: 
                     limit_source = limiter.consume(user.id, channel.guild.id, "rpg_gen")
                     print(f"RPG Turn Consumed: {limit_source.upper()} | User: {user.name} ({user.id}) | Guild: {channel.guild.name} ({channel.guild.id})")
@@ -185,37 +260,18 @@ class RPGAdventureCog(commands.Cog):
                 await channel.send(f"⚠️ Game Error: {e}")
                 print(f"RPG Error: {e}")
 
-    async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name):
-        config = ai_config_collection.find_one({"_id": str(interaction.guild_id)})
-        channel = self.bot.get_channel(config.get("rpg_channel_id"))
-        if not channel: return
-
+    async def close_session(self, thread_id, channel):
+        """Helper to archive thread and clean DB."""
+        rpg_sessions_collection.update_one({"thread_id": thread_id}, {"$set": {"active": False, "ended_at": datetime.utcnow()}})
+        
+        if thread_id in self.active_sessions:
+            del self.active_sessions[thread_id]
+            
         try:
-            prompt = f"Generate a unique 5-word title for an RPG adventure. Scenario: {scenario_name}. Lore: {lore[:100]}."
-            resp = await self.model.generate_content_async(prompt)
-            title = resp.text.strip().replace('"', '')[:50]
-        except: title = f"Quest: {interaction.user.name}"
-
-        thread = await channel.create_thread(name=title, type=discord.ChannelType.private_thread, auto_archive_duration=10080)
-        for p in players: await thread.add_user(p)
-
-        player_stats_db = {}
-        for p in players:
-            data = profiles.get(p.id, RPG_CLASSES["Freelancer"])
-            player_stats_db[str(p.id)] = data
-
-        session_data = {
-            "thread_id": thread.id, "guild_id": interaction.guild_id, "owner_id": interaction.user.id, "owner_name": interaction.user.name,
-            "title": title, "players": [p.id for p in players], "player_stats": player_stats_db, "scenario_type": scenario_name,
-            "campaign_log": [], "npc_registry": [], "quest_log": [], "created_at": datetime.utcnow(), "last_active": datetime.utcnow()
-        }
-        rpg_sessions_collection.insert_one(session_data)
-
-        p_desc = ", ".join([f"{p.name} [ID: {p.id}] ({profiles.get(p.id, {}).get('class', 'Unknown')})" for p in players])
-        sys_prompt = f"You are the **Dungeon Master**. Professional tone.\n**SCENARIO:** {scenario_name}\n**GUIDELINES:**\n1. Call `roll_d20` for risk.\n2. Use tools.\n3. Update Journal.\n4. Narrative style.\n**LORE:** {lore}\n**PARTY:** {p_desc}"
-        chat_session = self.model.start_chat(history=[{"role": "user", "parts": ["System: Start."]}])
-        self.active_sessions[thread.id] = {'session': chat_session, 'last_prompt': "Start", 'owner_id': interaction.user.id}
-        await self.process_game_turn(thread, sys_prompt)
+            await channel.send("📕 **The adventure has concluded.** This scroll is now sealed.")
+            await channel.edit(archived=True, locked=True)
+        except Exception as e:
+            print(f"Failed to archive thread {thread_id}: {e}")
 
     # --- COMMANDS ---
     rpg_group = app_commands.Group(name="rpg", description="⚔️ Play immersive role-playing adventures.")
@@ -226,9 +282,35 @@ class RPGAdventureCog(commands.Cog):
         config = ai_config_collection.find_one({"_id": str(interaction.guild_id)})
         if not config or "rpg_channel_id" not in config: 
             return await interaction.followup.send("⚠️ Admin must set channel first using `/config rpg`.", ephemeral=True)
-        
         view = AdventureSetupView(self.bot, interaction.user)
         view.message = await interaction.followup.send(content=f"⚔️ **RPG Lobby Open!** {interaction.user.mention} is host.", embed=view._get_party_embed(), view=view)
+
+    @rpg_group.command(name="end", description="Vote to close the current RPG session.")
+    async def rpg_end(self, interaction: discord.Interaction):
+        if not isinstance(interaction.channel, discord.Thread):
+            return await interaction.response.send_message("This command can only be used inside an RPG Quest Thread.", ephemeral=True)
+        session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
+        if not session:
+            return await interaction.response.send_message("No active RPG session data found for this thread.", ephemeral=True)
+        players = session.get("players", [])
+        if interaction.user.id not in players:
+            return await interaction.response.send_message("You are not a member of this adventure party.", ephemeral=True)
+
+        if interaction.user.id == session.get("owner_id"):
+             await interaction.response.send_message("🛑 **Stopping adventure (Party Leader Override)...**")
+             await self.close_session(interaction.channel.id, interaction.channel)
+             return
+
+        if len(players) <= 1:
+            await interaction.response.send_message("🛑 **Ending session...**")
+            await self.close_session(interaction.channel.id, interaction.channel)
+        else:
+            view = CloseVoteView(self, interaction.channel.id, interaction.user.id, players, session['owner_id'])
+            await interaction.response.send_message(
+                f"🗳️ **End Adventure Vote**\nInitiated by {interaction.user.mention}.\n"
+                f"Majority Required: **{view.threshold}** votes.",
+                view=view
+            )
 
     @rpg_group.command(name="inventory", description="Check your character's items.")
     async def rpg_inventory(self, interaction: discord.Interaction, user: discord.Member = None):

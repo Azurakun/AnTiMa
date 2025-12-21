@@ -57,10 +57,14 @@ async def fetch_website_content(url: str) -> str:
 
 async def perform_web_search(query: str) -> str:
     """
-    Ultra-High Accuracy Search: 
-    - Fetches 15+ results from DDG
-    - Scrapes top 8-10 sources in parallel
-    - Logs detailed debug data for the dashboard
+    REQUIRED TOOL: Searches the internet to find real-time information, facts, or news.
+    USE THIS WHENEVER:
+    1. The user asks about current events, games, tech, or specific facts.
+    2. You are unsure about an answer.
+    3. You need to verify something.
+    
+    Args:
+        query: The search string (e.g. "latest Elden Ring patch notes").
     """
     if not DDGS: return "Search disabled: Missing library."
     

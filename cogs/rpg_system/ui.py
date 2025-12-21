@@ -157,3 +157,46 @@ class AdventureSetupView(discord.ui.View):
         await self.bot.get_cog("RPGAdventureCog").create_adventure_thread(
             interaction, self.selected_lore, self.players, self.selected_profiles, self.selected_scenario_name
         )
+
+# --- VOTING SYSTEM (UPDATED) ---
+class CloseVoteView(discord.ui.View):
+    def __init__(self, cog, thread_id, initiator_id, player_ids, owner_id):
+        super().__init__(timeout=300)
+        self.cog = cog
+        self.thread_id = thread_id
+        self.player_ids = player_ids
+        self.owner_id = owner_id  # Track the session owner
+        self.votes = {initiator_id}
+        self.threshold = (len(player_ids) // 2) + 1
+
+    @discord.ui.button(label="End Adventure", style=discord.ButtonStyle.danger)
+    async def vote_yes(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in self.player_ids:
+            return await interaction.response.send_message("Spectators cannot vote.", ephemeral=True)
+        
+        self.votes.add(interaction.user.id)
+        
+        if len(self.votes) >= self.threshold:
+            await interaction.response.edit_message(content="🔒 **Majority reached.** The adventure is ending...", view=None)
+            self.stop()
+            await self.cog.close_session(self.thread_id, interaction.channel)
+        else:
+            await interaction.response.send_message(f"Vote recorded! ({len(self.votes)}/{self.threshold} needed)", ephemeral=True)
+
+    @discord.ui.button(label="Keep Playing", style=discord.ButtonStyle.secondary)
+    async def vote_no(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id not in self.player_ids:
+            return await interaction.response.send_message("Spectators cannot vote.", ephemeral=True)
+        
+        await interaction.response.edit_message(content=f"❌ **Vote Cancelled.** {interaction.user.mention} wants to continue the adventure!", view=None)
+        self.stop()
+
+    # --- OWNER OVERRIDE BUTTON ---
+    @discord.ui.button(label="⚠ Force End (Host Only)", style=discord.ButtonStyle.danger, row=1)
+    async def force_end_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.owner_id:
+            return await interaction.response.send_message("Only the Party Leader (Host) can force end.", ephemeral=True)
+        
+        await interaction.response.edit_message(content="🛑 **Party Leader forced the session to end.**", view=None)
+        self.stop()
+        await self.cog.close_session(self.thread_id, interaction.channel)
