@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AnTiMa Live Dashboard</title>
+    <title>AnTiMa Command Center</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -25,18 +25,25 @@
         .terminal-scroll::-webkit-scrollbar-track { background: #0f0f0f; }
         .terminal-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
 
-        /* Table Filter Animations */
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .tab-btn.active { background-color: #5865F2; color: white; border-color: #5865F2; }
     </style>
 </head>
-<body class="bg-darkbg text-gray-100 font-sans antialiased min-h-screen">
+<body class="bg-darkbg text-gray-100 font-sans antialiased min-h-screen flex flex-col">
 
     <nav class="bg-card border-b border-gray-700 p-4 sticky top-0 z-50 shadow-xl backdrop-blur-md bg-opacity-90">
         <div class="container mx-auto flex justify-between items-center">
-            <div class="flex items-center gap-3">
-                <div class="h-3 w-3 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_#22c55e]"></div>
-                <h1 class="text-2xl font-bold tracking-wide text-white">AnTiMa <span class="text-discord">Dashboard</span></h1>
+            <div class="flex items-center gap-6">
+                <div class="flex items-center gap-3">
+                    <div class="h-3 w-3 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_#22c55e]"></div>
+                    <h1 class="text-2xl font-bold tracking-wide text-white">AnTiMa <span class="text-discord">Admin</span></h1>
+                </div>
+                <div class="flex bg-gray-900 rounded-lg p-1 border border-gray-700 ml-8">
+                    <button onclick="switchTab('dashboard')" id="tab-dashboard" class="tab-btn active px-4 py-1.5 text-sm font-bold rounded-md transition duration-200">Live Dashboard</button>
+                    <button onclick="switchTab('control')" id="tab-control" class="tab-btn px-4 py-1.5 text-sm font-bold rounded-md text-gray-400 hover:text-white transition duration-200">Control Panel</button>
+                </div>
             </div>
             <div class="text-xs text-gray-400 font-mono flex items-center gap-2 bg-black/30 px-3 py-1 rounded-full border border-gray-700">
                 <span class="w-2 h-2 rounded-full bg-gray-500" id="ws-dot"></span>
@@ -45,68 +52,216 @@
         </div>
     </nav>
 
-    <main class="container mx-auto p-6 pb-20 space-y-8">
+    <main class="container mx-auto p-6 flex-1 space-y-8">
         
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div class="bg-card p-6 rounded-xl shadow-lg border-discord clickable-card group" onclick="showDetails('guilds')">
-                <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Messages</h3>
-                <p class="text-4xl font-bold mt-2 text-white group-hover:text-discord transition" id="stat-messages">0</p>
-                <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Analytics →</div>
+        <div id="dashboard-view" class="fade-in space-y-8">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                <div class="bg-card p-6 rounded-xl shadow-lg border-discord clickable-card group" onclick="showDetails('guilds')">
+                    <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Messages</h3>
+                    <p class="text-4xl font-bold mt-2 text-white group-hover:text-discord transition" id="stat-messages">0</p>
+                    <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Analytics →</div>
+                </div>
+
+                <div class="bg-card p-6 rounded-xl shadow-lg border-green-500 clickable-card group" onclick="showDetails('rpgs')">
+                    <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Active Campaigns</h3>
+                    <p class="text-4xl font-bold mt-2 text-white group-hover:text-green-400 transition" id="stat-rpg">0</p>
+                    <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">Manage Sessions →</div>
+                </div>
+
+                <div class="bg-card p-6 rounded-xl shadow-lg border-purple-500 clickable-card group" onclick="showDetails('users')">
+                    <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Users</h3>
+                    <p class="text-4xl font-bold mt-2 text-white group-hover:text-purple-400 transition" id="stat-users">0</p>
+                    <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Directory →</div>
+                </div>
+
+                <div class="bg-card p-6 rounded-xl shadow-lg border-yellow-500 clickable-card group" onclick="showDetails('commands')">
+                    <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Commands Executed</h3>
+                    <p class="text-4xl font-bold mt-2 text-white group-hover:text-yellow-400 transition" id="stat-commands">0</p>
+                    <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Logs →</div>
+                </div>
             </div>
 
-            <div class="bg-card p-6 rounded-xl shadow-lg border-green-500 clickable-card group" onclick="showDetails('rpgs')">
-                <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Active Campaigns</h3>
-                <p class="text-4xl font-bold mt-2 text-white group-hover:text-green-400 transition" id="stat-rpg">0</p>
-                <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">Manage Sessions →</div>
-            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <div class="lg:col-span-1 bg-card rounded-xl shadow-lg overflow-hidden border border-gray-700 flex flex-col h-[500px]">
+                    <div class="p-4 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
+                        <h2 class="text-sm font-bold uppercase tracking-wide text-gray-300 flex items-center gap-2">Live Activity Feed</h2>
+                    </div>
+                    <ul id="activity-feed" class="divide-y divide-gray-700 overflow-y-auto bg-darkbg p-2 custom-scrollbar flex-1"></ul>
+                </div>
 
-            <div class="bg-card p-6 rounded-xl shadow-lg border-purple-500 clickable-card group" onclick="showDetails('users')">
-                <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Users</h3>
-                <p class="text-4xl font-bold mt-2 text-white group-hover:text-purple-400 transition" id="stat-users">0</p>
-                <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Directory →</div>
-            </div>
-
-            <div class="bg-card p-6 rounded-xl shadow-lg border-yellow-500 clickable-card group" onclick="showDetails('commands')">
-                <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Commands Executed</h3>
-                <p class="text-4xl font-bold mt-2 text-white group-hover:text-yellow-400 transition" id="stat-commands">0</p>
-                <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Logs →</div>
+                <div class="lg:col-span-2 bg-term rounded-xl shadow-2xl overflow-hidden border border-gray-700 font-mono text-sm relative flex flex-col h-[500px]">
+                    <div class="bg-gray-800 p-3 border-b border-gray-700 flex justify-between items-center select-none sticky top-0 z-10">
+                        <div class="flex gap-2 items-center">
+                             <div class="flex gap-1.5 mr-3">
+                                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                             </div>
+                             <span class="text-gray-400 text-xs font-bold tracking-wide">root@antima:~/kernel_logs</span>
+                        </div>
+                        <div class="flex gap-2">
+                            <button onclick="downloadLogs()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs transition border border-gray-600">📥 Save</button>
+                            <button onclick="clearConsole()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs transition border border-gray-600">🧹 Clear</button>
+                            <button onclick="showHistory()" class="bg-discord hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs transition border border-indigo-500 shadow-lg shadow-indigo-500/20">📜 History</button>
+                            <button onclick="restartBot()" class="bg-red-900 hover:bg-red-700 text-red-100 px-3 py-1 rounded text-xs transition border border-red-800 shadow-lg shadow-red-900/20">⚡ Restart</button>
+                        </div>
+                    </div>
+                    <div id="terminal-logs" class="p-4 overflow-y-auto terminal-scroll text-gray-300 space-y-1 bg-black/90 font-mono text-xs flex-1">
+                        <div class="animate-pulse text-green-500 font-bold">_ Initializing System Link... Awaiting Data stream...</div>
+                    </div>
+                </div>
             </div>
         </div>
 
-        <div class="bg-card rounded-xl shadow-lg overflow-hidden border border-gray-700">
-            <div class="p-4 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
-                <h2 class="text-sm font-bold uppercase tracking-wide text-gray-300 flex items-center gap-2">Live Activity Feed</h2>
-            </div>
-            <ul id="activity-feed" class="divide-y divide-gray-700 h-96 overflow-y-auto bg-darkbg p-2 custom-scrollbar"></ul>
-        </div>
+        <div id="control-view" class="hidden fade-in grid grid-cols-1 xl:grid-cols-3 gap-6">
+            
+            <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
+                <div class="bg-gray-800 p-4 border-b border-gray-700">
+                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                        <span class="text-blue-400">⚙️</span> Server Configuration
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-1">Manage bot behavior per server.</p>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label>
+                        <input type="text" id="conf-guild-id" placeholder="1234567890..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord focus:outline-none transition">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Bot Status</label>
+                            <select id="conf-status" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none">
+                                <option value="">No Change</option>
+                                <option value="on">🟢 Online</option>
+                                <option value="off">🔴 Offline</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Group Chat</label>
+                            <select id="conf-group" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none">
+                                <option value="">No Change</option>
+                                <option value="allow">✅ Allow</option>
+                                <option value="block">🚫 Block</option>
+                            </select>
+                        </div>
+                    </div>
 
-        <div class="bg-term rounded-xl shadow-2xl overflow-hidden border border-gray-700 font-mono text-sm relative">
-            <div class="bg-gray-800 p-3 border-b border-gray-700 flex justify-between items-center select-none sticky top-0 z-10">
-                <div class="flex gap-2 items-center">
-                     <div class="flex gap-1.5 mr-3">
-                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
-                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
-                     </div>
-                     <span class="text-gray-400 text-xs font-bold tracking-wide">root@antima:~/kernel_logs</span>
-                </div>
-                <div class="flex gap-2">
-                    <button onclick="downloadLogs()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs transition border border-gray-600">📥 Save</button>
-                    <button onclick="clearConsole()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs transition border border-gray-600">🧹 Clear</button>
-                    <button onclick="showHistory()" class="bg-discord hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs transition border border-indigo-500 shadow-lg shadow-indigo-500/20">📜 History</button>
-                    <button onclick="restartBot()" class="bg-red-900 hover:bg-red-700 text-red-100 px-3 py-1 rounded text-xs transition border border-red-800 shadow-lg shadow-red-900/20">⚡ Restart</button>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Proactive chat Frequency</label>
+                        <select id="conf-freq" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none">
+                            <option value="">No Change</option>
+                            <option value="active">🔥 Active (30m - 90m)</option>
+                            <option value="normal">🙂 Normal (2h - 5h)</option>
+                            <option value="quiet">🌙 Quiet (6h - 12h)</option>
+                            <option value="testing">🛠️ Testing (1m - 2m)</option>
+                        </select>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Chat Channel ID</label>
+                            <input type="text" id="conf-chat-id" placeholder="Channel ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord focus:outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">RPG Channel ID</label>
+                            <input type="text" id="conf-rpg-id" placeholder="Channel ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord focus:outline-none">
+                        </div>
+                    </div>
+
+                    <button onclick="submitConfig()" class="w-full bg-discord hover:bg-indigo-500 text-white font-bold py-2 rounded transition shadow-lg mt-4">Save Configuration</button>
+                    <div id="conf-msg" class="text-xs text-center min-h-[1rem]"></div>
                 </div>
             </div>
-            <div id="terminal-logs" class="p-4 h-[600px] overflow-y-auto terminal-scroll text-gray-300 space-y-1 bg-black/90 font-mono text-xs">
-                <div class="animate-pulse text-green-500 font-bold">_ Initializing System Link... Awaiting Data stream...</div>
+
+            <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
+                <div class="bg-gray-800 p-4 border-b border-gray-700">
+                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                        <span class="text-red-400">🛡️</span> Moderation Actions
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-1">Execute admin commands remotely.</p>
+                </div>
+                <div class="p-6 space-y-4">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label>
+                        <input type="text" id="mod-guild-id" placeholder="Server ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 focus:outline-none transition">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Action Type</label>
+                        <select id="mod-action" onchange="toggleModFields()" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none">
+                            <option value="kick">👢 Kick User</option>
+                            <option value="ban">🔨 Ban User</option>
+                            <option value="purge">🧹 Purge Messages</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1" id="mod-target-label">User ID</label>
+                        <input type="text" id="mod-target-id" placeholder="User ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 focus:outline-none">
+                    </div>
+
+                    <div id="mod-extra-field" class="hidden">
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1" id="mod-extra-label">Delete Days</label>
+                        <input type="number" id="mod-extra-val" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 focus:outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Reason</label>
+                        <input type="text" id="mod-reason" placeholder="Violation of rules..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 focus:outline-none">
+                    </div>
+
+                    <button onclick="submitAction()" class="w-full bg-red-900 hover:bg-red-700 text-white font-bold py-2 rounded transition shadow-lg border border-red-800 mt-4">Execute Action</button>
+                    <div id="mod-msg" class="text-xs text-center min-h-[1rem]"></div>
+                </div>
             </div>
+
+            <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
+                <div class="bg-gray-800 p-4 border-b border-gray-700">
+                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                        <span class="text-yellow-400">⚡</span> Creator Tools
+                    </h2>
+                    <p class="text-xs text-gray-400 mt-1">Manage rate limits and overrides.</p>
+                </div>
+                <div class="p-6 space-y-4">
+                     <div>
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target ID (User/Guild)</label>
+                        <input type="text" id="limit-target" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 focus:outline-none">
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4">
+                        <div>
+                             <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Scope</label>
+                             <select id="limit-scope" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none">
+                                 <option value="user">User</option>
+                                 <option value="server">Server</option>
+                             </select>
+                        </div>
+                        <div>
+                             <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Feature</label>
+                             <select id="limit-feature" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none">
+                                 <option value="antima_gen">Chat Gen</option>
+                                 <option value="rpg_gen">RPG Gen</option>
+                             </select>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">New Limit (Req/Min)</label>
+                        <input type="number" id="limit-val" placeholder="e.g. 50" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 focus:outline-none">
+                    </div>
+
+                    <button onclick="submitLimit()" class="w-full bg-yellow-700 hover:bg-yellow-600 text-white font-bold py-2 rounded transition shadow-lg border border-yellow-800 mt-auto">Set Override</button>
+                    <div id="limit-msg" class="text-xs text-center min-h-[1rem]"></div>
+                </div>
+            </div>
+
         </div>
 
     </main>
 
     <div id="modal-overlay" class="fixed inset-0 bg-black/90 hidden z-[100] flex justify-center items-center backdrop-blur-sm p-4 transition-opacity duration-200" onclick="closeModal(event)">
         <div class="bg-card w-full max-w-6xl rounded-xl shadow-2xl border border-gray-700 flex flex-col max-h-[90vh] transform transition-transform duration-200" onclick="event.stopPropagation()">
-            
             <div class="p-5 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-xl">
                 <div class="flex items-center gap-4">
                     <h2 id="modal-title" class="text-xl font-bold text-white">Details</h2>
@@ -120,13 +275,138 @@
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                 </button>
             </div>
-
             <div id="modal-content" class="p-6 overflow-y-auto flex-1 bg-darkbg custom-scrollbar relative"></div>
         </div>
     </div>
 
     <script>
-        // --- WEBSOCKET CONNECTION ---
+        // --- VIEW SWITCHING ---
+        function switchTab(tab) {
+            document.getElementById('dashboard-view').classList.add('hidden');
+            document.getElementById('control-view').classList.add('hidden');
+            document.getElementById('tab-dashboard').classList.remove('active', 'text-white', 'bg-discord');
+            document.getElementById('tab-control').classList.remove('active', 'text-white', 'bg-discord');
+            
+            // Set styles for inactive
+            document.getElementById('tab-dashboard').classList.add('text-gray-400');
+            document.getElementById('tab-control').classList.add('text-gray-400');
+
+            if(tab === 'dashboard') {
+                document.getElementById('dashboard-view').classList.remove('hidden');
+                const btn = document.getElementById('tab-dashboard');
+                btn.classList.add('active');
+                btn.classList.remove('text-gray-400');
+            } else {
+                document.getElementById('control-view').classList.remove('hidden');
+                const btn = document.getElementById('tab-control');
+                btn.classList.add('active');
+                btn.classList.remove('text-gray-400');
+            }
+        }
+
+        // --- CONTROL PANEL LOGIC ---
+        function toggleModFields() {
+            const action = document.getElementById('mod-action').value;
+            const targetLabel = document.getElementById('mod-target-label');
+            const targetInput = document.getElementById('mod-target-id');
+            const extraField = document.getElementById('mod-extra-field');
+            const extraLabel = document.getElementById('mod-extra-label');
+            const extraInput = document.getElementById('mod-extra-val');
+
+            if (action === 'purge') {
+                targetLabel.innerText = "Channel ID";
+                targetInput.placeholder = "Channel ID...";
+                extraField.classList.remove('hidden');
+                extraLabel.innerText = "Amount";
+                extraInput.placeholder = "e.g. 10";
+            } else if (action === 'ban') {
+                targetLabel.innerText = "User ID";
+                targetInput.placeholder = "User ID...";
+                extraField.classList.remove('hidden');
+                extraLabel.innerText = "Delete Days (0-7)";
+                extraInput.placeholder = "0";
+            } else {
+                targetLabel.innerText = "User ID";
+                targetInput.placeholder = "User ID...";
+                extraField.classList.add('hidden');
+            }
+        }
+
+        async function submitConfig() {
+            const guildId = document.getElementById('conf-guild-id').value;
+            if(!guildId) { showMsg('conf-msg', '❌ Guild ID is required.', 'text-red-400'); return; }
+
+            const payload = {
+                guild_id: guildId,
+                channel_id: document.getElementById('conf-chat-id').value || null,
+                frequency: document.getElementById('conf-freq').value || null,
+                bot_status: document.getElementById('conf-status').value || null,
+                group_chat: document.getElementById('conf-group').value || null,
+                rpg_channel_id: document.getElementById('conf-rpg-id').value || null
+            };
+
+            await sendControlRequest('/api/control/config/update', payload, 'conf-msg');
+        }
+
+        async function submitAction() {
+            const guildId = document.getElementById('mod-guild-id').value;
+            const targetId = document.getElementById('mod-target-id').value;
+            if(!guildId || !targetId) { showMsg('mod-msg', '❌ Guild ID and Target ID required.', 'text-red-400'); return; }
+
+            const payload = {
+                guild_id: guildId,
+                action_type: document.getElementById('mod-action').value,
+                target_id: targetId,
+                reason: document.getElementById('mod-reason').value || "No reason",
+                setting_value: document.getElementById('mod-extra-val').value || 0
+            };
+
+            await sendControlRequest('/api/control/action/queue', payload, 'mod-msg');
+        }
+
+        async function submitLimit() {
+            const targetId = document.getElementById('limit-target').value;
+            const limitVal = document.getElementById('limit-val').value;
+            if(!targetId || !limitVal) { showMsg('limit-msg', '❌ Target and Limit required.', 'text-red-400'); return; }
+
+            const payload = {
+                guild_id: "global", // Context is global/user specific
+                action_type: "set_limit",
+                target_id: targetId,
+                reason: `Scope: ${document.getElementById('limit-scope').value}, Feature: ${document.getElementById('limit-feature').value}`,
+                setting_value: parseInt(limitVal) // Passed as generic value, parsed by bot
+            };
+
+            await sendControlRequest('/api/control/action/queue', payload, 'limit-msg');
+        }
+
+        async function sendControlRequest(url, payload, msgId) {
+            const msgEl = document.getElementById(msgId);
+            msgEl.innerHTML = '<span class="animate-pulse text-gray-400">Processing...</span>';
+            
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                
+                if(res.ok) showMsg(msgId, `✅ ${data.status}`, 'text-green-400');
+                else showMsg(msgId, `❌ ${data.error || 'Failed'}`, 'text-red-400');
+            } catch(e) {
+                showMsg(msgId, `❌ Connection Error`, 'text-red-400');
+            }
+        }
+
+        function showMsg(id, text, colorClass) {
+            const el = document.getElementById(id);
+            el.className = `text-xs text-center min-h-[1rem] ${colorClass}`;
+            el.innerText = text;
+            setTimeout(() => { el.innerText = ''; }, 5000);
+        }
+
+        // --- EXISTING WEBSOCKET & LOGIC (Preserved) ---
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
         const statusEl = document.getElementById('ws-status');
@@ -197,7 +477,7 @@
             }
         };
 
-        // --- RPG MANAGEMENT LOGIC ---
+        // --- RPG & MODAL LOGIC (Preserved) ---
         let currentRPGData = [];
         let currentRPGFilter = 'active';
 
@@ -208,7 +488,6 @@
                 const json = await res.json();
                 if(json.error) alert("Error: " + json.error);
                 else {
-                    // Update UI immediately locally
                     currentRPGData = currentRPGData.filter(r => r.thread_id !== threadId);
                     renderRPGTable(); 
                     alert("✅ Session deleted.");
@@ -218,7 +497,6 @@
 
         function filterRPG(mode) {
             currentRPGFilter = mode;
-            // Update button styles
             ['active', 'inactive', 'all'].forEach(m => {
                 const btn = document.getElementById(`btn-${m}`);
                 if(m === mode) btn.className = "px-3 py-1 text-xs font-bold rounded text-white bg-discord transition shadow";
@@ -268,22 +546,18 @@
             content.innerHTML = html;
         }
 
-        // --- GENERAL MODAL LOGIC ---
         async function showDetails(type) {
             const modal = document.getElementById('modal-overlay');
             const content = document.getElementById('modal-content');
             const title = document.getElementById('modal-title');
             const filters = document.getElementById('rpg-filters');
 
-            // Reset UI
             modal.classList.remove('hidden');
             content.innerHTML = '<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
             
-            // Toggle Filters
             if(type === 'rpgs') filters.classList.remove('hidden'); 
             else filters.classList.add('hidden');
 
-            // Set Title
             const titles = { 'users': 'User Directory', 'guilds': 'Server Statistics', 'rpgs': 'RPG Campaigns', 'commands': 'Command Registry' };
             title.innerText = titles[type] || 'Details';
 
@@ -293,7 +567,7 @@
 
                 if (type === 'rpgs') {
                     currentRPGData = data;
-                    renderRPGTable(); // Uses the current filter
+                    renderRPGTable(); 
                 } else {
                     renderGenericTable(type, data);
                 }
@@ -321,7 +595,7 @@
         function closeModal(e) { if(e && e.target.id!=='modal-overlay') return; document.getElementById('modal-overlay').classList.add('hidden'); }
         document.addEventListener('keydown', (e) => { if(e.key==='Escape') closeModal(); });
         
-        // --- CONSOLE ACTIONS ---
+        // --- CONSOLE & HISTORY (Preserved) ---
         function clearConsole() { document.getElementById('terminal-logs').innerHTML = '<div class="text-gray-500 italic p-2">>> Buffer cleared by user.</div>'; }
         function downloadLogs() { 
             const blob = new Blob([document.getElementById('terminal-logs').innerText], { type: 'text/plain' });
@@ -334,7 +608,6 @@
             setTimeout(() => location.reload(), 5000); 
         }
 
-        // --- HISTORY VIEW ---
         async function showHistory() {
             const modal = document.getElementById('modal-overlay');
             const content = document.getElementById('modal-content');

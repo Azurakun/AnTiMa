@@ -19,9 +19,10 @@ class RateLimiter:
         doc = ai_config_collection.find_one({"_id": "GLOBAL_RATE_LIMITS"}) or {}
         
         # Defaults if global config is missing
+        # Defaulting to 0 effectively blocks usage until explicitly set up.
         defaults = {
-            "user_limit": 5, "user_window": 60,   
-            "guild_limit": 20, "guild_window": 60 
+            "user_limit": 0, "user_window": 60,   
+            "guild_limit": 0, "guild_window": 60 
         }
         
         config = doc.get(func_name, defaults)

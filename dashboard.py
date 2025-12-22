@@ -2,6 +2,7 @@
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
 import uvicorn
 import asyncio
 import json
@@ -9,15 +10,41 @@ import sys
 import os
 import functools
 from datetime import datetime
-from utils.db import stats_collection, live_activity_collection, rpg_sessions_collection, logs_collection
+from utils.db import (
+    stats_collection, 
+    live_activity_collection, 
+    rpg_sessions_collection, 
+    logs_collection,
+    ai_config_collection, # Added for config management
+    db # Added for accessing generic collections
+)
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+# Collection for queuing actions from Dashboard -> Bot
+web_actions_collection = db["web_actions"]
 
 # --- ASYNC DATABASE HELPER ---
 async def run_sync_db(func, *args, **kwargs):
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, functools.partial(func, *args, **kwargs))
+
+# --- DATA MODELS ---
+class ConfigRequest(BaseModel):
+    guild_id: str
+    channel_id: str | None = None
+    frequency: str | None = None
+    bot_status: str | None = None # "on" or "off"
+    group_chat: str | None = None # "allow" or "block"
+    rpg_channel_id: str | None = None
+
+class ActionRequest(BaseModel):
+    guild_id: str
+    action_type: str # kick, ban, purge, set_limit
+    target_id: str # User ID or Channel ID
+    reason: str | None = "Action requested via Dashboard"
+    setting_value: int | str | None = None # For limit value, purge amount, delete days
 
 # --- DATA FETCHING FUNCTIONS ---
 
@@ -72,8 +99,6 @@ def fetch_details(data_type: str):
             })
 
     elif data_type == "commands":
-        # Placeholder for command stats if you have a collection for it
-        # If not, returning empty list or fetching from global stats structure
         global_stats = stats_collection.find_one({"_id": "global"}) or {}
         cmd_usage = global_stats.get("command_usage", {})
         for cmd, count in cmd_usage.items():
@@ -98,7 +123,6 @@ def fetch_recent_logs():
     logs = []
     for bucket in cursor: logs.extend(bucket.get("logs", []))
     logs.sort(key=lambda x: x["timestamp"]) 
-    # Return last 50
     return [{
         "time": l["timestamp"].strftime("%H:%M:%S"), 
         "level": l["level"], 
@@ -161,7 +185,6 @@ async def delete_rpg_session(thread_id: str):
     """Marks an RPG session for deletion. The Bot picks this up."""
     try:
         t_id_int = int(thread_id)
-        # Set delete_requested flag. The Bot's background task handles the actual deletion.
         rpg_sessions_collection.update_one(
             {"thread_id": t_id_int}, 
             {"$set": {"delete_requested": True}}
@@ -169,6 +192,83 @@ async def delete_rpg_session(thread_id: str):
         return JSONResponse({"status": "Marked for deletion"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+# --- CONTROL PANEL ROUTES ---
+
+@app.post("/api/control/config/update")
+async def update_bot_config(data: ConfigRequest):
+    """Updates server-specific configuration directly in DB."""
+    try:
+        update_fields = {}
+        
+        # Mapping frontend values to DB schema
+        if data.channel_id: 
+            update_fields["channel"] = int(data.channel_id)
+            
+        if data.frequency: 
+            update_fields["chat_frequency"] = data.frequency
+            # Reset next time to trigger update logic in bot if needed
+            update_fields["next_chat_time"] = datetime.utcnow()
+            
+        if data.bot_status:
+            update_fields["bot_disabled"] = (data.bot_status == "off")
+            
+        if data.group_chat:
+            update_fields["group_chat_enabled"] = (data.group_chat == "allow")
+            
+        if data.rpg_channel_id:
+            update_fields["rpg_channel_id"] = int(data.rpg_channel_id)
+
+        if not update_fields:
+            return JSONResponse({"error": "No valid fields provided"}, status_code=400)
+
+        ai_config_collection.update_one(
+            {"_id": str(data.guild_id)}, 
+            {"$set": update_fields}, 
+            upsert=True
+        )
+        
+        # Log this action for admin visibility
+        live_activity_collection.insert_one({
+            "user": "Dashboard Admin",
+            "guild": f"ID: {data.guild_id}",
+            "action": "Updated Config",
+            "timestamp": datetime.utcnow()
+        })
+
+        return JSONResponse({"status": "Configuration updated successfully"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/control/action/queue")
+async def queue_admin_action(data: ActionRequest):
+    """Queues a moderation or creator action for the bot to execute."""
+    try:
+        action_doc = {
+            "guild_id": data.guild_id,
+            "type": data.action_type,
+            "target_id": data.target_id,
+            "reason": data.reason,
+            "setting_value": data.setting_value,
+            "status": "pending",
+            "created_at": datetime.utcnow(),
+            "source": "dashboard"
+        }
+        
+        web_actions_collection.insert_one(action_doc)
+        
+        live_activity_collection.insert_one({
+            "user": "Dashboard Admin",
+            "guild": f"ID: {data.guild_id}",
+            "action": f"Queued {data.action_type.upper()}",
+            "timestamp": datetime.utcnow()
+        })
+        
+        return JSONResponse({"status": f"Action '{data.action_type}' queued for execution."})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# --- WEBSOCKET ---
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
