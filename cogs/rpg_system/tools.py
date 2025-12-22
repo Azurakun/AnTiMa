@@ -39,8 +39,21 @@ def apply_healing(thread_id: str, user_id: str, heal_amount: int):
 def deduct_mana(thread_id: str, user_id: str, mana_cost: int):
     return update_player_stats(thread_id, user_id, hp_change=0, mp_change=-int(mana_cost))
 
-def roll_d20(check_type: str, difficulty: int):
-    return random.randint(1, 20) 
+def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: str = None):
+    """
+    Simulates a D20 dice roll against a difficulty class (DC).
+    
+    Args:
+        check_type: The name of the action being attempted (e.g., "Strength Check", "Persuasion", "Attack").
+        difficulty: The Target Number (DC) the player needs to beat.
+        modifier: The numerical bonus (or penalty) to add to the roll based on stats/skills.
+        stat_label: The name of the stat or skill providing the modifier (e.g., "STR", "Acrobatics").
+    """
+    # Note: The logic for the actual roll and display is handled in cog.py to support rerolls and Discord formatting.
+    # This function definition exists primarily to provide the schema to the AI.
+    roll = random.randint(1, 20)
+    total = roll + modifier
+    return f"Rolled {roll} + {modifier} ({stat_label}) = {total} vs DC {difficulty}"
 
 def update_journal(thread_id: str, log_entry: str, npc_update: str = None, quest_update: str = None):
     """Updates the campaign log and world state."""

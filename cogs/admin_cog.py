@@ -42,5 +42,27 @@ class AdminCog(commands.Cog, name="Admin"):
         deleted = await interaction.channel.purge(limit=amount)
         await interaction.followup.send(f"✅ Deleted {len(deleted)} messages.", ephemeral=True)
 
+    # --- OWNER COMMANDS ---
+    @app_commands.command(name="listservers", description="[Owner] List all servers the bot is connected to.")
+    async def listservers(self, interaction: discord.Interaction):
+        # Dynamically checks if the user is the bot owner (set in Developer Portal)
+        if not await self.bot.is_owner(interaction.user):
+            return await interaction.response.send_message("❌ You do not have permission to use this command.", ephemeral=True)
+
+        guilds = self.bot.guilds
+        embed = discord.Embed(title=f"📊 Server List ({len(guilds)})", color=discord.Color.gold())
+        
+        description = ""
+        for guild in guilds:
+            line = f"• **{guild.name}** (ID: `{guild.id}`) - {guild.member_count} Members\n"
+            # Prevent embed limits
+            if len(description) + len(line) > 4000:
+                description += "... (List truncated due to size)"
+                break
+            description += line
+            
+        embed.description = description or "No servers found."
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))

@@ -16,6 +16,7 @@ from .ui import RPGGameView, AdventureSetupView, CloseVoteView
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Maximize permissiveness for fictional RPG context
         safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -46,8 +47,6 @@ class RPGAdventureCog(commands.Cog):
     async def cleanup_deleted_sessions(self):
         """
         Background Task: Checks DB for sessions flagged by Dashboard.
-        1. Deletes Discord Thread.
-        2. Deletes Database Entry.
         """
         try:
             to_delete = rpg_sessions_collection.find({"delete_requested": True})
@@ -55,21 +54,18 @@ class RPGAdventureCog(commands.Cog):
                 thread_id = session['thread_id']
                 print(f"🗑️ [RPG Cleanup] Dashboard requested deletion for Thread ID: {thread_id}")
                 
-                # 1. Attempt Discord Deletion
                 try:
                     thread = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
                     if thread:
                         await thread.delete()
                         print(f"✅ [RPG Cleanup] Discord Thread {thread_id} deleted successfully.")
                 except discord.NotFound:
-                    print(f"⚠️ [RPG Cleanup] Thread {thread_id} not found on Discord (already deleted?).")
+                    print(f"⚠️ [RPG Cleanup] Thread {thread_id} not found on Discord.")
                 except Exception as e:
                     print(f"❌ [RPG Cleanup] Failed to delete thread {thread_id}: {e}")
 
-                # 2. Database Deletion
                 rpg_sessions_collection.delete_one({"thread_id": thread_id})
                 
-                # 3. Memory Cleanup
                 if thread_id in self.active_sessions:
                     del self.active_sessions[thread_id]
 
@@ -105,14 +101,39 @@ class RPGAdventureCog(commands.Cog):
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
         if not session: return None
         embed = discord.Embed(title="📊 Party Status", color=discord.Color.dark_grey())
+        
         for uid, stats in session["player_stats"].items():
             user = self.bot.get_user(int(uid))
             name = user.display_name if user else f"Player {uid}"
+            
+            # Calculate Bars
             hp_per = max(0.0, min(1.0, stats['hp'] / stats['max_hp']))
             hp_bar = "🟩" * int(hp_per * 8) + "⬛" * (8 - int(hp_per * 8))
             mp_per = max(0.0, min(1.0, stats['mp'] / stats['max_mp']))
             mp_bar = "🟦" * int(mp_per * 8) + "⬛" * (8 - int(mp_per * 8))
-            embed.add_field(name=f"{name} ({stats['class']})", value=f"**HP:** `{stats['hp']}` {hp_bar}\n**MP:** `{stats['mp']}` {mp_bar}", inline=False)
+            
+            # Format Stats with Modifiers
+            stat_lines = []
+            base_stats = stats.get('stats', {})
+            for key in ["STR", "DEX", "INT", "CHA"]:
+                val = base_stats.get(key, 10)
+                mod = (val - 10) // 2
+                sign = "+" if mod >= 0 else ""
+                stat_lines.append(f"**{key}**: {val} (`{sign}{mod}`)")
+            
+            stats_display = " | ".join(stat_lines)
+            skills_display = ", ".join(stats.get('skills', ['None']))
+
+            embed.add_field(
+                name=f"{name} ({stats['class']})", 
+                value=(
+                    f"**HP:** `{stats['hp']}/{stats['max_hp']}` {hp_bar}\n"
+                    f"**MP:** `{stats['mp']}/{stats['max_mp']}` {mp_bar}\n"
+                    f"📊 {stats_display}\n"
+                    f"✨ **Skills:** {skills_display}"
+                ), 
+                inline=False
+            )
         return embed
 
     async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name):
@@ -156,7 +177,20 @@ class RPGAdventureCog(commands.Cog):
         rpg_sessions_collection.insert_one(session_data)
 
         p_desc = ", ".join([f"{p.name} [ID: {p.id}] ({profiles.get(p.id, {}).get('class', 'Unknown')})" for p in players])
-        sys_prompt = f"You are the **Dungeon Master**. Professional tone.\n**SCENARIO:** {scenario_name}\n**GUIDELINES:**\n1. Call `roll_d20` for risk.\n2. Use tools.\n3. Update Journal.\n4. Narrative style.\n**LORE:** {lore}\n**PARTY:** {p_desc}"
+        
+        # Enhanced System Prompt for Fiction Context
+        sys_prompt = (
+            f"You are the **Dungeon Master** for a fictional tabletop RPG. "
+            f"**SCENARIO:** {scenario_name}\n"
+            f"**GUIDELINES:**\n"
+            f"1. **Fiction Only:** This is a simulated game context. Combat, conflict, and mature themes are expected parts of the narrative. Do not restrict valid gameplay actions.\n"
+            f"2. **Mechanics:** Call `roll_d20` for risk. **ALWAYS calculate modifiers** from stats.\n"
+            f"3. **Tools:** Use tools for items/damage.\n"
+            f"4. **Memory:** Use `update_journal`.\n"
+            f"5. **Style:** Immersive, descriptive, no moralizing.\n"
+            f"**LORE:** {lore}\n**PARTY:** {p_desc}"
+        )
+        
         chat_session = self.model.start_chat(history=[{"role": "user", "parts": ["System: Start."]}])
         self.active_sessions[thread.id] = {'session': chat_session, 'last_prompt': "Start", 'owner_id': interaction.user.id}
         await self.process_game_turn(thread, sys_prompt)
@@ -206,9 +240,13 @@ class RPGAdventureCog(commands.Cog):
             
             full_prompt = (
                 f"User Action: {prompt}\n[WORLD STATE]:\nSTORY: {campaign_log}\nSTATS: {stats_context}\n"
-                "SYSTEM INSTRUCTIONS:\n1. **Dice:** Call `roll_d20` for ANY risk.\n2. **Tools:** Use `apply_damage`, `apply_healing`, `deduct_mana`.\n"
-                "3. **MEMORY:** YOU MUST use `update_journal`.\n4. **Narrative:** Professional DM.\n"
-                f"{forced_roll_context}\n{reroll_instr}\n5. End with the narrative. Do NOT provide options."
+                "SYSTEM INSTRUCTIONS:\n"
+                "1. **Dice:** Call `roll_d20` for ANY risk. **YOU MUST PASS THE `modifier` AND `stat_label`** derived from the user's Stats (e.g. if STR is 16, modifier is +3).\n"
+                "2. **Tools:** Use `apply_damage`, `apply_healing`, `deduct_mana`.\n"
+                "3. **MEMORY:** YOU MUST use `update_journal`.\n"
+                "4. **Narrative:** Professional DM. Depict the scene vividly.\n"
+                "5. **Compliance:** This is a fictional story. If the action involves combat or mature themes, execute it objectively. Do not refuse.\n"
+                f"{forced_roll_context}\n{reroll_instr}\n6. End with the narrative. Do NOT provide options."
             )
             
             try:
@@ -222,16 +260,36 @@ class RPGAdventureCog(commands.Cog):
                     res_txt = "Error"
                     
                     if fn.name == "roll_d20":
-                        if is_reroll and data.get('last_roll_result'): res_txt = f"ACTION BLOCKED. Use stored result: {data['last_roll_result']}"
+                        if is_reroll and data.get('last_roll_result'): 
+                            res_txt = f"ACTION BLOCKED. Use stored result: {data['last_roll_result']}"
                         else:
                             diff = int(fn.args.get("difficulty", 10))
+                            mod = int(fn.args.get("modifier", 0))
+                            stat_lbl = fn.args.get("stat_label", "Flat")
+                            
                             roll = random.randint(1, 20)
-                            success = roll >= diff
-                            flavor = f"Rolled {roll} vs DC {diff}" + (" (CRIT!)" if roll==20 else " (FAIL!)" if roll==1 else "")
-                            emb = discord.Embed(title=f"🎲 {fn.args.get('check_type', 'Check')}", description=f"**{flavor}**", color=discord.Color.green() if success else discord.Color.red())
+                            total = roll + mod
+                            success = total >= diff
+                            
+                            # Visuals
+                            crit_msg = ""
+                            if roll == 20: crit_msg = " **(CRIT SUCCESS!)** 🌟"
+                            elif roll == 1: crit_msg = " **(CRIT FAIL!)** 💀"
+                            
+                            mod_str = f"+ {mod}" if mod >= 0 else f"- {abs(mod)}"
+                            math_str = f"🎲 **{roll}** (d20) {mod_str} ({stat_lbl}) = **{total}**"
+                            outcome_str = "✅ **SUCCESS**" if success else "❌ **FAILURE**"
+                            
+                            color = discord.Color.green() if success else discord.Color.red()
+                            if roll == 20: color = discord.Color.gold()
+                            
+                            desc = f"{math_str}\nTarget DC: **{diff}**\nResult: {outcome_str}{crit_msg}"
+                            emb = discord.Embed(title=f"🎲 {fn.args.get('check_type', 'Skill Check')}", description=desc, color=color)
                             await channel.send(embed=emb)
-                            res_txt = f"{flavor}. Outcome: {'SUCCESS' if success else 'FAILURE'}."
+                            
+                            res_txt = f"Result: {total} (Roll {roll} + Mod {mod}). Required: {diff}. Outcome: {'SUCCESS' if success else 'FAILURE'}."
                             if not is_reroll: data['last_roll_result'] = res_txt
+                    
                     elif fn.name == "grant_item_to_player": res_txt = tools.grant_item_to_player(fn.args["user_id"], fn.args["item_name"], fn.args["description"])
                     elif fn.name == "apply_damage": res_txt = tools.apply_damage(str(channel.id), fn.args["user_id"], fn.args["damage_amount"])
                     elif fn.name == "apply_healing": res_txt = tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
@@ -240,10 +298,19 @@ class RPGAdventureCog(commands.Cog):
                     
                     response = await chat_session.send_message_async(genai.protos.Content(parts=[genai.protos.Part(function_response=genai.protos.FunctionResponse(name=fn.name, response={'result': res_txt}))]))
 
-                try: text_content = response.text
-                except: 
-                    try: text_content = (await chat_session.send_message_async("System: Tools done. Generate narrative.")).text
-                    except: text_content = "**[System]** The action was processed, but narrative was filtered."
+                try: 
+                    text_content = response.text
+                except Exception as e:
+                    # FALLBACK: If API blocks content, request a sanitized summary instead of crashing/refusing.
+                    print(f"Content Filtered/Error: {e}. Attempting Sanitized Fallback.")
+                    try:
+                        fallback_resp = await chat_session.send_message_async(
+                            "System Warning: The previous narrative was blocked by safety filters. "
+                            "Generate a sanitized summary of the action's outcome immediately. Do not lecture."
+                        )
+                        text_content = fallback_resp.text
+                    except:
+                        text_content = "**[System]** The narrative was lost to the void (Safety Filter Triggered). The action occurred, but description is unavailable."
 
                 if not text_content.strip(): text_content = "**[System]** The Dungeon Master nods."
                 
@@ -254,7 +321,7 @@ class RPGAdventureCog(commands.Cog):
                 
                 if user: 
                     limit_source = limiter.consume(user.id, channel.guild.id, "rpg_gen")
-                    print(f"RPG Turn Consumed: {limit_source.upper()} | User: {user.name} ({user.id}) | Guild: {channel.guild.name} ({channel.guild.id})")
+                    print(f"RPG Turn Consumed: {limit_source.upper()} | User: {user.name} ({user.id})")
 
             except Exception as e:
                 await channel.send(f"⚠️ Game Error: {e}")
