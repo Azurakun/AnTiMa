@@ -25,7 +25,7 @@ class RPGAdventureCog(commands.Cog):
         }
         try:
             self.model = genai.GenerativeModel(
-                'gemini-2.5-pro',
+                'gemini-3-pro-preview',
                 tools=[
                     tools.grant_item_to_player, tools.apply_damage, 
                     tools.apply_healing, tools.deduct_mana, 
@@ -212,7 +212,14 @@ class RPGAdventureCog(commands.Cog):
     async def process_game_turn(self, channel, prompt, user=None, is_reroll=False):
         if user:
             if not limiter.check_available(user.id, channel.guild.id, "rpg_gen"):
-                await channel.send("⏳ **Cooldown:** The Dungeon Master needs a rest. (Rate Limit Hit)")
+                embed = discord.Embed(
+                    title="⏳ Adventure Stamina Depleted",
+                    description="The Dungeon Master needs to rest. Your AI quota for RPG adventures is exhausted.\nSupport the creator to help keep the tavern open!",
+                    color=discord.Color.gold()
+                )
+                embed.add_field(name="☕ International", value="[Support on Ko-fi](https://ko-fi.com/shirozura)", inline=True)
+                embed.add_field(name="🍱 Indonesia", value="[Support on Trakteer](https://trakteer.id/Azuranyan)", inline=True)
+                await channel.send(embed=embed)
                 return
 
         if channel.id not in self.active_sessions:
