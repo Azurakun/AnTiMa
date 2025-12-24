@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>New Adventure Setup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Lato:wght@400;700&display=swap');
+        body { font-family: 'Lato', sans-serif; background-color: #1a1a1a; color: #e5e5e5; }
+        h1, h2, h3, .rpg-font { font-family: 'Cinzel', serif; }
+        .parchment { background-color: #262626; border: 1px solid #404040; box-shadow: 0 0 15px rgba(0,0,0,0.5); }
+        .input-field { background: #333; border: 1px solid #555; color: white; padding: 10px; width: 100%; border-radius: 4px; }
+        .input-field:focus { outline: none; border-color: #d4af37; }
+        .btn-gold { background: linear-gradient(45deg, #d4af37, #c5a028); color: black; font-weight: bold; padding: 12px 24px; border-radius: 4px; transition: transform 0.1s; }
+        .btn-gold:hover { transform: scale(1.02); box-shadow: 0 0 10px #d4af37; }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center py-10">
+
+    <div class="max-w-4xl w-full parchment p-8 rounded-lg relative">
+        <div class="text-center mb-8">
+            <h1 class="text-4xl text-yellow-500 mb-2">Chronicle of Beginnings</h1>
+            <p class="text-gray-400">Design your destiny, traveler.</p>
+        </div>
+
+        <form id="setupForm" class="space-y-6">
+            <input type="hidden" id="token" value="{{ token }}">
+
+            <div class="border-b border-gray-700 pb-6">
+                <h2 class="text-2xl text-yellow-500 mb-4">I. The World</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block mb-1 text-gray-400">Adventure Title</label>
+                        <input type="text" id="title" class="input-field" placeholder="e.g. The Shadow of Zura" required>
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-gray-400">Scenario Type</label>
+                        <select id="scenario" class="input-field">
+                            <option value="Fantasy">High Fantasy</option>
+                            <option value="Cyberpunk">Cyberpunk / Sci-Fi</option>
+                            <option value="Horror">Lovecraftian Horror</option>
+                            <option value="PostApoc">Post-Apocalyptic</option>
+                            <option value="Isekai">Isekai (Another World)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <label class="block mb-1 text-gray-400">Lore & Setting Description</label>
+                    <textarea id="lore" class="input-field h-24" placeholder="Describe the world, the current crisis, or the starting location..."></textarea>
+                </div>
+                <div class="mt-4 flex items-center gap-2">
+                    <input type="checkbox" id="storyMode" class="w-5 h-5 text-yellow-500">
+                    <label for="storyMode" class="text-yellow-500 font-bold">Enable Story Mode (No Dice/Stats, Narrative Focus)</label>
+                </div>
+            </div>
+
+            <div class="border-b border-gray-700 pb-6">
+                <h2 class="text-2xl text-yellow-500 mb-4">II. The Hero</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block mb-1 text-gray-400">Character Name</label>
+                        <input type="text" id="charName" class="input-field" placeholder="e.g. Alistair" required>
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-gray-400">Class / Occupation</label>
+                        <input type="text" id="charClass" class="input-field" placeholder="e.g. Spellblade, Hacker" required>
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-gray-400">Age</label>
+                        <input type="number" id="charAge" class="input-field" placeholder="25">
+                    </div>
+                    <div>
+                        <label class="block mb-1 text-gray-400">Alignment</label>
+                        <select id="alignment" class="input-field">
+                            <option value="Lawful Good">Lawful Good</option>
+                            <option value="Neutral Good">Neutral Good</option>
+                            <option value="Chaotic Good">Chaotic Good</option>
+                            <option value="True Neutral">True Neutral</option>
+                            <option value="Chaotic Neutral">Chaotic Neutral</option>
+                            <option value="Lawful Evil">Lawful Evil</option>
+                            <option value="Chaotic Evil">Chaotic Evil</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mt-4">
+                    <label class="block mb-1 text-gray-400">Backstory & Personality</label>
+                    <textarea id="backstory" class="input-field h-32" placeholder="Who are you? What is your goal? What do you fear?"></textarea>
+                </div>
+
+                <div class="mt-4 p-4 bg-gray-800 rounded">
+                    <h3 class="text-lg text-gray-300 mb-2">Ability Scores (Standard Array)</h3>
+                    <div class="grid grid-cols-4 gap-2 text-center">
+                        <div><label class="block text-xs">STR</label><input type="number" id="statStr" value="10" class="input-field text-center"></div>
+                        <div><label class="block text-xs">DEX</label><input type="number" id="statDex" value="10" class="input-field text-center"></div>
+                        <div><label class="block text-xs">INT</label><input type="number" id="statInt" value="10" class="input-field text-center"></div>
+                        <div><label class="block text-xs">CHA</label><input type="number" id="statCha" value="10" class="input-field text-center"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-center">
+                <button type="submit" class="btn-gold w-full text-lg">Begin Adventure</button>
+            </div>
+        </form>
+    </div>
+
+    <script>
+        document.getElementById('setupForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = e.target.querySelector('button');
+            btn.textContent = "Writing your legend...";
+            btn.disabled = true;
+
+            const data = {
+                token: document.getElementById('token').value,
+                title: document.getElementById('title').value,
+                scenario: document.getElementById('scenario').value,
+                lore: document.getElementById('lore').value,
+                story_mode: document.getElementById('storyMode').checked,
+                character: {
+                    name: document.getElementById('charName').value,
+                    class: document.getElementById('charClass').value,
+                    age: document.getElementById('charAge').value,
+                    alignment: document.getElementById('alignment').value,
+                    backstory: document.getElementById('backstory').value,
+                    stats: {
+                        STR: parseInt(document.getElementById('statStr').value),
+                        DEX: parseInt(document.getElementById('statDex').value),
+                        INT: parseInt(document.getElementById('statInt').value),
+                        CHA: parseInt(document.getElementById('statCha').value)
+                    }
+                }
+            };
+
+            try {
+                const res = await fetch('/api/rpg/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                
+                if (res.ok) {
+                    document.body.innerHTML = `
+                        <div class="min-h-screen flex items-center justify-center text-center">
+                            <div class="parchment p-10 rounded">
+                                <h1 class="text-3xl text-green-500 mb-4">Fate Sealed.</h1>
+                                <p class="text-gray-300">Return to Discord. Your adventure thread is being woven.</p>
+                            </div>
+                        </div>`;
+                } else {
+                    const err = await res.json();
+                    alert("Error: " + err.detail);
+                    btn.disabled = false;
+                    btn.textContent = "Begin Adventure";
+                }
+            } catch (error) {
+                alert("Network Error");
+                btn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

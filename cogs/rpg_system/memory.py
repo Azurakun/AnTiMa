@@ -1,106 +1,78 @@
 # cogs/rpg_system/memory.py
-import google.generativeai as genai
+import discord
+from datetime import datetime
 from utils.db import rpg_sessions_collection
+from utils.timezone_manager import get_local_time
+import google.generativeai as genai
 
-class RPGMemoryManager:
+class RPGContextManager:
     def __init__(self, model):
         self.model = model
-        self.max_tokens = 1_000_000  # 1 Million Token Limit
+        self.max_tokens = 1_000_000
 
-    async def load_history(self, thread_id):
-        """
-        Retrieves the full persisted chat history from the database.
-        Returns a list of content dicts formatted for Gemini.
-        """
-        session_data = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
-        if not session_data:
-            return []
-        
-        # 'full_history' stores the raw turn-by-turn data
-        raw_history = session_data.get("full_history", [])
-        
-        # Convert DB format back to Gemini format if necessary
-        # Assuming DB stores: [{'role': 'user', 'parts': ['text']}, ...]
-        return raw_history
+    def _format_list(self, title, items, empty_text="None"):
+        if not items: return f"**{title}:** {empty_text}"
+        unique_items = list(dict.fromkeys(items))
+        content = "\n".join([f"- {item}" for item in unique_items])
+        return f"**{title}:**\n{content}"
 
-    async def add_turn(self, thread_id, user_input, model_response):
-        """
-        Appends a new interaction (User + Model) to the database.
-        """
-        new_turns = [
-            {"role": "user", "parts": [str(user_input)]},
-            {"role": "model", "parts": [str(model_response)]}
-        ]
-        
+    def save_turn(self, thread_id, user_name, user_input, ai_output):
+        """Permanently saves the turn interaction to the database (UTC for storage)."""
+        entry = {
+            "timestamp": datetime.utcnow(),
+            "user_name": user_name,
+            "input": user_input,
+            "output": ai_output
+        }
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id)},
-            {"$push": {"full_history": {"$each": new_turns}}}
+            {"$push": {"turn_history": entry}}
         )
 
-    async def manage_context_window(self, thread_id, current_history):
+    def load_full_history(self, session_data):
+        """Reconstructs the entire story from the database logs."""
+        history = session_data.get("turn_history", [])
+        if not history: return "The adventure is just beginning."
+        text_log = []
+        for turn in history:
+            text_log.append(f"[{turn['user_name']}]: {turn['input']}")
+            text_log.append(f"[Dungeon Master]: {turn['output']}")
+        return "\n\n".join(text_log)
+
+    def build_context_block(self, session_data):
         """
-        Checks token count. If > 1M, prunes oldest messages (preserving index 0 System Prompt).
-        Returns: (valid_history, token_count)
+        Aggregates ALL persistent data into a structured prompt block.
+        Uses the owner's timezone for the 'WORLD DATE'.
         """
+        owner_id = session_data.get('owner_id')
+        # Format the date according to the user's timezone (or default GMT+7)
+        local_time_str = get_local_time(owner_id, fmt="%Y-%m-%d %H:%M %Z") if owner_id else "Unknown Date"
+
+        quests = session_data.get("quest_log", [])
+        npcs = session_data.get("npc_registry", [])
+        campaign_summary = session_data.get("campaign_log", [])
+        full_story_text = self.load_full_history(session_data)
+
+        context = (
+            f"=== 🧠 SYSTEM MEMORY START ===\n"
+            f"**WORLD DATE (IRL):** {local_time_str}\n"
+            f"**SCENARIO:** {session_data.get('scenario_type', 'Unknown')}\n\n"
+            f"{self._format_list('ACTIVE QUESTS', quests, 'No active quests.')}\n\n"
+            f"{self._format_list('KNOWN NPCs', npcs, 'No NPCs recorded.')}\n\n"
+            f"**CAMPAIGN SUMMARY (Key Events):**\n"
+            f"{self._format_list('Log', campaign_summary, 'No key events logged.')}\n\n"
+            f"**FULL STORY HISTORY (Chronological):**\n"
+            f"{full_story_text}\n"
+            f"=== SYSTEM MEMORY END ==="
+        )
+        return context
+
+    async def get_token_count_and_footer(self, chat_session):
         try:
-            # We construct a dummy Content object list to count tokens
-            contents = []
-            for turn in current_history:
-                contents.append(
-                    genai.protos.Content(
-                        role=turn['role'], 
-                        parts=[genai.protos.Part(text=p) for p in turn['parts']]
-                    )
-                )
-            
-            # Use the API to count tokens accurately
-            token_info = await self.model.count_tokens_async(contents)
-            total_tokens = token_info.total_tokens
-
-            # Pruning Logic
-            if total_tokens > self.max_tokens:
-                print(f"⚠️ [RPG Memory] Thread {thread_id} exceeded limit ({total_tokens}). Pruning...")
-                # Keep System Prompt (Index 0) + trimmed list
-                # Remove chunks of 2 (User+Model) from the beginning of the conversation
-                while total_tokens > self.max_tokens and len(current_history) > 2:
-                    current_history.pop(1) # Remove oldest User msg
-                    current_history.pop(1) # Remove oldest Model msg
-                    
-                    # Recount (Simplified approximation for speed in loop)
-                    contents = [
-                         genai.protos.Content(
-                            role=t['role'], 
-                            parts=[genai.protos.Part(text=str(p)) for p in t['parts']]
-                        ) for t in current_history
-                    ]
-                    total_tokens = (await self.model.count_tokens_async(contents)).total_tokens
-                
-                # Update DB with pruned history
-                rpg_sessions_collection.update_one(
-                    {"thread_id": int(thread_id)},
-                    {"$set": {"full_history": current_history}}
-                )
-
-            # Save current token usage to DB for reference
-            rpg_sessions_collection.update_one(
-                {"thread_id": int(thread_id)},
-                {"$set": {"token_usage": total_tokens}}
-            )
-            
-            return current_history, total_tokens
-
+            if not chat_session.history: return "🧠 Memory: 0 Tokens"
+            count_result = await self.model.count_tokens_async(chat_session.history)
+            used = count_result.total_tokens
+            percent = (used / self.max_tokens) * 100
+            return f"🧠 Memory: {used:,} / {self.max_tokens:,} Tokens ({percent:.1f}%) | 💾 Auto-Saved"
         except Exception as e:
-            print(f"❌ [RPG Memory Error] Token Count Failed: {e}")
-            return current_history, 0
-
-    async def initialize_session(self, thread_id, system_prompt):
-        """Sets up the initial history with the System Prompt."""
-        initial_history = [{"role": "user", "parts": [system_prompt]}] # Gemini often treats System instructions as first User msg or System role
-        rpg_sessions_collection.update_one(
-            {"thread_id": int(thread_id)},
-            {"$set": {
-                "full_history": initial_history, 
-                "token_usage": 0
-            }}
-        )
-        return initial_history
+            return "🧠 Memory: Calc Error"

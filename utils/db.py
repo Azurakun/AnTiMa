@@ -24,16 +24,18 @@ ai_personal_memories_collection = db["ai_personal_memories"]
 ai_global_memories_collection = db["ai_global_memories"]
 server_lore_collection = db["server_lore"]
 
-# Search & Debug (New collection for Dashboard Debug Menu)
+# Search & Debug
 search_debug_collection = db["search_debug"] 
 
 # RPG
 rpg_sessions_collection = db["rpg_sessions"]
 rpg_inventory_collection = db["rpg_inventory"]
+rpg_web_tokens_collection = db["rpg_web_tokens"] # NEW: Stores temporary setup tokens
 
 # Stats & Dashboard
 stats_collection = db["bot_stats"] 
 live_activity_collection = db["live_activity"]
+web_actions_collection = db["web_actions"] # Used for Dash -> Bot communication
 
 # Reminders & Utilities
 user_timezones_collection = db["user_timezones"]
@@ -41,7 +43,6 @@ reminders_collection = db["reminders"]
 logs_collection = db["improved_logs"]
 
 def init_db():
-    """Checks database connection on startup."""
     try:
         client.admin.command('ping')
         print(f"✅ MongoDB Connected to: {DB_NAME}")
