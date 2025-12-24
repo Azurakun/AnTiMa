@@ -3,160 +3,299 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>New Adventure Setup</title>
+    <title>AnTiMa RPG Setup</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Lato:wght@400;700&display=swap');
-        body { font-family: 'Lato', sans-serif; background-color: #1a1a1a; color: #e5e5e5; }
+        body { font-family: 'Lato', sans-serif; background-color: #111; color: #e5e5e5; }
         h1, h2, h3, .rpg-font { font-family: 'Cinzel', serif; }
-        .parchment { background-color: #262626; border: 1px solid #404040; box-shadow: 0 0 15px rgba(0,0,0,0.5); }
-        .input-field { background: #333; border: 1px solid #555; color: white; padding: 10px; width: 100%; border-radius: 4px; }
+        .parchment { background-color: #1f1f1f; border: 1px solid #333; }
+        .input-field { background: #2a2a2a; border: 1px solid #444; color: white; padding: 10px; width: 100%; border-radius: 4px; }
         .input-field:focus { outline: none; border-color: #d4af37; }
-        .btn-gold { background: linear-gradient(45deg, #d4af37, #c5a028); color: black; font-weight: bold; padding: 12px 24px; border-radius: 4px; transition: transform 0.1s; }
-        .btn-gold:hover { transform: scale(1.02); box-shadow: 0 0 10px #d4af37; }
+        .btn-gold { background: linear-gradient(45deg, #d4af37, #c5a028); color: black; font-weight: bold; padding: 12px; border-radius: 4px; }
+        .tab-btn { padding: 8px 16px; border-bottom: 2px solid transparent; cursor: pointer; color: #888; transition: color 0.2s; }
+        .tab-btn:hover { color: #ccc; }
+        .tab-btn.active { border-color: #d4af37; color: #d4af37; font-weight: bold; }
+        .hidden-section { display: none; }
+        .scenario-card { border: 1px solid #333; padding: 10px; background: #262626; cursor: pointer; transition: all 0.2s; }
+        .scenario-card:hover { border-color: #666; }
+        .scenario-card.selected { border-color: #d4af37; background: #332b00; }
+        .card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
     </style>
 </head>
-<body class="min-h-screen flex items-center justify-center py-10">
+<body class="py-10 flex justify-center">
 
-    <div class="max-w-4xl w-full parchment p-8 rounded-lg relative">
-        <div class="text-center mb-8">
-            <h1 class="text-4xl text-yellow-500 mb-2">Chronicle of Beginnings</h1>
-            <p class="text-gray-400">Design your destiny, traveler.</p>
-        </div>
+    <div class="max-w-5xl w-full parchment p-8 rounded-lg">
+        <h1 class="text-4xl text-yellow-500 text-center mb-8">Forge Your Destiny</h1>
 
-        <form id="setupForm" class="space-y-6">
+        <form id="setupForm" class="space-y-8">
             <input type="hidden" id="token" value="{{ token }}">
 
-            <div class="border-b border-gray-700 pb-6">
-                <h2 class="text-2xl text-yellow-500 mb-4">I. The World</h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block mb-1 text-gray-400">Adventure Title</label>
-                        <input type="text" id="title" class="input-field" placeholder="e.g. The Shadow of Zura" required>
-                    </div>
-                    <div>
-                        <label class="block mb-1 text-gray-400">Scenario Type</label>
-                        <select id="scenario" class="input-field">
-                            <option value="Fantasy">High Fantasy</option>
-                            <option value="Cyberpunk">Cyberpunk / Sci-Fi</option>
-                            <option value="Horror">Lovecraftian Horror</option>
-                            <option value="PostApoc">Post-Apocalyptic</option>
-                            <option value="Isekai">Isekai (Another World)</option>
-                        </select>
-                    </div>
+            <div>
+                <h2 class="text-2xl text-yellow-500 border-b border-gray-700 pb-2 mb-4">I. The World</h2>
+                <div class="mb-4">
+                    <label class="block text-gray-400">Adventure Title</label>
+                    <input type="text" id="title" class="input-field" placeholder="The Legend of..." required>
                 </div>
-                <div class="mt-4">
-                    <label class="block mb-1 text-gray-400">Lore & Setting Description</label>
-                    <textarea id="lore" class="input-field h-24" placeholder="Describe the world, the current crisis, or the starting location..."></textarea>
+
+                <div class="flex gap-4 mb-4">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="loreType" value="premade" checked onclick="toggleLore('premade')" class="text-yellow-500">
+                        <span>Premade Scenario</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="loreType" value="custom" onclick="toggleLore('custom')" class="text-yellow-500">
+                        <span>Custom Lore</span>
+                    </label>
                 </div>
-                <div class="mt-4 flex items-center gap-2">
-                    <input type="checkbox" id="storyMode" class="w-5 h-5 text-yellow-500">
-                    <label for="storyMode" class="text-yellow-500 font-bold">Enable Story Mode (No Dice/Stats, Narrative Focus)</label>
+
+                <div id="premadeSection">
+                    <div class="card-grid mb-4">
+                        {% for s in scenarios %}
+                        <div class="scenario-card rounded" 
+                             data-value="{{ s.value }}" 
+                             data-desc="{{ s.desc }}" 
+                             onclick="selectScenario(this)">
+                            <span class="text-xs text-gray-500 block">{{ s.genre }}</span>
+                            <span class="text-yellow-500 font-bold">{{ s.label }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <p id="scenarioDesc" class="text-gray-400 italic text-sm mb-4 bg-gray-900 p-3 rounded border border-gray-700"></p>
+                </div>
+
+                <div id="customSection" class="hidden-section">
+                    <textarea id="customLore" class="input-field h-24" placeholder="Describe your world, the setting, and the conflict..."></textarea>
+                </div>
+                
+                <div class="flex items-center gap-2 p-3 bg-gray-800 rounded border border-gray-700">
+                    <input type="checkbox" id="dndMode" class="w-5 h-5" onchange="toggleDnd()">
+                    <span class="text-yellow-500 font-bold">Enable D&D Mechanics (Dice/Stats)</span>
                 </div>
             </div>
 
-            <div class="border-b border-gray-700 pb-6">
-                <h2 class="text-2xl text-yellow-500 mb-4">II. The Hero</h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label class="block mb-1 text-gray-400">Character Name</label>
-                        <input type="text" id="charName" class="input-field" placeholder="e.g. Alistair" required>
+            <div>
+                <h2 class="text-2xl text-yellow-500 border-b border-gray-700 pb-2 mb-4">II. The Hero</h2>
+                
+                <div class="flex border-b border-gray-800 mb-6">
+                    <div id="btn-create" class="tab-btn active" onclick="switchTab('create')">Create / Edit</div>
+                    <div id="btn-premade" class="tab-btn" onclick="switchTab('premade')">Premade Heroes</div>
+                    <div id="btn-personas" class="tab-btn" onclick="switchTab('personas')">My Personas</div>
+                </div>
+
+                <div id="tab-create" class="space-y-4">
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="block text-gray-400 text-sm">Name</label><input type="text" id="charName" class="input-field" required></div>
+                        <div><label class="block text-gray-400 text-sm">Age</label><input type="number" id="charAge" class="input-field"></div>
                     </div>
-                    <div>
-                        <label class="block mb-1 text-gray-400">Class / Occupation</label>
-                        <input type="text" id="charClass" class="input-field" placeholder="e.g. Spellblade, Hacker" required>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="block text-gray-400 text-sm">Pronouns</label><input type="text" id="charPronouns" class="input-field" placeholder="They/Them"></div>
+                        <div><label class="block text-gray-400 text-sm">Hobbies</label><input type="text" id="charHobbies" class="input-field" placeholder="Fishing, Magic"></div>
                     </div>
-                    <div>
-                        <label class="block mb-1 text-gray-400">Age</label>
-                        <input type="number" id="charAge" class="input-field" placeholder="25">
+                    
+                    <div><label class="block text-gray-400 text-sm">Appearance</label><input type="text" id="charApp" class="input-field"></div>
+                    <div><label class="block text-gray-400 text-sm">Personality</label><textarea id="charPers" class="input-field h-20"></textarea></div>
+                    <div><label class="block text-gray-400 text-sm">Backstory</label><textarea id="charBack" class="input-field h-24"></textarea></div>
+
+                    <div id="dndSection" class="hidden-section border-t border-gray-700 pt-4 mt-4">
+                        <div class="grid grid-cols-2 gap-4 mb-4">
+                            <div><label class="text-yellow-600 block text-sm">Class</label><input type="text" id="charClass" class="input-field border-yellow-900"></div>
+                            <div>
+                                <label class="text-yellow-600 block text-sm">Alignment</label>
+                                <select id="charAlign" class="input-field border-yellow-900">
+                                    <option>True Neutral</option><option>Chaotic Good</option><option>Lawful Evil</option><option>Neutral Good</option><option>Lawful Good</option><option>Chaotic Evil</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-4 gap-2 text-center bg-gray-900 p-2 rounded">
+                            <div><label class="text-xs text-yellow-600">STR</label><input type="number" id="sSTR" value="10" class="input-field text-center"></div>
+                            <div><label class="text-xs text-yellow-600">DEX</label><input type="number" id="sDEX" value="10" class="input-field text-center"></div>
+                            <div><label class="text-xs text-yellow-600">INT</label><input type="number" id="sINT" value="10" class="input-field text-center"></div>
+                            <div><label class="text-xs text-yellow-600">CHA</label><input type="number" id="sCHA" value="10" class="input-field text-center"></div>
+                        </div>
                     </div>
-                    <div>
-                        <label class="block mb-1 text-gray-400">Alignment</label>
-                        <select id="alignment" class="input-field">
-                            <option value="Lawful Good">Lawful Good</option>
-                            <option value="Neutral Good">Neutral Good</option>
-                            <option value="Chaotic Good">Chaotic Good</option>
-                            <option value="True Neutral">True Neutral</option>
-                            <option value="Chaotic Neutral">Chaotic Neutral</option>
-                            <option value="Lawful Evil">Lawful Evil</option>
-                            <option value="Chaotic Evil">Chaotic Evil</option>
-                        </select>
+
+                    <label class="flex items-center gap-2 mt-4 cursor-pointer">
+                        <input type="checkbox" id="savePersona" class="w-4 h-4 text-green-500">
+                        <span class="text-green-500 text-sm">Save this character as a new Persona for future games</span>
+                    </label>
+                </div>
+
+                <div id="tab-premade" class="hidden-section mb-6">
+                    <div class="card-grid">
+                        {% for p in premades %}
+                        <div class="scenario-card rounded" onclick='loadCharacter({{ p | tojson }})'>
+                            <span class="text-yellow-500 font-bold block">{{ p.name }}</span>
+                            <span class="text-xs text-gray-400">{{ p.class }} | {{ p.alignment }}</span>
+                            <span class="text-xs text-gray-500 block mt-1 line-clamp-2">{{ p.backstory }}</span>
+                        </div>
+                        {% endfor %}
                     </div>
                 </div>
 
-                <div class="mt-4">
-                    <label class="block mb-1 text-gray-400">Backstory & Personality</label>
-                    <textarea id="backstory" class="input-field h-32" placeholder="Who are you? What is your goal? What do you fear?"></textarea>
+                <div id="tab-personas" class="hidden-section mb-6">
+                    {% if personas %}
+                    <div class="card-grid">
+                        {% for p in personas %}
+                        <div class="scenario-card rounded relative group">
+                            <div onclick='loadCharacter({{ p | tojson }})'>
+                                <span class="text-yellow-500 font-bold block">{{ p.name }}</span>
+                                <span class="text-xs text-gray-400">{{ p.class }} (Age {{ p.age }})</span>
+                            </div>
+                            <button type="button" onclick="deletePersona('{{ p.id }}', this)" class="absolute top-1 right-1 text-red-500 opacity-0 group-hover:opacity-100 bg-black rounded px-2 font-bold hover:bg-red-900">✕</button>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% else %}
+                    <p class="text-gray-500 text-center py-4">No saved personas found. Create one and check "Save as Persona"!</p>
+                    {% endif %}
                 </div>
 
-                <div class="mt-4 p-4 bg-gray-800 rounded">
-                    <h3 class="text-lg text-gray-300 mb-2">Ability Scores (Standard Array)</h3>
-                    <div class="grid grid-cols-4 gap-2 text-center">
-                        <div><label class="block text-xs">STR</label><input type="number" id="statStr" value="10" class="input-field text-center"></div>
-                        <div><label class="block text-xs">DEX</label><input type="number" id="statDex" value="10" class="input-field text-center"></div>
-                        <div><label class="block text-xs">INT</label><input type="number" id="statInt" value="10" class="input-field text-center"></div>
-                        <div><label class="block text-xs">CHA</label><input type="number" id="statCha" value="10" class="input-field text-center"></div>
-                    </div>
-                </div>
             </div>
 
-            <div class="text-center">
-                <button type="submit" class="btn-gold w-full text-lg">Begin Adventure</button>
-            </div>
+            <button type="submit" class="btn-gold w-full text-lg mt-8">Begin Adventure</button>
         </form>
     </div>
 
     <script>
+        let selectedScenarioValue = "";
+        let selectedScenarioDesc = "";
+
+        document.addEventListener('DOMContentLoaded', () => {
+            toggleDnd();
+            // Select first scenario by default
+            const first = document.querySelector('#premadeSection .scenario-card');
+            if(first) selectScenario(first);
+        });
+
+        function switchTab(tab) {
+            // Update Buttons
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            if(tab === 'create') document.getElementById('btn-create').classList.add('active');
+            if(tab === 'premade') document.getElementById('btn-premade').classList.add('active');
+            if(tab === 'personas') document.getElementById('btn-personas').classList.add('active');
+            
+            // Toggle Visibility - MUTUALLY EXCLUSIVE
+            document.getElementById('tab-create').classList.add('hidden-section');
+            document.getElementById('tab-premade').classList.add('hidden-section');
+            document.getElementById('tab-personas').classList.add('hidden-section');
+            
+            if(tab === 'create') document.getElementById('tab-create').classList.remove('hidden-section');
+            if(tab === 'premade') document.getElementById('tab-premade').classList.remove('hidden-section');
+            if(tab === 'personas') document.getElementById('tab-personas').classList.remove('hidden-section');
+        }
+
+        function loadCharacter(data) {
+            document.getElementById('charName').value = data.name || "";
+            document.getElementById('charAge').value = data.age || "";
+            document.getElementById('charPronouns').value = data.pronouns || "";
+            document.getElementById('charHobbies').value = data.hobbies || "";
+            document.getElementById('charApp').value = data.appearance || "";
+            document.getElementById('charPers').value = data.personality || "";
+            document.getElementById('charBack').value = data.backstory || "";
+            
+            if(data.class) document.getElementById('charClass').value = data.class;
+            if(data.alignment) document.getElementById('charAlign').value = data.alignment;
+            if(data.stats) {
+                document.getElementById('sSTR').value = data.stats.STR || 10;
+                document.getElementById('sDEX').value = data.stats.DEX || 10;
+                document.getElementById('sINT').value = data.stats.INT || 10;
+                document.getElementById('sCHA').value = data.stats.CHA || 10;
+            }
+            
+            // Switch back to "Create/Edit" tab so user can see and modify the loaded data
+            switchTab('create');
+        }
+
+        async function deletePersona(id, btn) {
+            event.stopPropagation(); // Prevent loading character when clicking delete
+            if(!confirm("Are you sure you want to delete this persona?")) return;
+            const token = document.getElementById('token').value;
+            
+            try {
+                const res = await fetch(`/api/rpg/persona/delete/${id}?token=${token}`, { method: 'DELETE' });
+                if(res.ok) btn.parentElement.remove();
+                else alert("Failed to delete.");
+            } catch(e) { console.error(e); }
+        }
+
+        function toggleLore(type) {
+            if(type === 'premade') {
+                document.getElementById('premadeSection').classList.remove('hidden-section');
+                document.getElementById('customSection').classList.add('hidden-section');
+            } else {
+                document.getElementById('premadeSection').classList.add('hidden-section');
+                document.getElementById('customSection').classList.remove('hidden-section');
+            }
+        }
+
+        function selectScenario(el) {
+            document.querySelectorAll('.scenario-card').forEach(c => c.classList.remove('selected'));
+            el.classList.add('selected');
+            selectedScenarioValue = el.getAttribute('data-value');
+            selectedScenarioDesc = el.getAttribute('data-desc');
+            document.getElementById('scenarioDesc').textContent = selectedScenarioDesc;
+        }
+
+        function toggleDnd() {
+            const isDnd = document.getElementById('dndMode').checked;
+            const sec = document.getElementById('dndSection');
+            if(isDnd) sec.classList.remove('hidden-section');
+            else sec.classList.add('hidden-section');
+        }
+
         document.getElementById('setupForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const btn = e.target.querySelector('button');
-            btn.textContent = "Writing your legend...";
+            const btn = e.target.querySelector('button[type="submit"]');
+            btn.textContent = "Weaving Fate...";
             btn.disabled = true;
 
-            const data = {
+            const isCustom = document.querySelector('input[name="loreType"]:checked').value === 'custom';
+            const isDnd = document.getElementById('dndMode').checked;
+
+            const payload = {
                 token: document.getElementById('token').value,
                 title: document.getElementById('title').value,
-                scenario: document.getElementById('scenario').value,
-                lore: document.getElementById('lore').value,
-                story_mode: document.getElementById('storyMode').checked,
+                scenario: isCustom ? "Custom" : selectedScenarioValue,
+                lore: isCustom ? document.getElementById('customLore').value : selectedScenarioDesc,
+                story_mode: !isDnd,
                 character: {
                     name: document.getElementById('charName').value,
-                    class: document.getElementById('charClass').value,
-                    age: document.getElementById('charAge').value,
-                    alignment: document.getElementById('alignment').value,
-                    backstory: document.getElementById('backstory').value,
+                    age: parseInt(document.getElementById('charAge').value) || 25,
+                    pronouns: document.getElementById('charPronouns').value,
+                    hobbies: document.getElementById('charHobbies').value,
+                    appearance: document.getElementById('charApp').value,
+                    personality: document.getElementById('charPers').value,
+                    backstory: document.getElementById('charBack').value,
+                    class: document.getElementById('charClass').value || "Traveller",
+                    alignment: document.getElementById('charAlign').value,
+                    save_as_persona: document.getElementById('savePersona').checked,
                     stats: {
-                        STR: parseInt(document.getElementById('statStr').value),
-                        DEX: parseInt(document.getElementById('statDex').value),
-                        INT: parseInt(document.getElementById('statInt').value),
-                        CHA: parseInt(document.getElementById('statCha').value)
+                        STR: parseInt(document.getElementById('sSTR').value) || 10,
+                        DEX: parseInt(document.getElementById('sDEX').value) || 10,
+                        INT: parseInt(document.getElementById('sINT').value) || 10,
+                        CHA: parseInt(document.getElementById('sCHA').value) || 10
                     }
                 }
             };
 
-            try {
-                const res = await fetch('/api/rpg/submit', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                
-                if (res.ok) {
-                    document.body.innerHTML = `
-                        <div class="min-h-screen flex items-center justify-center text-center">
-                            <div class="parchment p-10 rounded">
-                                <h1 class="text-3xl text-green-500 mb-4">Fate Sealed.</h1>
-                                <p class="text-gray-300">Return to Discord. Your adventure thread is being woven.</p>
-                            </div>
-                        </div>`;
-                } else {
-                    const err = await res.json();
-                    alert("Error: " + err.detail);
-                    btn.disabled = false;
-                    btn.textContent = "Begin Adventure";
-                }
-            } catch (error) {
-                alert("Network Error");
+            const res = await fetch('/api/rpg/submit', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+
+            if(res.ok) {
+                document.body.innerHTML = `
+                    <div class="min-h-screen flex items-center justify-center text-center">
+                        <div class="parchment p-10 rounded">
+                            <h1 class="text-3xl text-green-500 mb-4">Fate Sealed.</h1>
+                            <p class="text-gray-300">Return to Discord. Your adventure is being woven.</p>
+                        </div>
+                    </div>`;
+            } else {
+                alert("Error starting game.");
+                btn.textContent = "Begin Adventure";
                 btn.disabled = false;
             }
         });

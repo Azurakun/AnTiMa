@@ -27,7 +27,6 @@ rpg_web_tokens_collection = db["rpg_web_tokens"]
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # High permissiveness for creative writing
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -36,7 +35,7 @@ class RPGAdventureCog(commands.Cog):
         }
         try:
             self.model = genai.GenerativeModel(
-                'gemini-3-pro-preview',
+                'gemini-1.5-pro-latest',
                 tools=[
                     tools.grant_item_to_player, tools.apply_damage, 
                     tools.apply_healing, tools.deduct_mana, 
@@ -84,17 +83,22 @@ class RPGAdventureCog(commands.Cog):
                     
                     if user and guild:
                         data = action["data"]
-                        char_data = data["character"]
+                        c = data["character"]
                         
-                        # Build Profile from Web Data
+                        # Build Rich Profile from Web Data
                         profile = {
-                            "class": char_data["class"],
+                            "name": c.get("name"),
+                            "class": c.get("class"),
                             "hp": 100, "max_hp": 100, "mp": 50, "max_mp": 50,
-                            "stats": char_data["stats"],
+                            "stats": c.get("stats"),
                             "skills": ["Custom Action"],
-                            "alignment": char_data["alignment"],
-                            "backstory": char_data["backstory"],
-                            "age": char_data["age"]
+                            "alignment": c.get("alignment"),
+                            "backstory": c.get("backstory"),
+                            "age": c.get("age"),
+                            "pronouns": c.get("pronouns", "They/Them"),
+                            "appearance": c.get("appearance", "Unknown"),
+                            "personality": c.get("personality", "Unknown"),
+                            "hobbies": c.get("hobbies", "None")
                         }
                         
                         await self.create_adventure_thread(
@@ -216,8 +220,14 @@ class RPGAdventureCog(commands.Cog):
 
         char_details = []
         for pid, pdata in player_stats_db.items():
-            detail = f"Player {pid}: {pdata.get('class')} (Alignment: {pdata.get('alignment', 'N/A')})"
-            if 'backstory' in pdata: detail += f"\n   - Backstory: {pdata['backstory']}"
+            # Enhanced Character Context for AI
+            detail = f"Player {pid} ({pdata.get('name', 'Unknown')}):\n"
+            detail += f"   - Class: {pdata.get('class')} | Age: {pdata.get('age')}\n"
+            detail += f"   - Pronouns: {pdata.get('pronouns', 'N/A')} | Alignment: {pdata.get('alignment', 'N/A')}\n"
+            detail += f"   - Appearance: {pdata.get('appearance', 'N/A')}\n"
+            detail += f"   - Personality: {pdata.get('personality', 'N/A')}\n"
+            detail += f"   - Hobbies: {pdata.get('hobbies', 'N/A')}\n"
+            if 'backstory' in pdata: detail += f"   - Backstory: {pdata['backstory']}\n"
             char_details.append(detail)
 
         mechanics = (
@@ -236,7 +246,7 @@ class RPGAdventureCog(commands.Cog):
             f"4. **Immersion:** Be descriptive.\n"
             f"**LORE:** {lore}\n"
             f"**PARTY DETAILS:**\n{'\n'.join(char_details)}\n"
-            f"**START:** The players have gathered. Set the opening scene vividly."
+            f"**START:** The players have gathered. Set the opening scene vividly, incorporating their personas."
         )
         
         await self._initialize_session(thread.id, session_data)
@@ -283,7 +293,7 @@ class RPGAdventureCog(commands.Cog):
                 f"**USER ACTION:** {prompt}\n"
                 f"**DM INSTRUCTIONS:**\n"
                 f"{mechanics_instr}\n"
-                f"1. **STRICT NPC PROTOCOL:** Check memory. If NPC is NOT in memory, treat as STRANGER (no name). Use `update_journal` if new name revealed.\n"
+                f"1. **STRICT NPC PROTOCOL:** Check memory. If NPC is NOT in memory, treat as STRANGER. Use `update_journal` if new name revealed.\n"
                 f"2. **IMMERSION:** Describe sights/sounds vividly.\n"
                 f"3. **OUTPUT:** Narrate the outcome. Do NOT leave blank.\n"
                 f"{'Reroll requested. Change the outcome.' if is_reroll else ''}"
@@ -382,7 +392,7 @@ class RPGAdventureCog(commands.Cog):
             "status": "pending", "created_at": datetime.utcnow()
         })
         
-        # UPDATED LINK HERE
+        # YOUR NGROK URL
         dashboard_url = "https://ray-goniometrical-implausibly.ngrok-free.dev" 
         url = f"{dashboard_url}/rpg/setup?token={token}"
         
