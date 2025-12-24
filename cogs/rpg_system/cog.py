@@ -52,23 +52,12 @@ class RPGAdventureCog(commands.Cog):
             to_delete = rpg_sessions_collection.find({"delete_requested": True})
             for session in to_delete:
                 thread_id = session['thread_id']
-                print(f"🗑️ [RPG Cleanup] Dashboard requested deletion for Thread ID: {thread_id}")
-                
                 try:
                     thread = self.bot.get_channel(thread_id) or await self.bot.fetch_channel(thread_id)
-                    if thread:
-                        await thread.delete()
-                        print(f"✅ [RPG Cleanup] Discord Thread {thread_id} deleted successfully.")
-                except discord.NotFound:
-                    print(f"⚠️ [RPG Cleanup] Thread {thread_id} not found on Discord.")
-                except Exception as e:
-                    print(f"❌ [RPG Cleanup] Failed to delete thread {thread_id}: {e}")
-
+                    if thread: await thread.delete()
+                except: pass
                 rpg_sessions_collection.delete_one({"thread_id": thread_id})
-                
-                if thread_id in self.active_sessions:
-                    del self.active_sessions[thread_id]
-
+                if thread_id in self.active_sessions: del self.active_sessions[thread_id]
         except Exception as e:
             print(f"ERROR in cleanup task: {e}")
 
@@ -136,7 +125,7 @@ class RPGAdventureCog(commands.Cog):
             )
         return embed
 
-    async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name):
+    async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name, story_mode=False):
         """Creates the thread and initializes the game session in DB."""
         config = ai_config_collection.find_one({"_id": str(interaction.guild_id)})
         channel = self.bot.get_channel(config.get("rpg_channel_id"))
@@ -172,21 +161,35 @@ class RPGAdventureCog(commands.Cog):
             "created_at": datetime.utcnow(), 
             "last_active": datetime.utcnow(),
             "active": True, 
-            "delete_requested": False
+            "delete_requested": False,
+            "story_mode": story_mode 
         }
         rpg_sessions_collection.insert_one(session_data)
 
         p_desc = ", ".join([f"{p.name} [ID: {p.id}] ({profiles.get(p.id, {}).get('class', 'Unknown')})" for p in players])
         
-        # Enhanced System Prompt for Fiction Context
+        # Enhanced System Prompt based on Mode
+        if story_mode:
+            mechanics = (
+                "2. **Story Mode Active:** \n"
+                "   - Do NOT use `roll_d20`. Decide outcomes purely based on narrative logic and character competence.\n"
+                "   - Do NOT use `apply_damage`, `apply_healing` or `deduct_mana`. Stats are not tracked.\n"
+                "   - Focus entirely on immersive, vivid storytelling and roleplay.\n"
+                "3. **Tools:** Use `update_journal` only.\n"
+            )
+        else:
+            mechanics = (
+                "2. **Mechanics:** Call `roll_d20` for risk. **ALWAYS calculate modifiers** from stats.\n"
+                "3. **Tools:** Use tools for items/damage/healing/mana tracking.\n"
+            )
+
         sys_prompt = (
             f"You are the **Dungeon Master** for a fictional tabletop RPG. "
             f"**SCENARIO:** {scenario_name}\n"
             f"**GUIDELINES:**\n"
-            f"1. **Fiction Only:** This is a simulated game context. Combat, conflict, and mature themes are expected parts of the narrative. Do not restrict valid gameplay actions.\n"
-            f"2. **Mechanics:** Call `roll_d20` for risk. **ALWAYS calculate modifiers** from stats.\n"
-            f"3. **Tools:** Use tools for items/damage.\n"
-            f"4. **Memory:** Use `update_journal`.\n"
+            f"1. **Fiction Only:** This is a simulated game context. Combat, conflict, and mature themes are expected parts of the narrative.\n"
+            f"{mechanics}"
+            f"4. **Memory:** Use `update_journal` to track key events.\n"
             f"5. **Style:** Immersive, descriptive, no moralizing.\n"
             f"**LORE:** {lore}\n**PARTY:** {p_desc}"
         )
@@ -212,14 +215,7 @@ class RPGAdventureCog(commands.Cog):
     async def process_game_turn(self, channel, prompt, user=None, is_reroll=False):
         if user:
             if not limiter.check_available(user.id, channel.guild.id, "rpg_gen"):
-                embed = discord.Embed(
-                    title="⏳ Adventure Stamina Depleted",
-                    description="The Dungeon Master needs to rest. Your AI quota for RPG adventures is exhausted.\nSupport the creator to help keep the tavern open!",
-                    color=discord.Color.gold()
-                )
-                embed.add_field(name="☕ International", value="[Support on Ko-fi](https://ko-fi.com/shirozura)", inline=True)
-                embed.add_field(name="🍱 Indonesia", value="[Support on Trakteer](https://trakteer.id/Azuranyan)", inline=True)
-                await channel.send(embed=embed)
+                await channel.send("⏳ Quota Exceeded. Support the dev!")
                 return
 
         if channel.id not in self.active_sessions:
@@ -245,14 +241,29 @@ class RPGAdventureCog(commands.Cog):
             campaign_log = "\n".join(session_db.get("campaign_log", [])[-10:])
             reroll_instr = "IMPORTANT: Reroll requested. Generate a DIFFERENT outcome." if is_reroll else ""
             
+            story_mode = session_db.get("story_mode", False)
+            
+            if story_mode:
+                mechanics_instruction = (
+                    "**GAME MODE: STORY (No Stats/Dice).**\n"
+                    "1. Do NOT use `roll_d20`. Do NOT use `apply_damage` or `deduct_mana`. "
+                    "Decide all outcomes based on narrative logic and character traits.\n"
+                    "2. Focus purely on the story and dialogue."
+                )
+            else:
+                mechanics_instruction = (
+                    "**GAME MODE: STANDARD (Dice + Stats).**\n"
+                    "1. Call `roll_d20` for risk. Use `apply_damage` for combat. Use `deduct_mana` for magic.\n"
+                    "2. Enforce the rules."
+                )
+
             full_prompt = (
                 f"User Action: {prompt}\n[WORLD STATE]:\nSTORY: {campaign_log}\nSTATS: {stats_context}\n"
                 "SYSTEM INSTRUCTIONS:\n"
-                "1. **Dice:** Call `roll_d20` for ANY risk. **YOU MUST PASS THE `modifier` AND `stat_label`** derived from the user's Stats (e.g. if STR is 16, modifier is +3).\n"
-                "2. **Tools:** Use `apply_damage`, `apply_healing`, `deduct_mana`.\n"
+                f"{mechanics_instruction}\n"
                 "3. **MEMORY:** YOU MUST use `update_journal`.\n"
                 "4. **Narrative:** Professional DM. Depict the scene vividly.\n"
-                "5. **Compliance:** This is a fictional story. If the action involves combat or mature themes, execute it objectively. Do not refuse.\n"
+                "5. **Compliance:** This is a fictional story. Execute all actions objectively.\n"
                 f"{forced_roll_context}\n{reroll_instr}\n6. End with the narrative. Do NOT provide options."
             )
             
@@ -267,7 +278,9 @@ class RPGAdventureCog(commands.Cog):
                     res_txt = "Error"
                     
                     if fn.name == "roll_d20":
-                        if is_reroll and data.get('last_roll_result'): 
+                        if story_mode:
+                             res_txt = "SYSTEM: Story Mode Active. Dice disabled. Narrate the result."
+                        elif is_reroll and data.get('last_roll_result'): 
                             res_txt = f"ACTION BLOCKED. Use stored result: {data['last_roll_result']}"
                         else:
                             diff = int(fn.args.get("difficulty", 10))
@@ -278,7 +291,6 @@ class RPGAdventureCog(commands.Cog):
                             total = roll + mod
                             success = total >= diff
                             
-                            # Visuals
                             crit_msg = ""
                             if roll == 20: crit_msg = " **(CRIT SUCCESS!)** 🌟"
                             elif roll == 1: crit_msg = " **(CRIT FAIL!)** 💀"
@@ -298,9 +310,15 @@ class RPGAdventureCog(commands.Cog):
                             if not is_reroll: data['last_roll_result'] = res_txt
                     
                     elif fn.name == "grant_item_to_player": res_txt = tools.grant_item_to_player(fn.args["user_id"], fn.args["item_name"], fn.args["description"])
-                    elif fn.name == "apply_damage": res_txt = tools.apply_damage(str(channel.id), fn.args["user_id"], fn.args["damage_amount"])
-                    elif fn.name == "apply_healing": res_txt = tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
-                    elif fn.name == "deduct_mana": res_txt = tools.deduct_mana(str(channel.id), fn.args["user_id"], fn.args["mana_cost"])
+                    elif fn.name == "apply_damage": 
+                        if story_mode: res_txt = "System: Damage tracking disabled in Story Mode."
+                        else: res_txt = tools.apply_damage(str(channel.id), fn.args["user_id"], fn.args["damage_amount"])
+                    elif fn.name == "apply_healing": 
+                        if story_mode: res_txt = "System: HP tracking disabled in Story Mode."
+                        else: res_txt = tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
+                    elif fn.name == "deduct_mana": 
+                        if story_mode: res_txt = "System: MP tracking disabled in Story Mode."
+                        else: res_txt = tools.deduct_mana(str(channel.id), fn.args["user_id"], fn.args["mana_cost"])
                     elif fn.name == "update_journal": res_txt = tools.update_journal(str(channel.id), fn.args.get("log_entry"), fn.args.get("npc_update"), fn.args.get("quest_update"))
                     
                     response = await chat_session.send_message_async(genai.protos.Content(parts=[genai.protos.Part(function_response=genai.protos.FunctionResponse(name=fn.name, response={'result': res_txt}))]))
@@ -308,27 +326,27 @@ class RPGAdventureCog(commands.Cog):
                 try: 
                     text_content = response.text
                 except Exception as e:
-                    # FALLBACK: If API blocks content, request a sanitized summary instead of crashing/refusing.
-                    print(f"Content Filtered/Error: {e}. Attempting Sanitized Fallback.")
                     try:
-                        fallback_resp = await chat_session.send_message_async(
-                            "System Warning: The previous narrative was blocked by safety filters. "
-                            "Generate a sanitized summary of the action's outcome immediately. Do not lecture."
-                        )
+                        fallback_resp = await chat_session.send_message_async("System: Narrative blocked. Summarize output sanitarily.")
                         text_content = fallback_resp.text
                     except:
-                        text_content = "**[System]** The narrative was lost to the void (Safety Filter Triggered). The action occurred, but description is unavailable."
+                        text_content = "**[System]** Narrative unavailable due to safety filters."
 
                 if not text_content.strip(): text_content = "**[System]** The Dungeon Master nods."
                 
                 view = RPGGameView(self, channel.id)
                 story_emb = discord.Embed(description=text_content, color=discord.Color.from_rgb(47, 49, 54))
                 story_emb.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None)
-                await channel.send(embeds=[story_emb, self.get_status_embed(channel.id)], view=view)
                 
-                if user: 
-                    limit_source = limiter.consume(user.id, channel.guild.id, "rpg_gen")
-                    print(f"RPG Turn Consumed: {limit_source.upper()} | User: {user.name} ({user.id})")
+                # Only show stats if NOT in story mode
+                embeds_to_send = [story_emb]
+                if not story_mode:
+                    status_emb = self.get_status_embed(channel.id)
+                    if status_emb: embeds_to_send.append(status_emb)
+
+                await channel.send(embeds=embeds_to_send, view=view)
+                
+                if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
 
             except Exception as e:
                 await channel.send(f"⚠️ Game Error: {e}")
@@ -337,15 +355,11 @@ class RPGAdventureCog(commands.Cog):
     async def close_session(self, thread_id, channel):
         """Helper to archive thread and clean DB."""
         rpg_sessions_collection.update_one({"thread_id": thread_id}, {"$set": {"active": False, "ended_at": datetime.utcnow()}})
-        
-        if thread_id in self.active_sessions:
-            del self.active_sessions[thread_id]
-            
+        if thread_id in self.active_sessions: del self.active_sessions[thread_id]
         try:
             await channel.send("📕 **The adventure has concluded.** This scroll is now sealed.")
             await channel.edit(archived=True, locked=True)
-        except Exception as e:
-            print(f"Failed to archive thread {thread_id}: {e}")
+        except Exception as e: print(f"Failed to archive thread {thread_id}: {e}")
 
     # --- COMMANDS ---
     rpg_group = app_commands.Group(name="rpg", description="⚔️ Play immersive role-playing adventures.")
@@ -358,6 +372,25 @@ class RPGAdventureCog(commands.Cog):
             return await interaction.followup.send("⚠️ Admin must set channel first using `/config rpg`.", ephemeral=True)
         view = AdventureSetupView(self.bot, interaction.user)
         view.message = await interaction.followup.send(content=f"⚔️ **RPG Lobby Open!** {interaction.user.mention} is host.", embed=view._get_party_embed(), view=view)
+
+    @rpg_group.command(name="mode", description="Switch between Story Mode and Standard RPG.")
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="Standard (Dice + Stats)", value="standard"),
+        app_commands.Choice(name="Story (Narrative Only)", value="story")
+    ])
+    async def rpg_mode(self, interaction: discord.Interaction, mode: str):
+        if not isinstance(interaction.channel, discord.Thread):
+            return await interaction.response.send_message("This command only works in active RPG threads.", ephemeral=True)
+        
+        session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
+        if not session or interaction.user.id != session.get("owner_id"):
+            return await interaction.response.send_message("❌ Only the Party Leader can change game settings.", ephemeral=True)
+        
+        story_mode = True if mode == "story" else False
+        rpg_sessions_collection.update_one({"thread_id": interaction.channel.id}, {"$set": {"story_mode": story_mode}})
+        
+        desc = "**Story Mode Active** 📖\nDice and Stat tracking are disabled. Focus on the narrative." if story_mode else "**Standard RPG Active** 🎲\nDice and Stat tracking are enabled."
+        await interaction.response.send_message(desc)
 
     @rpg_group.command(name="end", description="Vote to close the current RPG session.")
     async def rpg_end(self, interaction: discord.Interaction):

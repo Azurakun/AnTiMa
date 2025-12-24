@@ -78,6 +78,7 @@ class AdventureSetupView(discord.ui.View):
         self.author = author
         self.selected_lore = None
         self.selected_scenario_name = None
+        self.story_mode = False # Default to Standard
         self.players = [author]
         self.selected_profiles = {} 
         self.message = None
@@ -87,12 +88,17 @@ class AdventureSetupView(discord.ui.View):
         s_title = self.selected_scenario_name or "Not Set"
         s_desc = (self.selected_lore[:80] + "...") if self.selected_lore else "Waiting for Host..."
         embed.add_field(name=f"🌍 Scenario: {s_title}", value=s_desc, inline=False)
+        
+        mode_str = "📖 Story Mode (No Dice/Stats)" if self.story_mode else "🎲 Standard RPG (Dice + Stats)"
+        embed.add_field(name="⚙️ Game Mode", value=mode_str, inline=False)
+        
         party_desc = []
         for p in self.players:
             profile = self.selected_profiles.get(p.id)
             status = f"**{profile['class']}** ✅" if profile else "⏳ Choosing..."
             party_desc.append(f"{p.mention}: {status}")
         embed.add_field(name="👥 Party Members", value="\n".join(party_desc), inline=False)
+        
         self.start_btn.disabled = (self.selected_lore is None)
         return embed
 
@@ -124,7 +130,17 @@ class AdventureSetupView(discord.ui.View):
         await interaction.response.defer()
         await self.update_view_message(interaction)
 
-    @discord.ui.select(placeholder="Player: Choose Premade Class", row=2, options=[
+    @discord.ui.select(placeholder="Host: Game Style", row=2, options=[
+        discord.SelectOption(label="Standard RPG", value="standard", description="Use Dice, HP, MP, and Stats.", emoji="🎲"),
+        discord.SelectOption(label="Story Mode", value="story", description="Narrative only. No math or stats.", emoji="📖")
+    ])
+    async def select_gamemode(self, interaction: discord.Interaction, select: discord.ui.Select):
+        if interaction.user != self.author: return await interaction.response.send_message("Host only.", ephemeral=True)
+        self.story_mode = True if select.values[0] == "story" else False
+        await interaction.response.defer()
+        await self.update_view_message(interaction)
+
+    @discord.ui.select(placeholder="Player: Choose Premade Class", row=3, options=[
         discord.SelectOption(label=k, description=f"{v['stats']['STR']} STR, {v['stats']['INT']} INT") for k, v in RPG_CLASSES.items()
     ])
     async def select_premade(self, interaction: discord.Interaction, select: discord.ui.Select):
@@ -139,33 +155,33 @@ class AdventureSetupView(discord.ui.View):
         await interaction.response.defer()
         await self.update_view_message(interaction)
 
-    @discord.ui.button(label="📝 Create Custom OC", style=discord.ButtonStyle.primary, row=3)
+    @discord.ui.button(label="📝 Create Custom OC", style=discord.ButtonStyle.primary, row=4)
     async def create_char_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user not in self.players: return await interaction.response.send_message("Not in party.", ephemeral=True)
         await interaction.response.send_message("Select your Stat Archetype:", view=ArchetypeView(self), ephemeral=True)
 
-    @discord.ui.button(label="Host: Custom Lore", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Host: Custom Lore", style=discord.ButtonStyle.secondary, row=4)
     async def custom_lore(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user != self.author: return await interaction.response.send_message("Host only.", ephemeral=True)
         await interaction.response.send_modal(LoreModal(self))
 
-    @discord.ui.button(label="🚀 START", style=discord.ButtonStyle.success, row=3, disabled=True)
+    @discord.ui.button(label="🚀 START", style=discord.ButtonStyle.success, row=4, disabled=True)
     async def start_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user != self.author: return
         await interaction.response.defer()
         self.stop()
         await self.bot.get_cog("RPGAdventureCog").create_adventure_thread(
-            interaction, self.selected_lore, self.players, self.selected_profiles, self.selected_scenario_name
+            interaction, self.selected_lore, self.players, self.selected_profiles, self.selected_scenario_name, self.story_mode
         )
 
-# --- VOTING SYSTEM (UPDATED) ---
+# --- VOTING SYSTEM ---
 class CloseVoteView(discord.ui.View):
     def __init__(self, cog, thread_id, initiator_id, player_ids, owner_id):
         super().__init__(timeout=300)
         self.cog = cog
         self.thread_id = thread_id
         self.player_ids = player_ids
-        self.owner_id = owner_id  # Track the session owner
+        self.owner_id = owner_id  
         self.votes = {initiator_id}
         self.threshold = (len(player_ids) // 2) + 1
 
@@ -173,9 +189,7 @@ class CloseVoteView(discord.ui.View):
     async def vote_yes(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id not in self.player_ids:
             return await interaction.response.send_message("Spectators cannot vote.", ephemeral=True)
-        
         self.votes.add(interaction.user.id)
-        
         if len(self.votes) >= self.threshold:
             await interaction.response.edit_message(content="🔒 **Majority reached.** The adventure is ending...", view=None)
             self.stop()
@@ -187,16 +201,13 @@ class CloseVoteView(discord.ui.View):
     async def vote_no(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id not in self.player_ids:
             return await interaction.response.send_message("Spectators cannot vote.", ephemeral=True)
-        
         await interaction.response.edit_message(content=f"❌ **Vote Cancelled.** {interaction.user.mention} wants to continue the adventure!", view=None)
         self.stop()
 
-    # --- OWNER OVERRIDE BUTTON ---
-    @discord.ui.button(label="⚠ Force End (Host Only)", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="⚠ Force End (Host)", style=discord.ButtonStyle.danger, row=1)
     async def force_end_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         if interaction.user.id != self.owner_id:
-            return await interaction.response.send_message("Only the Party Leader (Host) can force end.", ephemeral=True)
-        
+            return await interaction.response.send_message("Only the Party Leader can force end.", ephemeral=True)
         await interaction.response.edit_message(content="🛑 **Party Leader forced the session to end.**", view=None)
         self.stop()
         await self.cog.close_session(self.thread_id, interaction.channel)
