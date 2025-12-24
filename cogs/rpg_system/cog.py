@@ -27,6 +27,7 @@ rpg_web_tokens_collection = db["rpg_web_tokens"]
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # High permissiveness for creative writing
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -85,6 +86,7 @@ class RPGAdventureCog(commands.Cog):
                         data = action["data"]
                         char_data = data["character"]
                         
+                        # Build Profile from Web Data
                         profile = {
                             "class": char_data["class"],
                             "hp": 100, "max_hp": 100, "mp": 50, "max_mp": 50,
@@ -379,8 +381,9 @@ class RPGAdventureCog(commands.Cog):
             "token": token, "user_id": interaction.user.id, "guild_id": interaction.guild_id,
             "status": "pending", "created_at": datetime.utcnow()
         })
-        # CHANGE TO YOUR DOMAIN
-        dashboard_url = "http://localhost:8000" 
+        
+        # UPDATED LINK HERE
+        dashboard_url = "https://ray-goniometrical-implausibly.ngrok-free.dev" 
         url = f"{dashboard_url}/rpg/setup?token={token}"
         
         embed = discord.Embed(title="🌐 Web Setup Initiated", description="Design your adventure with detailed lore, stats, and character backstory.", color=discord.Color.blue())
@@ -402,7 +405,6 @@ class RPGAdventureCog(commands.Cog):
         if not session: return await interaction.response.send_message("No session.", ephemeral=True)
         
         if interaction.user.id == session.get("owner_id"):
-             # FIX: Respond FIRST, then archive.
              await interaction.response.send_message("🛑 **Stopping adventure...**")
              await self.close_session(interaction.channel.id, interaction.channel)
              return

@@ -23,7 +23,6 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
 # --- COLLECTIONS ---
-# We access these via 'db' to ensure they work even if not explicitly exported in utils.db
 web_actions_collection = db["web_actions"]
 rpg_web_tokens_collection = db["rpg_web_tokens"]
 
@@ -54,7 +53,7 @@ class RPGSetupData(BaseModel):
     scenario: str
     lore: str
     story_mode: bool
-    character: dict  # Contains: name, class, age, alignment, backstory, stats
+    character: dict 
 
 # --- DATA FETCHING FUNCTIONS ---
 def fetch_overview():
