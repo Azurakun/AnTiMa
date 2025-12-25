@@ -35,7 +35,7 @@ class RPGAdventureCog(commands.Cog):
         }
         try:
             self.model = genai.GenerativeModel(
-                'gemini-1.5-pro-latest',
+                'gemini-3-pro-preview',
                 tools=[
                     tools.grant_item_to_player, tools.apply_damage, 
                     tools.apply_healing, tools.deduct_mana, 

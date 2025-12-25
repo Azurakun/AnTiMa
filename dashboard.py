@@ -197,6 +197,11 @@ async def rpg_setup_page(request: Request, token: str):
     user_id = token_doc["user_id"]
     personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
     
+    # FIX: Convert datetime objects to strings to avoid JSON serialization errors in the template
+    for p in personas:
+        if "created_at" in p:
+            p["created_at"] = str(p["created_at"])
+    
     return templates.TemplateResponse("rpg_setup.html", {
         "request": request, 
         "token": token, 
