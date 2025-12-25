@@ -43,7 +43,8 @@ class RPGSetupData(BaseModel):
     character: dict  # Includes name, class, stats, backstory, save_as_persona (bool), etc.
 
 class PersonaModel(BaseModel):
-    token: str 
+    token: str
+    id: str | None = None # Optional ID for updates
     name: str
     class_name: str
     age: int
@@ -69,6 +70,16 @@ class ActionRequest(BaseModel):
     target_id: str 
     reason: str | None = "Action requested via Dashboard"
     setting_value: int | str | None = None 
+
+# --- HELPER FUNCTIONS ---
+
+def serialize_persona(persona):
+    """Converts datetime objects to strings for JSON serialization."""
+    if "created_at" in persona and isinstance(persona["created_at"], datetime):
+        persona["created_at"] = persona["created_at"].isoformat()
+    if "updated_at" in persona and isinstance(persona["updated_at"], datetime):
+        persona["updated_at"] = persona["updated_at"].isoformat()
+    return persona
 
 # --- FETCH FUNCTIONS (Stats & Logs) ---
 
@@ -197,10 +208,8 @@ async def rpg_setup_page(request: Request, token: str):
     user_id = token_doc["user_id"]
     personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
     
-    # FIX: Convert datetime objects to strings to avoid JSON serialization errors in the template
-    for p in personas:
-        if "created_at" in p:
-            p["created_at"] = str(p["created_at"])
+    # Serialize datetimes for Jinja2/JSON
+    personas = [serialize_persona(p) for p in personas]
     
     return templates.TemplateResponse("rpg_setup.html", {
         "request": request, 
@@ -210,33 +219,80 @@ async def rpg_setup_page(request: Request, token: str):
         "personas": personas
     })
 
+@app.get("/rpg/personas", response_class=HTMLResponse)
+async def rpg_personas_page(request: Request, token: str):
+    """
+    Serves the Persona Management page.
+    """
+    token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token, "status": "pending"}))
+    if not token_doc:
+        return HTMLResponse("<h1>Invalid or Expired Link</h1><p>Please generate a new link in Discord using <code>/rpg personas</code>.</p>", status_code=404)
+    
+    # Fetch User's Saved Personas
+    user_id = token_doc["user_id"]
+    personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
+    
+    # Serialize datetimes for Jinja2/JSON
+    personas = [serialize_persona(p) for p in personas]
+    
+    return templates.TemplateResponse("personas.html", {
+        "request": request, 
+        "token": token, 
+        "personas": personas
+    })
+
 @app.post("/api/rpg/persona/save")
 async def save_persona(data: PersonaModel):
     """
-    Saves a character as a Persona directly from the dashboard (before starting a game).
+    Saves OR Updates a character persona.
     """
-    # Validate Token to ensure the user is who they say they are
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": data.token}))
     if not token_doc: 
         raise HTTPException(403, "Invalid Token or Session Expired")
     
-    persona_doc = {
-        "id": str(uuid.uuid4()),
-        "user_id": token_doc["user_id"],
-        "name": data.name,
-        "class": data.class_name,
-        "age": data.age,
-        "pronouns": data.pronouns,
-        "appearance": data.appearance,
-        "personality": data.personality,
-        "hobbies": data.hobbies,
-        "backstory": data.backstory,
-        "alignment": data.alignment,
-        "stats": data.stats,
-        "created_at": datetime.utcnow()
-    }
-    await run_sync_db(lambda: user_personas_collection.insert_one(persona_doc))
-    return JSONResponse({"status": "saved", "id": persona_doc["id"]})
+    user_id = token_doc["user_id"]
+    
+    if data.id:
+        # UPDATE EXISTING
+        update_data = {
+            "name": data.name,
+            "class": data.class_name,
+            "age": data.age,
+            "pronouns": data.pronouns,
+            "appearance": data.appearance,
+            "personality": data.personality,
+            "hobbies": data.hobbies,
+            "backstory": data.backstory,
+            "alignment": data.alignment,
+            "stats": data.stats,
+            "updated_at": datetime.utcnow()
+        }
+        await run_sync_db(lambda: user_personas_collection.update_one(
+            {"id": data.id, "user_id": user_id},
+            {"$set": update_data}
+        ))
+        return JSONResponse({"status": "updated", "id": data.id})
+        
+    else:
+        # CREATE NEW
+        new_id = str(uuid.uuid4())
+        persona_doc = {
+            "id": new_id,
+            "user_id": user_id,
+            "name": data.name,
+            "class": data.class_name,
+            "age": data.age,
+            "pronouns": data.pronouns,
+            "appearance": data.appearance,
+            "personality": data.personality,
+            "hobbies": data.hobbies,
+            "backstory": data.backstory,
+            "alignment": data.alignment,
+            "stats": data.stats,
+            "created_at": datetime.utcnow()
+        }
+        await run_sync_db(lambda: user_personas_collection.insert_one(persona_doc))
+        return JSONResponse({"status": "created", "id": new_id})
 
 @app.delete("/api/rpg/persona/delete/{persona_id}")
 async def delete_persona(persona_id: str, token: str):

@@ -35,7 +35,7 @@ class RPGAdventureCog(commands.Cog):
         }
         try:
             self.model = genai.GenerativeModel(
-                'gemini-3-pro-preview',
+                'gemini-2.5-pro',
                 tools=[
                     tools.grant_item_to_player, tools.apply_damage, 
                     tools.apply_healing, tools.deduct_mana, 
@@ -257,11 +257,23 @@ class RPGAdventureCog(commands.Cog):
         if not session_db or interaction.user.id != session_db['owner_id']:
              return await interaction.followup.send("Leader only.", ephemeral=True)
         
+        # 1. DELETE THE OLD MESSAGE (Visual cleanup)
+        try:
+            await interaction.message.delete()
+        except:
+            pass # Ignore if already deleted
+        
+        # 2. DELETE LAST TURN FROM MEMORY (DB cleanup)
+        self.memory_manager.delete_last_turn(thread_id)
+        
         if thread_id in self.active_sessions:
             data = self.active_sessions[thread_id]
+            # 3. REWIND GEMINI SESSION (AI Context cleanup)
             try: data['session'].rewind() 
             except: pass
-            await interaction.channel.send("🎲 **Rewinding Fate...**")
+            
+            # 4. REPROCESS (Silently)
+            # We assume the interaction is handled by message deletion, so we just process the turn.
             await self.process_game_turn(interaction.channel, data.get('last_prompt', "Continue"), is_reroll=True)
 
     async def process_game_turn(self, channel, prompt, user=None, is_reroll=False):
@@ -398,6 +410,27 @@ class RPGAdventureCog(commands.Cog):
         
         embed = discord.Embed(title="🌐 Web Setup Initiated", description="Design your adventure with detailed lore, stats, and character backstory.", color=discord.Color.blue())
         embed.add_field(name="Setup Link", value=f"[**Click Here to Create Adventure**]({url})")
+        embed.set_footer(text="Link expires once used.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @rpg_group.command(name="personas", description="Manage your saved characters via the Web Dashboard.")
+    async def rpg_personas(self, interaction: discord.Interaction):
+        token = str(uuid.uuid4())
+        rpg_web_tokens_collection.insert_one({
+            "token": token, 
+            "user_id": interaction.user.id, 
+            "guild_id": interaction.guild_id,
+            "status": "pending", 
+            "type": "persona_management",
+            "created_at": datetime.utcnow()
+        })
+        
+        # YOUR NGROK URL
+        dashboard_url = "https://ray-goniometrical-implausibly.ngrok-free.dev" 
+        url = f"{dashboard_url}/rpg/personas?token={token}"
+        
+        embed = discord.Embed(title="🎭 Persona Manager", description="Create, edit, or delete your saved characters.", color=discord.Color.purple())
+        embed.add_field(name="Management Link", value=f"[**Open Persona Manager**]({url})")
         embed.set_footer(text="Link expires once used.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

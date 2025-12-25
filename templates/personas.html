@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AnTiMa Persona Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Lato:wght@400;700&display=swap');
+        body { font-family: 'Lato', sans-serif; background-color: #111; color: #e5e5e5; }
+        h1, h2, h3, .rpg-font { font-family: 'Cinzel', serif; }
+        .parchment { background-color: #1f1f1f; border: 1px solid #333; }
+        .input-field { background: #2a2a2a; border: 1px solid #444; color: white; padding: 10px; width: 100%; border-radius: 4px; }
+        .input-field:focus { outline: none; border-color: #d4af37; }
+        .btn-gold { background: linear-gradient(45deg, #d4af37, #c5a028); color: black; font-weight: bold; padding: 10px 20px; border-radius: 4px; transition: filter 0.2s; }
+        .btn-gold:hover { filter: brightness(1.1); }
+        .btn-gray { background-color: #333; color: #ccc; padding: 10px 20px; border-radius: 4px; transition: background 0.2s; }
+        .btn-gray:hover { background-color: #444; color: white; }
+        
+        /* Modal Styles */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); display: flex; justify-content: center; align-items: center; z-index: 50; opacity: 0; pointer-events: none; transition: opacity 0.2s; backdrop-filter: blur(2px); }
+        .modal-overlay.active { opacity: 1; pointer-events: auto; }
+        .modal-content { background: #1f1f1f; border: 1px solid #444; border-radius: 8px; max-width: 900px; width: 95%; max-height: 90vh; overflow-y: auto; transform: translateY(20px); transition: transform 0.2s; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); }
+        .modal-overlay.active .modal-content { transform: translateY(0); }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #111; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+    </style>
+</head>
+<body class="py-10 flex justify-center min-h-screen">
+
+    <div class="max-w-5xl w-full p-4">
+        
+        <div class="flex flex-col md:flex-row justify-between items-center mb-8 border-b border-gray-800 pb-6 gap-4">
+            <div>
+                <h1 class="text-4xl text-purple-400">Persona Archive</h1>
+                <p class="text-gray-500 mt-1">Manage your recurring characters for AnTiMa Adventures.</p>
+            </div>
+            <button onclick="openCreateModal()" class="btn-gold shadow-lg shadow-yellow-900/20 flex items-center gap-2">
+                <span class="text-xl">+</span> Create New
+            </button>
+        </div>
+
+        <input type="hidden" id="token" value="{{ token }}">
+
+        <div id="persona-list" class="space-y-4">
+            {% if personas %}
+                {% for p in personas %}
+                <div class="bg-[#1f1f1f] border border-[#333] rounded-lg p-5 hover:border-gray-500 hover:bg-[#252525] transition cursor-pointer relative group flex flex-col md:flex-row gap-6 items-stretch" onclick='openPreviewModal({{ p | tojson }})'>
+                    
+                    <div class="md:w-1/4 flex flex-col justify-center border-b md:border-b-0 md:border-r border-gray-700 pb-4 md:pb-0 md:pr-4">
+                        <h3 class="text-2xl text-yellow-500 font-bold font-serif truncate">{{ p.name }}</h3>
+                        <div class="flex flex-wrap gap-2 mt-2">
+                            <span class="bg-gray-800 text-gray-300 px-2 py-0.5 rounded text-xs border border-gray-600 font-bold">{{ p.class }}</span>
+                            <span class="text-xs text-gray-500 self-center">Age. {{ p.age }}</span>
+                        </div>
+                    </div>
+
+                    <div class="md:w-3/4 flex flex-col justify-center">
+                        <p class="text-gray-400 text-sm italic leading-relaxed line-clamp-2">
+                            {{ p.backstory }}
+                        </p>
+                    </div>
+
+                    <div class="absolute right-4 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition text-gray-500 text-sm font-bold flex items-center gap-1">
+                        View Details <span>→</span>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="text-center py-20 border-2 border-dashed border-gray-800 rounded-lg">
+                    <div class="text-6xl mb-4 text-gray-700">📜</div>
+                    <p class="text-gray-500 text-lg">Your chronicles are empty.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div id="previewModal" class="modal-overlay" onclick="closeModal('previewModal')">
+        <div class="modal-content p-8" onclick="event.stopPropagation()">
+            <div class="flex justify-between items-start mb-6 border-b border-gray-700 pb-4">
+                <div>
+                    <h2 id="viewName" class="text-3xl text-yellow-500 font-bold font-serif">Character Name</h2>
+                    <div class="flex gap-3 mt-2 text-sm text-gray-400">
+                        <span id="viewClass" class="bg-gray-800 px-2 py-0.5 rounded border border-gray-600">Class</span>
+                        <span id="viewAge">Age: 0</span>
+                        <span id="viewPronouns">Pronouns</span>
+                        <span id="viewAlign">Alignment</span>
+                    </div>
+                </div>
+                <button onclick="closeModal('previewModal')" class="text-gray-500 hover:text-white text-2xl">&times;</button>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div class="md:col-span-2 space-y-6">
+                    <div>
+                        <h4 class="text-xs text-gray-500 uppercase font-bold mb-1">Appearance</h4>
+                        <p id="viewApp" class="text-gray-300"></p>
+                    </div>
+                    <div>
+                        <h4 class="text-xs text-gray-500 uppercase font-bold mb-1">Backstory</h4>
+                        <p id="viewBack" class="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap"></p>
+                    </div>
+                    <div>
+                        <h4 class="text-xs text-gray-500 uppercase font-bold mb-1">Personality & Hobbies</h4>
+                        <p id="viewPers" class="text-gray-300 text-sm"></p>
+                    </div>
+                </div>
+
+                <div class="bg-[#1a1a1a] p-5 rounded border border-gray-800 h-fit">
+                    <h4 class="text-center text-yellow-600 font-bold mb-4 uppercase tracking-widest border-b border-gray-800 pb-2">Stats</h4>
+                    <div class="space-y-3">
+                        <div class="flex justify-between items-center"><span class="text-gray-500 text-sm font-bold">STR</span><span id="viewSTR" class="text-xl font-mono text-white">10</span></div>
+                        <div class="flex justify-between items-center"><span class="text-gray-500 text-sm font-bold">DEX</span><span id="viewDEX" class="text-xl font-mono text-white">10</span></div>
+                        <div class="flex justify-between items-center"><span class="text-gray-500 text-sm font-bold">INT</span><span id="viewINT" class="text-xl font-mono text-white">10</span></div>
+                        <div class="flex justify-between items-center"><span class="text-gray-500 text-sm font-bold">CHA</span><span id="viewCHA" class="text-xl font-mono text-white">10</span></div>
+                    </div>
+                    
+                    <div class="mt-8 pt-6 border-t border-gray-800 space-y-3">
+                        <button id="btnEdit" class="btn-gold w-full text-center block">Edit Persona</button>
+                        <button id="btnDelete" class="w-full text-center block text-red-900 hover:text-red-500 text-sm py-2 transition">Delete Permanently</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="editModal" class="modal-overlay" onclick="closeModal('editModal')">
+        <div class="modal-content p-8" onclick="event.stopPropagation()">
+            <h2 id="formTitle" class="text-2xl text-gray-200 font-bold mb-6 border-b border-gray-700 pb-2">Create Persona</h2>
+            
+            <input type="hidden" id="personaId">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="space-y-4">
+                    <div><label class="block text-gray-500 text-xs uppercase font-bold mb-1">Name</label><input type="text" id="charName" class="input-field" required></div>
+                    <div class="grid grid-cols-2 gap-4">
+                        <div><label class="block text-gray-500 text-xs uppercase font-bold mb-1">Age</label><input type="number" id="charAge" class="input-field"></div>
+                        <div><label class="block text-gray-500 text-xs uppercase font-bold mb-1">Pronouns</label><input type="text" id="charPronouns" class="input-field"></div>
+                    </div>
+                    <div><label class="block text-gray-500 text-xs uppercase font-bold mb-1">Hobbies</label><input type="text" id="charHobbies" class="input-field"></div>
+                </div>
+
+                <div class="space-y-4">
+                     <div><label class="block text-gray-500 text-xs uppercase font-bold mb-1">Appearance</label><input type="text" id="charApp" class="input-field"></div>
+                     <div><label class="block text-gray-500 text-xs uppercase font-bold mb-1">Personality</label><textarea id="charPers" class="input-field h-20 resize-none"></textarea></div>
+                </div>
+            </div>
+
+            <div class="mt-4">
+                <label class="block text-gray-500 text-xs uppercase font-bold mb-1">Backstory</label>
+                <textarea id="charBack" class="input-field h-32"></textarea>
+            </div>
+
+            <div class="bg-black/30 p-4 rounded border border-gray-700 mt-6">
+                <h4 class="text-sm text-yellow-600 font-bold mb-3 uppercase tracking-wide">Combat Statistics</h4>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div><label class="text-gray-500 block text-xs mb-1">Class</label><input type="text" id="charClass" class="input-field border-yellow-900/50 focus:border-yellow-600"></div>
+                    <div>
+                        <label class="text-gray-500 block text-xs mb-1">Alignment</label>
+                        <select id="charAlign" class="input-field border-yellow-900/50 focus:border-yellow-600">
+                            <option>True Neutral</option><option>Chaotic Good</option><option>Lawful Evil</option><option>Neutral Good</option><option>Lawful Good</option><option>Chaotic Evil</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="grid grid-cols-4 gap-2">
+                    <div><label class="text-[10px] text-center block text-gray-500 mb-1">STR</label><input type="number" id="sSTR" class="input-field text-center"></div>
+                    <div><label class="text-[10px] text-center block text-gray-500 mb-1">DEX</label><input type="number" id="sDEX" class="input-field text-center"></div>
+                    <div><label class="text-[10px] text-center block text-gray-500 mb-1">INT</label><input type="number" id="sINT" class="input-field text-center"></div>
+                    <div><label class="text-[10px] text-center block text-gray-500 mb-1">CHA</label><input type="number" id="sCHA" class="input-field text-center"></div>
+                </div>
+            </div>
+
+            <div class="flex justify-end gap-4 mt-8 pt-4 border-t border-gray-700">
+                <button onclick="closeModal('editModal')" class="btn-gray">Cancel</button>
+                <button onclick="savePersona()" class="btn-gold min-w-[120px]">Save</button>
+            </div>
+            <div id="msg" class="text-center text-sm mt-2 font-bold min-h-[1.5rem]"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- MODAL LOGIC ---
+        let currentPersonaData = null; // Stores data for the currently open preview
+
+        function openModal(id) { document.getElementById(id).classList.add('active'); }
+        function closeModal(id) { document.getElementById(id).classList.remove('active'); }
+
+        // 1. OPEN CREATE MODAL
+        function openCreateModal() {
+            clearForm();
+            openModal('editModal');
+        }
+
+        // 2. OPEN PREVIEW MODAL
+        function openPreviewModal(data) {
+            currentPersonaData = data; // Store for transition to edit
+            
+            // Populate Preview Fields
+            document.getElementById('viewName').innerText = data.name || "Unknown";
+            document.getElementById('viewClass').innerText = data.class || "Freelancer";
+            document.getElementById('viewAge').innerText = "Age: " + (data.age || "?");
+            document.getElementById('viewPronouns').innerText = data.pronouns || "N/A";
+            document.getElementById('viewAlign').innerText = data.alignment || "True Neutral";
+            document.getElementById('viewApp').innerText = data.appearance || "N/A";
+            document.getElementById('viewBack').innerText = data.backstory || "No backstory written.";
+            document.getElementById('viewPers').innerText = (data.personality || "") + "\n\n" + (data.hobbies || "");
+
+            // Stats
+            const stats = data.stats || {STR:10, DEX:10, INT:10, CHA:10};
+            document.getElementById('viewSTR').innerText = stats.STR || 10;
+            document.getElementById('viewDEX').innerText = stats.DEX || 10;
+            document.getElementById('viewINT').innerText = stats.INT || 10;
+            document.getElementById('viewCHA').innerText = stats.CHA || 10;
+
+            // Setup Buttons
+            document.getElementById('btnEdit').onclick = () => transitionToEdit();
+            document.getElementById('btnDelete').onclick = () => deletePersona(data.id);
+
+            openModal('previewModal');
+        }
+
+        // 3. TRANSITION PREVIEW -> EDIT
+        function transitionToEdit() {
+            closeModal('previewModal');
+            if(currentPersonaData) {
+                loadIntoForm(currentPersonaData);
+                openModal('editModal');
+            }
+        }
+
+        // --- FORM LOGIC ---
+
+        function clearForm() {
+            document.getElementById('personaId').value = ""; // Clear ID -> Create Mode
+            document.getElementById('formTitle').innerText = "Create New Persona";
+            document.getElementById('msg').innerText = "";
+            
+            document.querySelectorAll('#editModal input:not([type="hidden"]), #editModal textarea').forEach(i => {
+                i.value = (i.type === 'number') ? 10 : ''; 
+            });
+            document.getElementById('charAlign').selectedIndex = 0;
+            document.getElementById('charClass').value = "Freelancer";
+        }
+
+        function loadIntoForm(data) {
+            document.getElementById('personaId').value = data.id; 
+            document.getElementById('formTitle').innerText = "Editing: " + data.name;
+            document.getElementById('msg').innerText = "";
+
+            document.getElementById('charName').value = data.name || "";
+            document.getElementById('charAge').value = data.age || "";
+            document.getElementById('charPronouns').value = data.pronouns || "";
+            document.getElementById('charHobbies').value = data.hobbies || "";
+            document.getElementById('charApp').value = data.appearance || "";
+            document.getElementById('charPers').value = data.personality || "";
+            document.getElementById('charBack').value = data.backstory || "";
+            document.getElementById('charClass').value = data.class || "";
+            document.getElementById('charAlign').value = data.alignment || "True Neutral";
+            
+            const stats = data.stats || {};
+            document.getElementById('sSTR').value = stats.STR || 10;
+            document.getElementById('sDEX').value = stats.DEX || 10;
+            document.getElementById('sINT').value = stats.INT || 10;
+            document.getElementById('sCHA').value = stats.CHA || 10;
+        }
+
+        async function savePersona() {
+            const btn = document.querySelector('#editModal .btn-gold');
+            const originalText = btn.textContent;
+            btn.textContent = "Saving...";
+            btn.disabled = true;
+
+            const payload = {
+                token: document.getElementById('token').value,
+                id: document.getElementById('personaId').value || null,
+                name: document.getElementById('charName').value,
+                class_name: document.getElementById('charClass').value || "Freelancer",
+                age: parseInt(document.getElementById('charAge').value) || 25,
+                pronouns: document.getElementById('charPronouns').value,
+                appearance: document.getElementById('charApp').value,
+                personality: document.getElementById('charPers').value,
+                hobbies: document.getElementById('charHobbies').value,
+                backstory: document.getElementById('charBack').value,
+                alignment: document.getElementById('charAlign').value,
+                stats: {
+                    STR: parseInt(document.getElementById('sSTR').value) || 10,
+                    DEX: parseInt(document.getElementById('sDEX').value) || 10,
+                    INT: parseInt(document.getElementById('sINT').value) || 10,
+                    CHA: parseInt(document.getElementById('sCHA').value) || 10
+                }
+            };
+
+            try {
+                const res = await fetch('/api/rpg/persona/save', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+
+                if(res.ok) {
+                    const action = payload.id ? "Updated" : "Created";
+                    document.getElementById('msg').innerHTML = `<span class="text-green-400">✅ ${action} Successfully!</span>`;
+                    setTimeout(() => location.reload(), 800);
+                } else {
+                    document.getElementById('msg').innerHTML = '<span class="text-red-400">❌ Error Saving.</span>';
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            } catch(e) {
+                console.error(e);
+                document.getElementById('msg').innerHTML = '<span class="text-red-400">❌ Connection Error.</span>';
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+
+        async function deletePersona(id) {
+            if(!confirm("Are you sure you want to delete this persona?\nThis action cannot be undone.")) return;
+            const token = document.getElementById('token').value;
+            
+            try {
+                const res = await fetch(`/api/rpg/persona/delete/${id}?token=${token}`, { method: 'DELETE' });
+                if(res.ok) location.reload();
+                else alert("Failed to delete.");
+            } catch(e) { console.error(e); }
+        }
+    </script>
+</body>
+</html>

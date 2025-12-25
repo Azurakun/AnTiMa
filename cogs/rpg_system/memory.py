@@ -29,6 +29,13 @@ class RPGContextManager:
             {"$push": {"turn_history": entry}}
         )
 
+    def delete_last_turn(self, thread_id):
+        """Removes the last turn from the database history."""
+        rpg_sessions_collection.update_one(
+            {"thread_id": int(thread_id)},
+            {"$pop": {"turn_history": 1}}
+        )
+
     def load_full_history(self, session_data):
         """Reconstructs the entire story from the database logs."""
         history = session_data.get("turn_history", [])
