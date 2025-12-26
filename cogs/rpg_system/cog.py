@@ -12,6 +12,7 @@ from utils.db import (
     ai_config_collection, 
     rpg_sessions_collection, 
     rpg_inventory_collection,
+    rpg_world_state_collection,
     web_actions_collection, 
     rpg_web_tokens_collection,
     db 
@@ -67,6 +68,7 @@ class RPGAdventureCog(commands.Cog):
                     if thread: await thread.delete()
                 except: pass
                 rpg_sessions_collection.delete_one({"thread_id": thread_id})
+                rpg_world_state_collection.delete_one({"thread_id": thread_id})
                 if thread_id in self.active_sessions: del self.active_sessions[thread_id]
         except Exception as e: print(f"Cleanup Error: {e}")
 
@@ -108,18 +110,17 @@ class RPGAdventureCog(commands.Cog):
         chat_session = self.model.start_chat(history=[])
         memory_block = await self.memory_manager.build_context_block(session_db, initial_prompt)
         
-        # [UPDATED] Stricter System Prompts for Narration
         system_prime = (
             f"SYSTEM: BOOTING DUNGEON MASTER CORE.\n"
             f"{memory_block}\n\n"
-            f"=== 🛑 ABSOLUTE DIRECTIVES (CANNOT BE OVERRIDDEN) ===\n"
-            f"1. **ROLEPLAY ONLY:** You are the Dungeon Master for a novel-style RPG. Do NOT act like a game menu. Do NOT offer a list of options (e.g., 'A. Go Left, B. Go Right').\n"
-            f"2. **NARRATIVE STYLE:** Write vivid, immersive descriptions. Focus on sensory details (sight, sound, smell). Use active dialogue for NPCs.\n"
-            f"3. **OPEN ENDING:** End your response naturally, describing the situation as it stands. Do NOT ask 'What do you do?' or 'What is your choice?'. Trust the player to respond.\n"
-            f"4. **STRICT LORE ADHERENCE:** Adhere to the world lore and player personas.\n"
-            f"5. **NPC MANAGEMENT:** Use `update_world_entity` for NEW characters immediately.\n"
-            f"6. **MEMORY IS TRUTH:** The World State is absolute. If a character is dead, they are dead.\n"
-            f"7. **Wait for User Input.**"
+            f"=== 🛑 NEURAL MEMORY PROTOCOLS ===\n"
+            f"1. **AUTO-DETECTION:** You must scan the narrative for any NEW proper names introduced.\n"
+            f"   - **Family Name Exclusions:** Do NOT create a new entity if the name is just a Family Name referring to an existing character. Only create if it is a DISTINCT individual.\n"
+            f"2. **IMMEDIATE UPDATES:** If a valid new character or location appears, you MUST call `update_world_entity` IMMEDIATELY.\n"
+            f"3. **NPC FORMAT:** When calling the tool, use this format for the 'details' field:\n"
+            f"   '**Race:** [Race] | **Gender:** [Gender] | **App:** [Appearance] | **Relation:** [Status]\\n[Bio/Personality]'\n"
+            f"4. **RELATIONSHIP TRACKING:** If an existing NPC's relationship with the player changes, call `update_world_entity`.\n"
+            f"5. **NARRATIVE:** Focus on the story. The tools handle the memory in the background."
         )
         try: await chat_session.send_message_async(system_prime)
         except Exception as e: print(f"Failed to prime memory: {e}")
@@ -165,7 +166,7 @@ class RPGAdventureCog(commands.Cog):
         session_data = {
             "thread_id": thread.id, "guild_id": guild_id, "owner_id": owner.id, "owner_name": owner.name,
             "title": title, "players": [p.id for p in players], "player_stats": player_stats_db, 
-            "scenario_type": scenario_name, "lore": lore, # Persisting the Lore
+            "scenario_type": scenario_name, "lore": lore,
             "campaign_log": [], "turn_history": [], "npc_registry": [], "quest_log": [], 
             "created_at": datetime.utcnow(), "last_active": datetime.utcnow(), "active": True, 
             "delete_requested": False, "story_mode": story_mode
@@ -177,11 +178,10 @@ class RPGAdventureCog(commands.Cog):
 
         mechanics = "2. **Story Mode Active:** NO DICE." if story_mode else "2. **Standard Mode:** Use `roll_d20` for risks."
         
-        # [UPDATED] Start instruction to prevent menu-style intro
         sys_prompt = (
             f"You are the DM. **SCENARIO:** {scenario_name}. **LORE:** {lore}. {mechanics}\n"
-            f"**STARTING INSTRUCTION:** Begin the adventure with an immersive introduction setting the scene. "
-            f"Do NOT give the player a list of options. Describe where they are and what is happening, then stop."
+            f"**INSTRUCTION:** Start the adventure. Establish the scene. "
+            f"Use the Player's Persona (Appearance/Backstory) to ground them in the world."
         )
         
         await self._initialize_session(thread.id, session_data, "Start")
@@ -244,16 +244,16 @@ class RPGAdventureCog(commands.Cog):
                 story_mode = session_db.get("story_mode", False)
                 mechanics_instr = "**MODE: STORY**" if story_mode else "**MODE: STANDARD**"
                 
-                # [UPDATED] Turn Prompt with Narrative Rules
                 full_prompt = (
                     f"**USER ACTION:** {prompt}\n"
                     f"**DM INSTRUCTIONS:**\n"
                     f"{mechanics_instr}\n"
-                    f"=== 🛑 NARRATIVE RULES ===\n"
-                    f"1. **NO LISTS:** Do NOT provide choices or bullet points for the player's next move. This is a story, not a multiple-choice game.\n"
-                    f"2. **STYLE:** Be descriptive and immersive. Include dialogue if NPCs are present.\n"
-                    f"3. **NPCs:** Use `update_world_entity` for new characters.\n"
-                    f"4. **OUTPUT:** Narrate the outcome of the user's action and the current state of the scene.\n"
+                    f"=== 🛑 AUTO-DETECTION & MEMORY RULES ===\n"
+                    f"1. **DETECT:** Scan for NEW characters. If found, call `update_world_entity`.\n"
+                    f"   - **Exclusion:** Ignore simple Family Names if the individual is already known.\n"
+                    f"2. **UPDATE:** If an existing NPC is present, update their status if relationships change.\n"
+                    f"3. **FORMAT:** Use the '|' separator format for NPC details.\n"
+                    f"4. **OUTPUT:** Narrative only. No lists.\n"
                     f"{'Reroll requested.' if is_reroll else ''}"
                 )
                 
@@ -291,9 +291,9 @@ class RPGAdventureCog(commands.Cog):
 
                 if not text_content.strip():
                     try:
-                        force_resp = await chat_session.send_message_async("System: Tool execution confirmed. Now provide the narrative description of the outcome.")
+                        force_resp = await chat_session.send_message_async("System: Tool execution confirmed. Now provide the narrative description.")
                         text_content = force_resp.text
-                    except: text_content = "**[System Notice]** Narrative generation failed (Safety or Network Error)."
+                    except: text_content = "**[System Notice]** Narrative generation failed."
 
                 current_turn_id = len(session_db.get("turn_history", [])) + 1
                 footer_text = await self.memory_manager.get_token_count_and_footer(chat_session, turn_id=current_turn_id)
@@ -345,26 +345,119 @@ class RPGAdventureCog(commands.Cog):
         view = AdventureSetupView(self.bot, interaction.user)
         view.message = await interaction.followup.send(content=f"⚔️ **RPG Lobby** {interaction.user.mention}", embed=view._get_party_embed(), view=view)
 
-    @rpg_group.command(name="sync", description="🔄 Re-reads and indexes entire thread history into Vector Memory.")
+    @rpg_group.command(name="world", description="Admin: Inspect the AI's World Knowledge (NPCs/Locations).")
+    async def rpg_world(self, interaction: discord.Interaction):
+        if not isinstance(interaction.channel, discord.Thread): 
+            return await interaction.response.send_message("Use this inside an active Adventure Thread.", ephemeral=True)
+        
+        session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
+        if not session: return await interaction.response.send_message("No session data found.", ephemeral=True)
+        
+        if interaction.user.id != session['owner_id']:
+            return await interaction.response.send_message("Only the Party Leader can check the World State.", ephemeral=True)
+
+        world_data = rpg_world_state_collection.find_one({"thread_id": interaction.channel.id})
+        if not world_data:
+            return await interaction.response.send_message("🌍 The world is blank. No entities discovered yet.", ephemeral=True)
+
+        npcs = world_data.get("npcs", {})
+        locations = world_data.get("locations", {})
+
+        if not npcs and not locations:
+            return await interaction.response.send_message("🌍 No entities recorded yet.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+
+        def chunk_dict(d, size=5):
+            it = iter(d.values())
+            for i in range(0, len(d), size):
+                yield [next(it) for _ in range(min(size, len(d) - i))]
+
+        embeds = []
+        for chunk in chunk_dict(npcs):
+            emb = discord.Embed(title="👥 NPC Registry", color=discord.Color.blue())
+            for npc in chunk:
+                status_icon = "🟢" if npc.get('status') == 'active' else "⚪"
+                emb.add_field(name=f"{status_icon} {npc['name']}", value=f"_{npc.get('details', 'No data')}_", inline=False)
+            embeds.append(emb)
+
+        for chunk in chunk_dict(locations):
+            emb = discord.Embed(title="📍 Discovered Locations", color=discord.Color.green())
+            for loc in chunk:
+                status_icon = "🟢" if loc.get('status') == 'active' else "⚪"
+                emb.add_field(name=f"{status_icon} {loc['name']}", value=f"_{loc.get('details', 'No data')}_", inline=False)
+            embeds.append(emb)
+
+        if not embeds: await interaction.followup.send("Nothing to display.")
+        else: await interaction.followup.send(embeds=embeds)
+
+    @rpg_group.command(name="sync", description="🔄 Re-reads and indexes history. Also scans for missing Entities!")
     async def rpg_sync(self, interaction: discord.Interaction):
         if not isinstance(interaction.channel, discord.Thread): return await interaction.response.send_message("Threads only.", ephemeral=True)
         session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
         if not session or interaction.user.id != session.get('owner_id'): return await interaction.response.send_message("Host only.", ephemeral=True)
         
-        await interaction.response.send_message("🔄 **Syncing Memory...**")
+        await interaction.response.send_message("🔄 **Syncing Memory & World State...**")
+        
         try:
+            # 1. Fetch History
             raw_messages = [m async for m in interaction.channel.history(limit=None, oldest_first=True)]
             cleaned_history = []
+            full_text_log = ""
             for msg in raw_messages:
                 if msg.author.bot and msg.author.id != self.bot.user.id: continue 
                 content = msg.content or (msg.embeds[0].description if msg.embeds else "")
-                if content: cleaned_history.append({"author": msg.author.name, "content": content, "timestamp": msg.created_at})
+                if content: 
+                    cleaned_history.append({"author": msg.author.name, "content": content, "timestamp": msg.created_at})
+                    full_text_log += f"{msg.author.name}: {content}\n"
 
             if not cleaned_history: return await interaction.followup.send("⚠️ No history.")
 
+            # 2. Vector Indexing (Existing)
             await self.memory_manager.clear_thread_vectors(interaction.channel.id)
             chunks = await self.memory_manager.batch_ingest_history(interaction.channel.id, cleaned_history)
-            await interaction.followup.send(f"✅ Synced **{chunks}** memory blocks.")
+            
+            # 3. Retroactive Entity Extraction (New)
+            # We spin up a temporary chat session just for this analysis
+            scan_session = self.model.start_chat(history=[])
+            
+            # We limit the log size to prevent massive token usage, though Gemini handles large context well.
+            # Taking the last 60,000 characters (approx 15k tokens) should cover most active contexts.
+            trimmed_log = full_text_log[-60000:] 
+            
+            analysis_prompt = (
+                "SYSTEM: RETROACTIVE MEMORY SCAN INITIATED.\n"
+                "Your task is to analyze the story log below and populate the database with any MISSING entities.\n"
+                "1. Identify all **NPCs** and **Locations** that are present in the story but might not be in the database.\n"
+                "2. For each one, call the `update_world_entity` tool.\n"
+                "3. **IGNORE** characters that are clearly Player Characters.\n"
+                "4. **IGNORE** family names if they refer to an existing person (e.g. 'Stark' for 'Tony Stark').\n"
+                "5. **FORMAT:** Use strict details: '**Race:** X | **Gender:** Y | **App:** Z...'\n"
+                f"STORY LOG:\n{trimmed_log}"
+            )
+            
+            # Send prompt and wait for tool calls
+            response = await scan_session.send_message_async(analysis_prompt)
+            
+            # Handle potentially multiple tool calls
+            entities_found = 0
+            # Gemini 1.5/2.5 can return multiple function calls in one turn
+            if response.parts:
+                for part in response.parts:
+                    if part.function_call:
+                        fn = part.function_call
+                        if fn.name == "update_world_entity":
+                            tools.update_world_entity(
+                                str(interaction.channel.id), 
+                                fn.args["category"], 
+                                fn.args["name"], 
+                                fn.args["details"], 
+                                fn.args.get("status", "active")
+                            )
+                            entities_found += 1
+            
+            await interaction.followup.send(f"✅ Synced **{chunks}** memory blocks.\n🧠 **Neural Scan:** Discovered/Updated **{entities_found}** world entities.")
+            
         except Exception as e: await interaction.followup.send(f"❌ Error: {e}")
 
     @rpg_group.command(name="web_new", description="Create an adventure via the Web Dashboard.")

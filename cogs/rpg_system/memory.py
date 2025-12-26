@@ -2,6 +2,7 @@
 import discord
 from datetime import datetime
 import math
+import re
 from utils.db import rpg_sessions_collection, rpg_vector_memory_collection, rpg_world_state_collection
 from utils.timezone_manager import get_local_time
 import google.generativeai as genai
@@ -47,10 +48,6 @@ class RPGContextManager:
         rpg_vector_memory_collection.delete_many({"thread_id": int(thread_id)})
 
     async def purge_memories_since(self, thread_id, cutoff_timestamp):
-        """
-        Deletes all vector memories created AFTER the given timestamp.
-        Used for rewinding the story state.
-        """
         rpg_vector_memory_collection.delete_many({
             "thread_id": int(thread_id),
             "timestamp": {"$gt": cutoff_timestamp}
@@ -114,41 +111,95 @@ class RPGContextManager:
                 {"$set": {"turn_history": remaining}}
             )
 
-    def _format_world_sheet(self, thread_id):
+    def _format_player_profiles(self, session_data):
+        """Extracts deep persona details for players."""
+        profiles = session_data.get("player_stats", {})
+        output = []
+        for user_id, stats in profiles.items():
+            name = stats.get("name", "Unknown Hero")
+            p_class = stats.get("class", "Freelancer")
+            pronouns = stats.get("pronouns", "They/Them")
+            backstory = stats.get("backstory", "No history known.")
+            appearance = stats.get("appearance", "Standard adventurer gear.")
+            personality = stats.get("personality", "Determined.")
+            
+            profile_txt = (
+                f"👤 **PLAYER: {name}** ({p_class})\n"
+                f"   - **Pronouns:** {pronouns}\n"
+                f"   - **Appearance:** {appearance}\n"
+                f"   - **Personality:** {personality}\n"
+                f"   - **Backstory:** {backstory}"
+            )
+            output.append(profile_txt)
+        return "\n\n".join(output)
+
+    def _format_world_sheet(self, thread_id, current_input=""):
+        """
+        Dynamically fetches Active NPCs AND Referenced Inactive NPCs.
+        Matches names in 'current_input' to inactive entities to 'wake' them up in context.
+        """
         data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)})
         if not data: return "No detailed world data."
+        
         output = []
         npcs = data.get("npcs", {})
+        locations = data.get("locations", {})
+        
+        # 1. Process Active Entities (Always Visible)
+        active_output = []
         active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
         if active_npcs:
-            output.append("**👥 NPC DOSSIERS (Active):**")
+            active_output.append("**👥 ACTIVE NPCs (In Scene):**")
             for npc in active_npcs:
-                # Basic display, AI has full details in tool update
-                output.append(f"- **{npc['name']}**: {npc['details']}")
+                # Expecting rich details in 'details' field from the updated Prompt
+                active_output.append(f"> **{npc['name']}**: {npc['details']}")
         
-        locs = data.get("locations", {})
-        active_locs = [v for v in locs.values() if v.get("status") == "active"]
+        active_locs = [v for v in locations.values() if v.get("status") == "active"]
         if active_locs:
-             output.append("**📍 CURRENT LOCATION:**")
+             active_output.append("\n**📍 CURRENT LOCATION:**")
              for loc in active_locs:
-                 output.append(f"- **{loc['name']}**: {loc['details']}")
-        return "\n".join(output)
+                 active_output.append(f"> **{loc['name']}**: {loc['details']}")
+
+        # 2. Context Refinement: Check for Mentions of Inactive NPCs
+        mentioned_output = []
+        input_lower = current_input.lower()
+        
+        # Check inactive NPCs
+        for key, npc in npcs.items():
+            if npc.get("status") != "active":
+                # Check if name or alias is in input
+                name = npc['name']
+                # Simple check: is the name (or significant part of it) in the input?
+                if name.lower() in input_lower:
+                    mentioned_output.append(f"   - **{name}** (Recalled): {npc['details']}")
+
+        if mentioned_output:
+            active_output.append("\n**🧠 RECALLED ENTITIES (Context Injection):**")
+            active_output.extend(mentioned_output)
+
+        return "\n".join(active_output)
 
     async def build_context_block(self, session_data, current_user_input):
         thread_id = session_data['thread_id']
         owner_id = session_data.get('owner_id')
         local_time_str = get_local_time(owner_id, fmt="%Y-%m-%d %H:%M %Z") if owner_id else "Unknown Date"
         
-        lore = session_data.get("lore", "Standard Fantasy Setting (No Custom Lore Provided)")
+        lore = session_data.get("lore", "Standard Fantasy Setting")
         
+        # 1. Player Personas
+        player_context = self._format_player_profiles(session_data)
+
+        # 2. World State (Active + Triggered)
+        world_sheet = self._format_world_sheet(thread_id, current_user_input)
+        
+        # 3. RAG Memories
         rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
         memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No specific past memories triggered."
         
-        world_sheet = self._format_world_sheet(thread_id)
-        
+        # 4. Recent History
         history = session_data.get("turn_history", [])
         text_log = []
-        for turn in history:
+        for turn in history[-8:]: # Last 8 turns for immediate context
             text_log.append(f"[{turn['user_name']}]: {turn['input']}")
             text_log.append(f"[DM]: {turn['output']}")
         recent_history = "\n\n".join(text_log)
@@ -156,21 +207,20 @@ class RPGContextManager:
         campaign_summary = session_data.get("campaign_log", [])
         log_text = "\n".join([f"- {item}" for item in campaign_summary[-10:]])
 
-        # [UPDATED] Added Narrative Style Guide directly into memory context
         context = (
-            f"=== 🧠 SYSTEM MEMORY ===\n"
-            f"**REAL WORLD TIME:** {local_time_str}\n"
-            f"**SCENARIO:** {session_data.get('scenario_type', 'Unknown')}\n"
-            f"**LORE / WORLD SETTING:**\n{lore}\n\n"
-            f"=== ✍️ NARRATIVE STYLE GUIDE ===\n"
-            f"1. **NO LISTS:** Do not provide multiple choice options.\n"
-            f"2. **NO 'WHAT DO YOU DO?':** Let the story hang naturally.\n"
-            f"3. **IMMERSIVE:** Use dialogue and sensory details.\n\n"
-            f"=== 🌍 WORLD STATE (NPCs & LOCATIONS) ===\n{world_sheet}\n\n"
-            f"=== 📚 ARCHIVED MEMORIES (RAG) ===\n{memory_text}\n\n"
+            f"=== 🧠 SYSTEM CONTEXT ===\n"
+            f"**REAL TIME:** {local_time_str}\n"
+            f"**SCENARIO:** {session_data.get('scenario_type', 'Unknown')}\n\n"
+            f"=== 🎭 PLAYER PERSONAS (RESPECT PRONOUNS & BACKSTORY) ===\n"
+            f"{player_context}\n\n"
+            f"=== 🌍 WORLD STATE & NPC DOSSIERS ===\n"
+            f"{world_sheet}\n\n"
+            f"=== 📜 LORE & RAG MEMORY ===\n"
+            f"{lore}\n"
+            f"**Recalled Memories:**\n{memory_text}\n\n"
             f"=== 📝 CAMPAIGN LOG ===\n{log_text}\n\n"
-            f"=== 📜 RECENT DIALOGUE ===\n{recent_history}\n"
-            f"=== MEMORY END ==="
+            f"=== 💬 RECENT DIALOGUE ===\n{recent_history}\n"
+            f"=== END MEMORY ==="
         )
         return context
 
@@ -188,10 +238,6 @@ class RPGContextManager:
         rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {"$pop": {"turn_history": 1}})
         
     def trim_history(self, thread_id, target_index):
-        """
-        Trims history to target_index.
-        Returns: (deleted_turns_list, timestamp_of_rewind_point)
-        """
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
         if not session or "turn_history" not in session: return [], None
         
@@ -199,7 +245,6 @@ class RPGContextManager:
         if target_index < 0: target_index = 0
         if target_index >= len(full_history): return [], None
         
-        # Simpler: target_index is the index of the last turn we KEEP.
         new_history = full_history[:target_index+1] 
         deleted_turns = full_history[target_index+1:]
         

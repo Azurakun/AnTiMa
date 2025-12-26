@@ -59,12 +59,13 @@ def update_world_entity(thread_id: str, category: str, name: str, details: str, 
     Args:
         category: "NPC", "Location", "Quest", or "Lore"
         name: The name of the entity (e.g., "Grom the Goblin", "Darkwood Tavern").
-        details: Detailed description, personality, secret notes, or current state.
+        details: Detailed description. MUST follow the prompt's formatting guidelines (Race, Gender, App, etc.)
         status: "active" (currently relevant) or "inactive" (moved to background).
     """
     try:
-        # We store these in a structured dictionary within the DB
-        key = f"{category.lower()}s.{name.replace('.', '_')}" 
+        # Sanitize keys to prevent MongoDB dot-notation errors
+        safe_name = name.replace('.', '_').replace('$', '')
+        key = f"{category.lower()}s.{safe_name}" 
         
         rpg_world_state_collection.update_one(
             {"thread_id": int(thread_id)},
