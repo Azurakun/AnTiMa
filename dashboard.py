@@ -1,3 +1,4 @@
+# dashboard.py
 from fastapi import FastAPI, WebSocket, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -16,12 +17,13 @@ from utils.db import (
     rpg_sessions_collection, 
     logs_collection,
     ai_config_collection,
-    user_personas_collection, # Ensure this is added to utils/db.py
+    user_personas_collection,
     rpg_web_tokens_collection,
     web_actions_collection,
+    rpg_world_state_collection,   # <--- ADDED
+    rpg_vector_memory_collection, # <--- ADDED
     db 
 )
-# Ensure cogs.rpg_system.config exists and has these variables
 from cogs.rpg_system.config import SCENARIOS, PREMADE_CHARACTERS
 
 app = FastAPI()
@@ -40,11 +42,11 @@ class RPGSetupData(BaseModel):
     scenario: str
     lore: str
     story_mode: bool
-    character: dict  # Includes name, class, stats, backstory, save_as_persona (bool), etc.
+    character: dict  
 
 class PersonaModel(BaseModel):
     token: str
-    id: str | None = None # Optional ID for updates
+    id: str | None = None 
     name: str
     class_name: str
     age: int
@@ -74,12 +76,58 @@ class ActionRequest(BaseModel):
 # --- HELPER FUNCTIONS ---
 
 def serialize_persona(persona):
-    """Converts datetime objects to strings for JSON serialization."""
     if "created_at" in persona and isinstance(persona["created_at"], datetime):
         persona["created_at"] = persona["created_at"].isoformat()
     if "updated_at" in persona and isinstance(persona["updated_at"], datetime):
         persona["updated_at"] = persona["updated_at"].isoformat()
     return persona
+
+def fetch_rpg_full_memory(thread_id: str):
+    """Fetches comprehensive state data for a specific RPG session."""
+    tid = int(thread_id)
+    
+    # 1. Basic Session Data
+    session = rpg_sessions_collection.find_one({"thread_id": tid})
+    if not session: return None
+
+    # 2. World State (NPCs, Locations)
+    world_state = rpg_world_state_collection.find_one({"thread_id": tid}) or {}
+    
+    # 3. Vector Memories (Last 20)
+    vectors = list(rpg_vector_memory_collection.find({"thread_id": tid}).sort("timestamp", -1).limit(20))
+    
+    # Clean up Vector Data for JSON
+    clean_vectors = []
+    for v in vectors:
+        clean_vectors.append({
+            "text": v.get("text", "No text"),
+            "timestamp": v.get("timestamp", datetime.utcnow()).isoformat()
+        })
+
+    # Clean up World State
+    clean_npcs = []
+    if "npcs" in world_state:
+        for key, val in world_state["npcs"].items():
+            clean_npcs.append(val)
+    
+    clean_locations = []
+    if "locations" in world_state:
+        for key, val in world_state["locations"].items():
+            clean_locations.append(val)
+
+    return {
+        "meta": {
+            "title": session.get("title"),
+            "scenario": session.get("scenario_type"),
+            "active": session.get("active"),
+            "turn_count": len(session.get("turn_history", []))
+        },
+        "players": session.get("player_stats", {}),
+        "npcs": clean_npcs,
+        "locations": clean_locations,
+        "campaign_log": session.get("campaign_log", [])[-20:], # Last 20 logs
+        "memories": clean_vectors
+    }
 
 # --- FETCH FUNCTIONS (Stats & Logs) ---
 
@@ -192,172 +240,95 @@ async def delete_rpg_session(thread_id: str):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+@app.get("/api/rpg/memory/{thread_id}")
+async def get_rpg_memory(thread_id: str):
+    """API Endpoint to fetch full memory details for a story."""
+    try:
+        data = await run_sync_db(fetch_rpg_full_memory, thread_id)
+        if not data: return JSONResponse({"error": "Session not found"}, status_code=404)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 # --- RPG SETUP & PERSONA ROUTES ---
 
 @app.get("/rpg/setup", response_class=HTMLResponse)
 async def rpg_setup_page(request: Request, token: str):
-    """
-    Serves the RPG setup page. 
-    Validates token, then fetches User Personas, Premades, and Scenarios.
-    """
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token, "status": "pending"}))
     if not token_doc:
         return HTMLResponse("<h1>Invalid or Expired Link</h1><p>Please generate a new link in Discord using <code>/rpg web_new</code>.</p>", status_code=404)
-    
-    # Fetch User's Saved Personas
     user_id = token_doc["user_id"]
     personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
-    
-    # Serialize datetimes for Jinja2/JSON
     personas = [serialize_persona(p) for p in personas]
-    
     return templates.TemplateResponse("rpg_setup.html", {
-        "request": request, 
-        "token": token, 
-        "scenarios": SCENARIOS,
-        "premades": PREMADE_CHARACTERS,
-        "personas": personas
+        "request": request, "token": token, "scenarios": SCENARIOS, "premades": PREMADE_CHARACTERS, "personas": personas
     })
 
 @app.get("/rpg/personas", response_class=HTMLResponse)
 async def rpg_personas_page(request: Request, token: str):
-    """
-    Serves the Persona Management page.
-    """
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token, "status": "pending"}))
     if not token_doc:
         return HTMLResponse("<h1>Invalid or Expired Link</h1><p>Please generate a new link in Discord using <code>/rpg personas</code>.</p>", status_code=404)
-    
-    # Fetch User's Saved Personas
     user_id = token_doc["user_id"]
     personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
-    
-    # Serialize datetimes for Jinja2/JSON
     personas = [serialize_persona(p) for p in personas]
-    
-    return templates.TemplateResponse("personas.html", {
-        "request": request, 
-        "token": token, 
-        "personas": personas
-    })
+    return templates.TemplateResponse("personas.html", {"request": request, "token": token, "personas": personas})
 
 @app.post("/api/rpg/persona/save")
 async def save_persona(data: PersonaModel):
-    """
-    Saves OR Updates a character persona.
-    """
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": data.token}))
-    if not token_doc: 
-        raise HTTPException(403, "Invalid Token or Session Expired")
-    
+    if not token_doc: raise HTTPException(403, "Invalid Token or Session Expired")
     user_id = token_doc["user_id"]
-    
     if data.id:
-        # UPDATE EXISTING
         update_data = {
-            "name": data.name,
-            "class": data.class_name,
-            "age": data.age,
-            "pronouns": data.pronouns,
-            "appearance": data.appearance,
-            "personality": data.personality,
-            "hobbies": data.hobbies,
-            "backstory": data.backstory,
-            "alignment": data.alignment,
-            "stats": data.stats,
-            "updated_at": datetime.utcnow()
+            "name": data.name, "class": data.class_name, "age": data.age, "pronouns": data.pronouns,
+            "appearance": data.appearance, "personality": data.personality, "hobbies": data.hobbies,
+            "backstory": data.backstory, "alignment": data.alignment, "stats": data.stats, "updated_at": datetime.utcnow()
         }
-        await run_sync_db(lambda: user_personas_collection.update_one(
-            {"id": data.id, "user_id": user_id},
-            {"$set": update_data}
-        ))
+        await run_sync_db(lambda: user_personas_collection.update_one({"id": data.id, "user_id": user_id}, {"$set": update_data}))
         return JSONResponse({"status": "updated", "id": data.id})
-        
     else:
-        # CREATE NEW
         new_id = str(uuid.uuid4())
         persona_doc = {
-            "id": new_id,
-            "user_id": user_id,
-            "name": data.name,
-            "class": data.class_name,
-            "age": data.age,
-            "pronouns": data.pronouns,
-            "appearance": data.appearance,
-            "personality": data.personality,
-            "hobbies": data.hobbies,
-            "backstory": data.backstory,
-            "alignment": data.alignment,
-            "stats": data.stats,
-            "created_at": datetime.utcnow()
+            "id": new_id, "user_id": user_id, "name": data.name, "class": data.class_name,
+            "age": data.age, "pronouns": data.pronouns, "appearance": data.appearance,
+            "personality": data.personality, "hobbies": data.hobbies, "backstory": data.backstory,
+            "alignment": data.alignment, "stats": data.stats, "created_at": datetime.utcnow()
         }
         await run_sync_db(lambda: user_personas_collection.insert_one(persona_doc))
         return JSONResponse({"status": "created", "id": new_id})
 
 @app.delete("/api/rpg/persona/delete/{persona_id}")
 async def delete_persona(persona_id: str, token: str):
-    """
-    Deletes a specific persona. Requires token for auth.
-    """
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token}))
-    if not token_doc: 
-        raise HTTPException(403, "Invalid Token")
-    
+    if not token_doc: raise HTTPException(403, "Invalid Token")
     res = await run_sync_db(lambda: user_personas_collection.delete_one({"id": persona_id, "user_id": token_doc["user_id"]}))
-    if res.deleted_count == 0: 
-        return JSONResponse({"error": "Persona not found"}, status_code=404)
-    
+    if res.deleted_count == 0: return JSONResponse({"error": "Persona not found"}, status_code=404)
     return JSONResponse({"status": "deleted"})
 
 @app.post("/api/rpg/submit")
 async def submit_rpg_setup(data: RPGSetupData):
-    """
-    Submits the final RPG configuration.
-    Queues the 'create_rpg_web' action for the Discord Bot.
-    """
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one_and_update(
-        {"token": data.token, "status": "pending"},
-        {"$set": {"status": "submitted"}}
+        {"token": data.token, "status": "pending"}, {"$set": {"status": "submitted"}}
     ))
-    
-    if not token_doc: 
-        raise HTTPException(status_code=400, detail="Invalid or used token.")
-
-    # Optional: Save as Persona if checkbox was ticked
+    if not token_doc: raise HTTPException(status_code=400, detail="Invalid or used token.")
     if data.character.get("save_as_persona"):
         persona_doc = {
-            "id": str(uuid.uuid4()),
-            "user_id": token_doc["user_id"],
-            "name": data.character["name"],
-            "class": data.character["class"],
-            "age": data.character["age"],
-            "pronouns": data.character.get("pronouns", "They/Them"),
-            "appearance": data.character.get("appearance", ""),
-            "personality": data.character.get("personality", ""),
-            "hobbies": data.character.get("hobbies", ""),
-            "backstory": data.character["backstory"],
-            "alignment": data.character["alignment"],
-            "stats": data.character["stats"],
-            "created_at": datetime.utcnow()
+            "id": str(uuid.uuid4()), "user_id": token_doc["user_id"], "name": data.character["name"],
+            "class": data.character["class"], "age": data.character["age"], "pronouns": data.character.get("pronouns", "They/Them"),
+            "appearance": data.character.get("appearance", ""), "personality": data.character.get("personality", ""),
+            "hobbies": data.character.get("hobbies", ""), "backstory": data.character["backstory"],
+            "alignment": data.character["alignment"], "stats": data.character["stats"], "created_at": datetime.utcnow()
         }
         await run_sync_db(lambda: user_personas_collection.insert_one(persona_doc))
-
-    # Create the Action for the Bot
     action_doc = {
-        "type": "create_rpg_web",
-        "guild_id": token_doc["guild_id"],
-        "user_id": token_doc["user_id"],
-        "status": "pending",
-        "timestamp": datetime.utcnow(),
+        "type": "create_rpg_web", "guild_id": token_doc["guild_id"], "user_id": token_doc["user_id"],
+        "status": "pending", "timestamp": datetime.utcnow(),
         "data": {
-            "title": data.title,
-            "scenario": data.scenario,
-            "lore": data.lore,
-            "story_mode": data.story_mode,
-            "character": data.character
+            "title": data.title, "scenario": data.scenario, "lore": data.lore,
+            "story_mode": data.story_mode, "character": data.character
         }
     }
-    
     await run_sync_db(lambda: web_actions_collection.insert_one(action_doc))
     return JSONResponse({"status": "success", "message": "Adventure queued."})
 
@@ -374,17 +345,13 @@ async def update_bot_config(data: ConfigRequest):
         if data.bot_status: update_fields["bot_disabled"] = (data.bot_status == "off")
         if data.group_chat: update_fields["group_chat_enabled"] = (data.group_chat == "allow")
         if data.rpg_channel_id: update_fields["rpg_channel_id"] = int(data.rpg_channel_id)
-
         if not update_fields: return JSONResponse({"error": "No valid fields"}, status_code=400)
-
         ai_config_collection.update_one({"_id": str(data.guild_id)}, {"$set": update_fields}, upsert=True)
         live_activity_collection.insert_one({
-            "user": "Dashboard Admin", "guild": f"ID: {data.guild_id}",
-            "action": "Updated Config", "timestamp": datetime.utcnow()
+            "user": "Dashboard Admin", "guild": f"ID: {data.guild_id}", "action": "Updated Config", "timestamp": datetime.utcnow()
         })
         return JSONResponse({"status": "Configuration updated"})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/control/action/queue")
 async def queue_admin_action(data: ActionRequest):
@@ -396,12 +363,10 @@ async def queue_admin_action(data: ActionRequest):
         }
         web_actions_collection.insert_one(action_doc)
         live_activity_collection.insert_one({
-            "user": "Dashboard Admin", "guild": f"ID: {data.guild_id}",
-            "action": f"Queued {data.action_type.upper()}", "timestamp": datetime.utcnow()
+            "user": "Dashboard Admin", "guild": f"ID: {data.guild_id}", "action": f"Queued {data.action_type.upper()}", "timestamp": datetime.utcnow()
         })
         return JSONResponse({"status": f"Action '{data.action_type}' queued."})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
 
 # --- WEBSOCKET ---
 @app.websocket("/ws")

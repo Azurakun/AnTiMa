@@ -12,6 +12,8 @@ from utils.db import (
     ai_config_collection, 
     rpg_sessions_collection, 
     rpg_inventory_collection,
+    web_actions_collection, 
+    rpg_web_tokens_collection,
     db 
 )
 from utils.limiter import limiter
@@ -19,10 +21,6 @@ from .config import RPG_CLASSES
 from . import tools
 from .ui import RPGGameView, AdventureSetupView, CloseVoteView
 from .memory import RPGContextManager
-
-# Define collections locally if not in utils.db
-web_actions_collection = db["web_actions"]
-rpg_web_tokens_collection = db["rpg_web_tokens"]
 
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -34,12 +32,17 @@ class RPGAdventureCog(commands.Cog):
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
         }
         try:
+            # Initialize Gemini with ALL tools, including the new World Entity manager
             self.model = genai.GenerativeModel(
                 'gemini-2.5-pro',
                 tools=[
-                    tools.grant_item_to_player, tools.apply_damage, 
-                    tools.apply_healing, tools.deduct_mana, 
-                    tools.roll_d20, tools.update_journal
+                    tools.grant_item_to_player, 
+                    tools.apply_damage, 
+                    tools.apply_healing, 
+                    tools.deduct_mana, 
+                    tools.roll_d20, 
+                    tools.update_journal,
+                    tools.update_world_entity  # <--- NEW TOOL for Character Sheets/Locations
                 ],
                 safety_settings=self.safety_settings
             )
@@ -85,7 +88,6 @@ class RPGAdventureCog(commands.Cog):
                         data = action["data"]
                         c = data["character"]
                         
-                        # Build Rich Profile from Web Data
                         profile = {
                             "name": c.get("name"),
                             "class": c.get("class"),
@@ -121,26 +123,34 @@ class RPGAdventureCog(commands.Cog):
         except Exception as e:
             print(f"Poller Error: {e}")
 
-    async def _initialize_session(self, channel_id, session_db):
+    async def _initialize_session(self, channel_id, session_db, initial_prompt="Resume"):
+        """
+        Initializes the chat session. 
+        Crucially, this uses build_context_block to fetch the 'World Sheet' and 'RAG Memories'.
+        """
         chat_session = self.model.start_chat(history=[])
-        memory_block = self.memory_manager.build_context_block(session_db)
+        
+        # Build the dynamic context block (fetches from Vector DB and World State)
+        memory_block = await self.memory_manager.build_context_block(session_db, initial_prompt)
         
         system_prime = (
             f"SYSTEM: BOOTING DUNGEON MASTER CORE.\n"
             f"{memory_block}\n"
-            "**CRITICAL INSTRUCTION: CONTEXTUAL CONTINUITY**\n"
-            "1. **Strict Recall:** You are resuming an ongoing story. Rely ONLY on the provided Memory Block.\n"
-            "2. **NPC Protocol:** Do NOT mention names of NPCs unless they appear in the Memory Block. If not found, treat them as strangers described by appearance.\n"
-            "3. **Tone:** Maintain the exact narrative style of the previous logs.\n"
-            "4. Wait for the User's input to continue."
+            "**CRITICAL INSTRUCTION: STATE MANAGEMENT & MEMORY**\n"
+            "1. **World Sheet (Character Sheets):** The 'World Sheet' in the memory block contains the persistent state of NPCs and Locations.\n"
+            "2. **Update Responsibility:** If a NEW named NPC or Location becomes important, OR if an existing one changes significantly (e.g., an NPC dies, a town burns down), YOU MUST use the `update_world_entity` tool to save it.\n"
+            "3. **Consistency:** Check the 'Archived Memories' and 'World Sheet' before generating details. Do not contradict established facts.\n"
+            "4. **Tone:** Maintain the exact narrative style of the previous logs.\n"
+            "5. Wait for the User's input to continue."
         )
+        
         try: await chat_session.send_message_async(system_prime)
         except Exception as e: print(f"Failed to prime memory: {e}")
 
         self.active_sessions[channel_id] = {
             'session': chat_session, 
             'owner_id': session_db['owner_id'], 
-            'last_prompt': "Resume"
+            'last_prompt': initial_prompt
         }
         return True
 
@@ -220,7 +230,6 @@ class RPGAdventureCog(commands.Cog):
 
         char_details = []
         for pid, pdata in player_stats_db.items():
-            # Enhanced Character Context for AI
             detail = f"Player {pid} ({pdata.get('name', 'Unknown')}):\n"
             detail += f"   - Class: {pdata.get('class')} | Age: {pdata.get('age')}\n"
             detail += f"   - Pronouns: {pdata.get('pronouns', 'N/A')} | Alignment: {pdata.get('alignment', 'N/A')}\n"
@@ -242,14 +251,14 @@ class RPGAdventureCog(commands.Cog):
             f"**GUIDELINES:**\n"
             f"1. **Fiction Only:** Combat/Conflict allowed.\n"
             f"{mechanics}\n"
-            f"3. **Memory:** Use `update_journal`.\n"
+            f"3. **Memory:** Use `update_journal` for big events, `update_world_entity` for NPCs.\n"
             f"4. **Immersion:** Be descriptive.\n"
             f"**LORE:** {lore}\n"
             f"**PARTY DETAILS:**\n{'\n'.join(char_details)}\n"
             f"**START:** The players have gathered. Set the opening scene vividly, incorporating their personas."
         )
         
-        await self._initialize_session(thread.id, session_data)
+        await self._initialize_session(thread.id, session_data, "Start Adventure")
         await self.process_game_turn(thread, sys_prompt)
 
     async def reroll_turn_callback(self, interaction, thread_id):
@@ -257,8 +266,7 @@ class RPGAdventureCog(commands.Cog):
         if not session_db or interaction.user.id != session_db['owner_id']:
              return await interaction.followup.send("Leader only.", ephemeral=True)
         
-        try:
-            await interaction.message.delete()
+        try: await interaction.message.delete()
         except: pass 
         
         last_turn = None
@@ -273,14 +281,12 @@ class RPGAdventureCog(commands.Cog):
         if last_turn:
             prompt = last_turn.get("input", "Continue")
             msg_id = last_turn.get("user_message_id")
-            
             if msg_id:
                 try:
                     original_msg = await interaction.channel.fetch_message(int(msg_id))
                     if original_msg and original_msg.content:
                         prompt = f"{original_msg.author.name}: {original_msg.content}"
-                except Exception:
-                    pass
+                except Exception: pass
 
         if thread_id in self.active_sessions:
             del self.active_sessions[thread_id]
@@ -294,8 +300,13 @@ class RPGAdventureCog(commands.Cog):
         session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
         if not session_db: return
         
-        if channel.id not in self.active_sessions:
-            await self._initialize_session(channel.id, session_db)
+        # 1. Archive Old Turns (Free up context window space)
+        await self.memory_manager.archive_old_turns(channel.id, session_db)
+        
+        # 2. Re-Initialize Session (or refresh context) to include RAG & World Sheet for THIS turn
+        # We perform a "Soft Refresh" by creating a new session or injecting context. 
+        # For simplicity and robustness, we re-initialize the session with the latest state.
+        await self._initialize_session(channel.id, session_db, prompt)
         
         data = self.active_sessions[channel.id]
         chat_session = data['session']
@@ -312,13 +323,17 @@ class RPGAdventureCog(commands.Cog):
                 if story_mode else 
                 "**MODE: STANDARD.** Use `roll_d20` for checks. Use tools for HP/MP."
             )
+            
+            # 3. Construct the Dynamic Prompt
+            # We explicitly mention the "System Memory" block that was injected during _initialize_session
             full_prompt = (
                 f"**USER ACTION:** {prompt}\n"
                 f"**DM INSTRUCTIONS:**\n"
                 f"{mechanics_instr}\n"
-                f"1. **STRICT NPC PROTOCOL:** Check memory. If NPC is NOT in memory, treat as STRANGER. Use `update_journal` if new name revealed.\n"
-                f"2. **IMMERSION:** Describe sights/sounds vividly.\n"
-                f"3. **OUTPUT:** Narrate the outcome. Do NOT leave blank.\n"
+                f"1. **CONSULT MEMORY:** Check the 'System Memory' block provided at start of chat for NPC details and past events.\n"
+                f"2. **WORLD UPDATES:** If you introduce a NEW named NPC or important Location, use `update_world_entity` immediately.\n"
+                f"3. **IMMERSION:** Describe sights/sounds vividly.\n"
+                f"4. **OUTPUT:** Narrate the outcome. Do NOT leave blank.\n"
                 f"{'Reroll requested. Change the outcome.' if is_reroll else ''}"
             )
             
@@ -327,7 +342,8 @@ class RPGAdventureCog(commands.Cog):
                 turns = 0
                 text_content = ""
                 
-                while response.parts and response.parts[0].function_call and turns < 6:
+                # Tool Loop
+                while response.parts and response.parts[0].function_call and turns < 10:
                     turns += 1
                     fn = response.parts[0].function_call
                     res_txt = "Error"
@@ -349,50 +365,50 @@ class RPGAdventureCog(commands.Cog):
                             await channel.send(embed=discord.Embed(title=f"🎲 {fn.args.get('check_type', 'Check')}", description=desc, color=color))
                             res_txt = f"Roll: {roll}, Total: {total}, DC: {diff}, Success: {success}"
                             if not is_reroll: data['last_roll_result'] = res_txt
+                    
+                    # --- NEW TOOL HANDLER ---
+                    elif fn.name == "update_world_entity":
+                        res_txt = tools.update_world_entity(
+                            str(channel.id), 
+                            fn.args["category"], 
+                            fn.args["name"], 
+                            fn.args["details"], 
+                            fn.args.get("status", "active")
+                        )
+                    # ------------------------
 
                     elif fn.name == "grant_item_to_player": res_txt = tools.grant_item_to_player(fn.args["user_id"], fn.args["item_name"], fn.args["description"])
                     elif fn.name == "apply_damage": res_txt = "Story Mode." if story_mode else tools.apply_damage(str(channel.id), fn.args["user_id"], fn.args["damage_amount"])
                     elif fn.name == "apply_healing": res_txt = "Story Mode." if story_mode else tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
                     elif fn.name == "deduct_mana": res_txt = "Story Mode." if story_mode else tools.deduct_mana(str(channel.id), fn.args["user_id"], fn.args["mana_cost"])
-                    elif fn.name == "update_journal": res_txt = tools.update_journal(str(channel.id), fn.args.get("log_entry"), fn.args.get("npc_update"), fn.args.get("quest_update"))
+                    elif fn.name == "update_journal": res_txt = tools.update_journal(str(channel.id), fn.args.get("log_entry"))
                     
                     response = await chat_session.send_message_async(genai.protos.Content(parts=[genai.protos.Part(function_response=genai.protos.FunctionResponse(name=fn.name, response={'result': res_txt}))]))
 
                 try: text_content = response.text
                 except ValueError: text_content = "" 
 
-                if not text_content or not text_content.strip():
-                    try:
-                        force_resp = await chat_session.send_message_async("System Notice: You executed the mechanics, now DESCRIBE the narrative outcome vividly. Do not leave it blank.")
-                        text_content = force_resp.text
-                    except Exception as e:
-                        text_content = f"**[System Notice]** Narrative unavailable (Safety Filter). Action executed."
+                if not text_content.strip():
+                    text_content = "**[System Notice]** Action executed. (Narrative unavailable)"
 
-                # Calculate Current Turn ID (Current History + 1 for new entry)
                 current_history = session_db.get("turn_history", [])
                 current_turn_id = len(current_history) + 1
                 
                 footer_text = await self.memory_manager.get_token_count_and_footer(chat_session, turn_id=current_turn_id)
                 
-                # --- SMART CHUNKING (Prevents 4096 Error) ---
+                # Smart Chunking
                 chunks = [text_content[i:i+4000] for i in range(0, len(text_content), 4000)]
-                bot_message_ids = []
-
                 if not chunks: chunks = ["..."] 
+                bot_message_ids = []
 
                 for i, chunk in enumerate(chunks):
                     is_last = (i == len(chunks) - 1)
-                    
                     story_emb = discord.Embed(description=chunk, color=discord.Color.from_rgb(47, 49, 54))
-                    
-                    # Author on first chunk only
-                    if i == 0:
-                        story_emb.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None)
+                    if i == 0: story_emb.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None)
                     
                     embeds = [story_emb]
                     view = None
                     
-                    # Status & Footer on last chunk only
                     if is_last:
                         story_emb.set_footer(text=footer_text)
                         if not story_mode:
@@ -403,7 +419,6 @@ class RPGAdventureCog(commands.Cog):
                     bot_msg = await channel.send(embeds=embeds, view=view)
                     bot_message_ids.append(bot_msg.id)
 
-                # SAVE TURN WITH ALL BOT MSG IDs
                 self.memory_manager.save_turn(
                     channel.id, 
                     user.name if user else "System", 
@@ -504,27 +519,23 @@ class RPGAdventureCog(commands.Cog):
             return await interaction.response.send_message("Leader only.", ephemeral=True)
 
         history = session.get("turn_history", [])
-        target_index = turn_id - 1 # Convert 1-based to 0-based
+        target_index = turn_id - 1 
         
         if target_index < 0 or target_index >= len(history):
             return await interaction.response.send_message(f"Invalid Turn ID. Max: {len(history)}", ephemeral=True)
             
         await interaction.response.send_message(f"⏳ **Rewinding to Turn {turn_id}...** (Clearing messages)", ephemeral=True)
         
-        # 1. Trim Database & Get Deleted Turns
         deleted_turns = self.memory_manager.trim_history(interaction.channel.id, target_index)
         
-        # 2. Delete Messages from Discord
         if deleted_turns:
             for turn in deleted_turns:
-                # Delete User Message
                 if turn.get("user_message_id"):
                     try:
                         msg = await interaction.channel.fetch_message(int(turn["user_message_id"]))
                         await msg.delete()
                     except: pass
                 
-                # Delete Bot Message(s)
                 b_ids = turn.get("bot_message_id")
                 if b_ids:
                     if isinstance(b_ids, list):
@@ -535,7 +546,6 @@ class RPGAdventureCog(commands.Cog):
                         try: await (await interaction.channel.fetch_message(int(b_ids))).delete()
                         except: pass
                     
-        # 3. Clear Session Memory to Force Rebuild
         if interaction.channel.id in self.active_sessions:
             del self.active_sessions[interaction.channel.id]
             

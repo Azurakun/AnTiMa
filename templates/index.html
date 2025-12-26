@@ -12,22 +12,17 @@
         }
     </script>
     <style>
-        /* Modern Scrollbars */
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-track { background: #202225; }
         ::-webkit-scrollbar-thumb { background: #5865F2; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #4752c4; }
-
         .clickable-card { cursor: pointer; transition: all 0.2s ease; border-left-width: 4px; }
         .clickable-card:hover { transform: translateY(-3px); filter: brightness(1.1); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); }
-        
         .terminal-scroll::-webkit-scrollbar { width: 8px; }
         .terminal-scroll::-webkit-scrollbar-track { background: #0f0f0f; }
         .terminal-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
-
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-        
         .tab-btn.active { background-color: #5865F2; color: white; border-color: #5865F2; }
     </style>
 </head>
@@ -92,11 +87,6 @@
                 <div class="lg:col-span-2 bg-term rounded-xl shadow-2xl overflow-hidden border border-gray-700 font-mono text-sm relative flex flex-col h-[500px]">
                     <div class="bg-gray-800 p-3 border-b border-gray-700 flex justify-between items-center select-none sticky top-0 z-10">
                         <div class="flex gap-2 items-center">
-                             <div class="flex gap-1.5 mr-3">
-                                <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
-                                <div class="w-3 h-3 rounded-full bg-green-500"></div>
-                             </div>
                              <span class="text-gray-400 text-xs font-bold tracking-wide">root@antima:~/kernel_logs</span>
                         </div>
                         <div class="flex gap-2">
@@ -114,150 +104,49 @@
         </div>
 
         <div id="control-view" class="hidden fade-in grid grid-cols-1 xl:grid-cols-3 gap-6">
-            
             <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
-                <div class="bg-gray-800 p-4 border-b border-gray-700">
-                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                        <span class="text-blue-400">⚙️</span> Server Configuration
-                    </h2>
-                    <p class="text-xs text-gray-400 mt-1">Manage bot behavior per server.</p>
-                </div>
+                <div class="bg-gray-800 p-4 border-b border-gray-700"><h2 class="text-lg font-bold text-white flex items-center gap-2"><span class="text-blue-400">⚙️</span> Server Configuration</h2></div>
                 <div class="p-6 space-y-4">
-                    <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label>
-                        <input type="text" id="conf-guild-id" placeholder="1234567890..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord focus:outline-none transition">
-                    </div>
-                    
+                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label><input type="text" id="conf-guild-id" placeholder="1234567890..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
                     <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Bot Status</label>
-                            <select id="conf-status" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none">
-                                <option value="">No Change</option>
-                                <option value="on">🟢 Online</option>
-                                <option value="off">🔴 Offline</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Group Chat</label>
-                            <select id="conf-group" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none">
-                                <option value="">No Change</option>
-                                <option value="allow">✅ Allow</option>
-                                <option value="block">🚫 Block</option>
-                            </select>
-                        </div>
+                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Bot Status</label><select id="conf-status" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="on">🟢 Online</option><option value="off">🔴 Offline</option></select></div>
+                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Group Chat</label><select id="conf-group" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="allow">✅ Allow</option><option value="block">🚫 Block</option></select></div>
                     </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Proactive chat Frequency</label>
-                        <select id="conf-freq" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none">
-                            <option value="">No Change</option>
-                            <option value="active">🔥 Active (30m - 90m)</option>
-                            <option value="normal">🙂 Normal (2h - 5h)</option>
-                            <option value="quiet">🌙 Quiet (6h - 12h)</option>
-                            <option value="testing">🛠️ Testing (1m - 2m)</option>
-                        </select>
-                    </div>
-
+                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Proactive chat Frequency</label><select id="conf-freq" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="active">🔥 Active (30m - 90m)</option><option value="normal">🙂 Normal (2h - 5h)</option><option value="quiet">🌙 Quiet (6h - 12h)</option><option value="testing">🛠️ Testing (1m - 2m)</option></select></div>
                     <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Chat Channel ID</label>
-                            <input type="text" id="conf-chat-id" placeholder="Channel ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord focus:outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-gray-400 uppercase mb-1">RPG Channel ID</label>
-                            <input type="text" id="conf-rpg-id" placeholder="Channel ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord focus:outline-none">
-                        </div>
+                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Chat Channel ID</label><input type="text" id="conf-chat-id" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
+                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">RPG Channel ID</label><input type="text" id="conf-rpg-id" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
                     </div>
-
                     <button onclick="submitConfig()" class="w-full bg-discord hover:bg-indigo-500 text-white font-bold py-2 rounded transition shadow-lg mt-4">Save Configuration</button>
                     <div id="conf-msg" class="text-xs text-center min-h-[1rem]"></div>
                 </div>
             </div>
-
             <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
-                <div class="bg-gray-800 p-4 border-b border-gray-700">
-                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                        <span class="text-red-400">🛡️</span> Moderation Actions
-                    </h2>
-                    <p class="text-xs text-gray-400 mt-1">Execute admin commands remotely.</p>
-                </div>
+                <div class="bg-gray-800 p-4 border-b border-gray-700"><h2 class="text-lg font-bold text-white flex items-center gap-2"><span class="text-red-400">🛡️</span> Moderation Actions</h2></div>
                 <div class="p-6 space-y-4">
-                    <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label>
-                        <input type="text" id="mod-guild-id" placeholder="Server ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 focus:outline-none transition">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Action Type</label>
-                        <select id="mod-action" onchange="toggleModFields()" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none">
-                            <option value="kick">👢 Kick User</option>
-                            <option value="ban">🔨 Ban User</option>
-                            <option value="purge">🧹 Purge Messages</option>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1" id="mod-target-label">User ID</label>
-                        <input type="text" id="mod-target-id" placeholder="User ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 focus:outline-none">
-                    </div>
-
-                    <div id="mod-extra-field" class="hidden">
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1" id="mod-extra-label">Delete Days</label>
-                        <input type="number" id="mod-extra-val" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 focus:outline-none">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Reason</label>
-                        <input type="text" id="mod-reason" placeholder="Violation of rules..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 focus:outline-none">
-                    </div>
-
+                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label><input type="text" id="mod-guild-id" placeholder="Server ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"></div>
+                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Action Type</label><select id="mod-action" onchange="toggleModFields()" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"><option value="kick">👢 Kick User</option><option value="ban">🔨 Ban User</option><option value="purge">🧹 Purge Messages</option></select></div>
+                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1" id="mod-target-label">User ID</label><input type="text" id="mod-target-id" placeholder="User ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"></div>
+                    <div id="mod-extra-field" class="hidden"><label class="block text-xs font-bold text-gray-400 uppercase mb-1" id="mod-extra-label">Delete Days</label><input type="number" id="mod-extra-val" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"></div>
+                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Reason</label><input type="text" id="mod-reason" placeholder="Reason..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"></div>
                     <button onclick="submitAction()" class="w-full bg-red-900 hover:bg-red-700 text-white font-bold py-2 rounded transition shadow-lg border border-red-800 mt-4">Execute Action</button>
                     <div id="mod-msg" class="text-xs text-center min-h-[1rem]"></div>
                 </div>
             </div>
-
             <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
-                <div class="bg-gray-800 p-4 border-b border-gray-700">
-                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
-                        <span class="text-yellow-400">⚡</span> Creator Tools
-                    </h2>
-                    <p class="text-xs text-gray-400 mt-1">Manage rate limits and overrides.</p>
-                </div>
+                <div class="bg-gray-800 p-4 border-b border-gray-700"><h2 class="text-lg font-bold text-white flex items-center gap-2"><span class="text-yellow-400">⚡</span> Creator Tools</h2></div>
                 <div class="p-6 space-y-4">
-                     <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target ID (User/Guild)</label>
-                        <input type="text" id="limit-target" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 focus:outline-none">
-                    </div>
-                    
+                     <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target ID</label><input type="text" id="limit-target" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none"></div>
                     <div class="grid grid-cols-2 gap-4">
-                        <div>
-                             <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Scope</label>
-                             <select id="limit-scope" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none">
-                                 <option value="user">User</option>
-                                 <option value="server">Server</option>
-                             </select>
-                        </div>
-                        <div>
-                             <label class="block text-xs font-bold text-gray-400 uppercase mb-1">Feature</label>
-                             <select id="limit-feature" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none">
-                                 <option value="antima_gen">Chat Gen</option>
-                                 <option value="rpg_gen">RPG Gen</option>
-                             </select>
-                        </div>
+                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Scope</label><select id="limit-scope" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none"><option value="user">User</option><option value="server">Server</option></select></div>
+                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Feature</label><select id="limit-feature" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none"><option value="antima_gen">Chat Gen</option><option value="rpg_gen">RPG Gen</option></select></div>
                     </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-gray-400 uppercase mb-1">New Limit (Req/Min)</label>
-                        <input type="number" id="limit-val" placeholder="e.g. 50" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 focus:outline-none">
-                    </div>
-
+                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Limit (Req/Min)</label><input type="number" id="limit-val" placeholder="e.g. 50" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none"></div>
                     <button onclick="submitLimit()" class="w-full bg-yellow-700 hover:bg-yellow-600 text-white font-bold py-2 rounded transition shadow-lg border border-yellow-800 mt-auto">Set Override</button>
                     <div id="limit-msg" class="text-xs text-center min-h-[1rem]"></div>
                 </div>
             </div>
-
         </div>
-
     </main>
 
     <div id="modal-overlay" class="fixed inset-0 bg-black/90 hidden z-[100] flex justify-center items-center backdrop-blur-sm p-4 transition-opacity duration-200" onclick="closeModal(event)">
@@ -271,385 +160,231 @@
                         <button onclick="filterRPG('all')" id="btn-all" class="px-3 py-1 text-xs font-bold rounded text-gray-400 hover:text-white transition">All</button>
                     </div>
                 </div>
-                <button onclick="closeModal()" class="text-gray-400 hover:text-white transition bg-gray-700 hover:bg-gray-600 rounded-full p-1.5">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-                </button>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-white transition bg-gray-700 hover:bg-gray-600 rounded-full p-1.5"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
             </div>
             <div id="modal-content" class="p-6 overflow-y-auto flex-1 bg-darkbg custom-scrollbar relative"></div>
         </div>
     </div>
 
     <script>
-        // --- VIEW SWITCHING ---
+        // --- JS LOGIC ---
         function switchTab(tab) {
-            document.getElementById('dashboard-view').classList.add('hidden');
-            document.getElementById('control-view').classList.add('hidden');
-            document.getElementById('tab-dashboard').classList.remove('active', 'text-white', 'bg-discord');
-            document.getElementById('tab-control').classList.remove('active', 'text-white', 'bg-discord');
-            
-            // Set styles for inactive
-            document.getElementById('tab-dashboard').classList.add('text-gray-400');
-            document.getElementById('tab-control').classList.add('text-gray-400');
-
-            if(tab === 'dashboard') {
-                document.getElementById('dashboard-view').classList.remove('hidden');
-                const btn = document.getElementById('tab-dashboard');
-                btn.classList.add('active');
-                btn.classList.remove('text-gray-400');
-            } else {
-                document.getElementById('control-view').classList.remove('hidden');
-                const btn = document.getElementById('tab-control');
-                btn.classList.add('active');
-                btn.classList.remove('text-gray-400');
-            }
+            document.getElementById('dashboard-view').classList.add('hidden'); document.getElementById('control-view').classList.add('hidden');
+            document.getElementById('tab-dashboard').classList.remove('active', 'text-white', 'bg-discord', 'text-gray-400');
+            document.getElementById('tab-control').classList.remove('active', 'text-white', 'bg-discord', 'text-gray-400');
+            document.getElementById(`tab-${tab}`).classList.add('active');
+            if(tab==='dashboard') { document.getElementById('dashboard-view').classList.remove('hidden'); document.getElementById('tab-control').classList.add('text-gray-400'); }
+            else { document.getElementById('control-view').classList.remove('hidden'); document.getElementById('tab-dashboard').classList.add('text-gray-400'); }
         }
 
-        // --- CONTROL PANEL LOGIC ---
         function toggleModFields() {
             const action = document.getElementById('mod-action').value;
-            const targetLabel = document.getElementById('mod-target-label');
-            const targetInput = document.getElementById('mod-target-id');
             const extraField = document.getElementById('mod-extra-field');
-            const extraLabel = document.getElementById('mod-extra-label');
-            const extraInput = document.getElementById('mod-extra-val');
-
-            if (action === 'purge') {
-                targetLabel.innerText = "Channel ID";
-                targetInput.placeholder = "Channel ID...";
-                extraField.classList.remove('hidden');
-                extraLabel.innerText = "Amount";
-                extraInput.placeholder = "e.g. 10";
-            } else if (action === 'ban') {
-                targetLabel.innerText = "User ID";
-                targetInput.placeholder = "User ID...";
-                extraField.classList.remove('hidden');
-                extraLabel.innerText = "Delete Days (0-7)";
-                extraInput.placeholder = "0";
-            } else {
-                targetLabel.innerText = "User ID";
-                targetInput.placeholder = "User ID...";
-                extraField.classList.add('hidden');
-            }
+            if (action === 'purge' || action === 'ban') extraField.classList.remove('hidden'); else extraField.classList.add('hidden');
+            if (action === 'purge') { document.getElementById('mod-target-label').innerText="Channel ID"; document.getElementById('mod-extra-label').innerText="Amount"; }
+            else { document.getElementById('mod-target-label').innerText="User ID"; if(action==='ban') document.getElementById('mod-extra-label').innerText="Delete Days"; }
         }
 
         async function submitConfig() {
-            const guildId = document.getElementById('conf-guild-id').value;
-            if(!guildId) { showMsg('conf-msg', '❌ Guild ID is required.', 'text-red-400'); return; }
-
-            const payload = {
-                guild_id: guildId,
-                channel_id: document.getElementById('conf-chat-id').value || null,
-                frequency: document.getElementById('conf-freq').value || null,
-                bot_status: document.getElementById('conf-status').value || null,
-                group_chat: document.getElementById('conf-group').value || null,
-                rpg_channel_id: document.getElementById('conf-rpg-id').value || null
-            };
-
+            const payload = { guild_id: document.getElementById('conf-guild-id').value, channel_id: document.getElementById('conf-chat-id').value || null, frequency: document.getElementById('conf-freq').value || null, bot_status: document.getElementById('conf-status').value || null, group_chat: document.getElementById('conf-group').value || null, rpg_channel_id: document.getElementById('conf-rpg-id').value || null };
             await sendControlRequest('/api/control/config/update', payload, 'conf-msg');
         }
-
         async function submitAction() {
-            const guildId = document.getElementById('mod-guild-id').value;
-            const targetId = document.getElementById('mod-target-id').value;
-            if(!guildId || !targetId) { showMsg('mod-msg', '❌ Guild ID and Target ID required.', 'text-red-400'); return; }
-
-            const payload = {
-                guild_id: guildId,
-                action_type: document.getElementById('mod-action').value,
-                target_id: targetId,
-                reason: document.getElementById('mod-reason').value || "No reason",
-                setting_value: document.getElementById('mod-extra-val').value || 0
-            };
-
+            const payload = { guild_id: document.getElementById('mod-guild-id').value, action_type: document.getElementById('mod-action').value, target_id: document.getElementById('mod-target-id').value, reason: document.getElementById('mod-reason').value, setting_value: document.getElementById('mod-extra-val').value };
             await sendControlRequest('/api/control/action/queue', payload, 'mod-msg');
         }
-
         async function submitLimit() {
-            const targetId = document.getElementById('limit-target').value;
-            const limitVal = document.getElementById('limit-val').value;
-            if(!targetId || !limitVal) { showMsg('limit-msg', '❌ Target and Limit required.', 'text-red-400'); return; }
-
-            const payload = {
-                guild_id: "global", // Context is global/user specific
-                action_type: "set_limit",
-                target_id: targetId,
-                reason: `Scope: ${document.getElementById('limit-scope').value}, Feature: ${document.getElementById('limit-feature').value}`,
-                setting_value: parseInt(limitVal) // Passed as generic value, parsed by bot
-            };
-
+            const payload = { guild_id: "global", action_type: "set_limit", target_id: document.getElementById('limit-target').value, reason: `${document.getElementById('limit-scope').value}/${document.getElementById('limit-feature').value}`, setting_value: parseInt(document.getElementById('limit-val').value) };
             await sendControlRequest('/api/control/action/queue', payload, 'limit-msg');
         }
-
         async function sendControlRequest(url, payload, msgId) {
-            const msgEl = document.getElementById(msgId);
-            msgEl.innerHTML = '<span class="animate-pulse text-gray-400">Processing...</span>';
-            
-            try {
-                const res = await fetch(url, {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify(payload)
-                });
+            document.getElementById(msgId).innerHTML = '<span class="animate-pulse text-gray-400">Processing...</span>';
+            try { const res = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                 const data = await res.json();
-                
-                if(res.ok) showMsg(msgId, `✅ ${data.status}`, 'text-green-400');
-                else showMsg(msgId, `❌ ${data.error || 'Failed'}`, 'text-red-400');
-            } catch(e) {
-                showMsg(msgId, `❌ Connection Error`, 'text-red-400');
-            }
+                document.getElementById(msgId).className = res.ok ? 'text-xs text-center min-h-[1rem] text-green-400' : 'text-xs text-center min-h-[1rem] text-red-400';
+                document.getElementById(msgId).innerText = res.ok ? `✅ ${data.status}` : `❌ ${data.error||'Failed'}`;
+            } catch(e) { document.getElementById(msgId).innerText = "❌ Connection Error"; }
         }
 
-        function showMsg(id, text, colorClass) {
-            const el = document.getElementById(id);
-            el.className = `text-xs text-center min-h-[1rem] ${colorClass}`;
-            el.innerText = text;
-            setTimeout(() => { el.innerText = ''; }, 5000);
+        // --- NEW MEMORY VIEW LOGIC ---
+        async function viewRPGMemory(threadId) {
+            const modal = document.getElementById('modal-overlay');
+            const content = document.getElementById('modal-content');
+            document.getElementById('modal-title').innerText = "🧠 Neural Memory Inspector";
+            document.getElementById('rpg-filters').classList.add('hidden'); // Hide filters for memory view
+            modal.classList.remove('hidden');
+            content.innerHTML = '<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
+
+            try {
+                const res = await fetch(`/api/rpg/memory/${threadId}`);
+                const data = await res.json();
+                if(data.error) { content.innerHTML = `<div class="text-red-400 text-center p-10">${data.error}</div>`; return; }
+
+                let html = `
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 h-full">
+                        <div class="md:col-span-1 space-y-6">
+                            <div class="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                                <h3 class="text-discord font-bold mb-2 uppercase text-xs">Session Meta</h3>
+                                <div class="text-sm space-y-1 text-gray-300">
+                                    <p><span class="text-gray-500">Title:</span> ${data.meta.title}</p>
+                                    <p><span class="text-gray-500">Scenario:</span> ${data.meta.scenario}</p>
+                                    <p><span class="text-gray-500">Turns:</span> ${data.meta.turn_count}</p>
+                                </div>
+                            </div>
+                            <div class="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                                <h3 class="text-green-400 font-bold mb-2 uppercase text-xs">Party Stats</h3>
+                                <div class="space-y-3">
+                                    ${Object.entries(data.players).map(([uid, p]) => `
+                                        <div class="bg-black/30 p-2 rounded border border-gray-800">
+                                            <div class="font-bold text-sm text-white">${p.name || 'Unknown'} <span class="text-xs text-gray-500">(${p.class})</span></div>
+                                            <div class="text-xs text-gray-400">HP: ${p.hp}/${p.max_hp} | MP: ${p.mp}/${p.max_mp}</div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="md:col-span-2 space-y-6">
+                            <div class="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                                <h3 class="text-yellow-400 font-bold mb-3 uppercase text-xs">🌍 World Sheet (NPCs & Locations)</h3>
+                                ${data.npcs.length === 0 && data.locations.length === 0 ? '<div class="text-gray-600 italic text-sm">No world data recorded yet.</div>' : ''}
+                                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                    ${data.npcs.map(n => `
+                                        <div class="bg-black/40 p-2 rounded border border-gray-700 relative overflow-hidden group">
+                                            <div class="absolute top-0 right-0 p-1"><span class="bg-blue-900 text-blue-200 text-[10px] px-1 rounded uppercase">NPC</span></div>
+                                            <div class="font-bold text-sm text-gray-200">${n.name}</div>
+                                            <div class="text-xs text-gray-400 mt-1 line-clamp-2 hover:line-clamp-none transition-all cursor-help" title="${n.details}">${n.details}</div>
+                                        </div>
+                                    `).join('')}
+                                    ${data.locations.map(l => `
+                                        <div class="bg-black/40 p-2 rounded border border-gray-700 relative overflow-hidden">
+                                            <div class="absolute top-0 right-0 p-1"><span class="bg-purple-900 text-purple-200 text-[10px] px-1 rounded uppercase">LOC</span></div>
+                                            <div class="font-bold text-sm text-gray-200">${l.name}</div>
+                                            <div class="text-xs text-gray-400 mt-1 line-clamp-2 cursor-help" title="${l.details}">${l.details}</div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <div class="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                                <h3 class="text-purple-400 font-bold mb-3 uppercase text-xs">🧠 Recent Neural Memories (RAG)</h3>
+                                <div class="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+                                    ${data.memories.map(m => `
+                                        <div class="text-xs text-gray-400 border-l-2 border-purple-900 pl-2 py-1 hover:bg-white/5 transition">
+                                            <span class="text-gray-600 text-[10px]">[${m.timestamp.split('T')[1].split('.')[0]}]</span>
+                                            ${m.text}
+                                        </div>
+                                    `).join('') || '<div class="text-gray-600 italic">No archived memories.</div>'}
+                                </div>
+                            </div>
+
+                            <div class="bg-gray-900 p-4 rounded-lg border border-gray-700">
+                                <h3 class="text-blue-400 font-bold mb-3 uppercase text-xs">📜 Campaign Log</h3>
+                                <div class="bg-black p-3 rounded font-mono text-xs text-gray-300 h-32 overflow-y-auto custom-scrollbar">
+                                    ${data.campaign_log.map(l => `<div>${l}</div>`).join('') || 'Log empty.'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                content.innerHTML = html;
+            } catch(e) { content.innerHTML = `<div class="text-red-400 p-10">Error fetching memory data.</div>`; }
         }
 
-        // --- EXISTING WEBSOCKET & LOGIC (Preserved) ---
+        // --- EXISTING RPG & WS LOGIC ---
+        let currentRPGData = [], currentRPGFilter = 'active';
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
-        const statusEl = document.getElementById('ws-status');
-        const dotEl = document.getElementById('ws-dot');
-
-        socket.onopen = () => { 
-            statusEl.innerText = "System Online"; statusEl.className = "text-green-400 font-bold"; 
-            dotEl.className = "w-2 h-2 rounded-full bg-green-500 animate-pulse"; 
-        };
-        socket.onclose = () => { 
-            statusEl.innerText = "Disconnected"; statusEl.className = "text-red-500 font-bold"; 
-            dotEl.className = "w-2 h-2 rounded-full bg-red-500"; 
-        };
-
+        socket.onopen = () => { document.getElementById('ws-status').innerText="System Online"; document.getElementById('ws-status').className="text-green-400 font-bold"; document.getElementById('ws-dot').className="w-2 h-2 rounded-full bg-green-500 animate-pulse"; };
         socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            
-            // Update Stats
             if(data.overview) {
-                document.getElementById('stat-messages').innerText = data.overview.messages.toLocaleString();
-                document.getElementById('stat-rpg').innerText = data.overview.active_rpgs.toLocaleString();
-                document.getElementById('stat-users').innerText = data.overview.users.toLocaleString();
-                document.getElementById('stat-commands').innerText = data.overview.commands.toLocaleString();
+                document.getElementById('stat-messages').innerText=data.overview.messages.toLocaleString();
+                document.getElementById('stat-rpg').innerText=data.overview.active_rpgs.toLocaleString();
+                document.getElementById('stat-users').innerText=data.overview.users.toLocaleString();
+                document.getElementById('stat-commands').innerText=data.overview.commands.toLocaleString();
             }
-            
-            // Update Feed
             if(data.activities) {
-                const feed = document.getElementById('activity-feed');
-                feed.innerHTML = '';
-                data.activities.forEach(act => {
-                    feed.innerHTML += `
-                        <li class="px-4 py-3 flex justify-between items-center hover:bg-hover transition border-l-2 border-transparent hover:border-discord">
-                            <div class="flex flex-col">
-                                <div class="flex items-center gap-2">
-                                    <span class="text-white font-bold">${act.user}</span>
-                                    <span class="text-gray-500 text-xs bg-black/30 px-1.5 rounded">${act.guild}</span>
-                                </div>
-                                <span class="text-discord text-sm">${act.action}</span>
-                            </div>
-                            <span class="text-xs text-gray-500 font-mono bg-gray-800 px-2 py-1 rounded border border-gray-700">${act.timestamp}</span>
-                        </li>`;
-                });
+                document.getElementById('activity-feed').innerHTML = data.activities.map(a => `<li class="px-4 py-3 flex justify-between items-center hover:bg-hover transition border-l-2 border-transparent hover:border-discord"><div class="flex flex-col"><div class="flex items-center gap-2"><span class="text-white font-bold">${a.user}</span><span class="text-gray-500 text-xs bg-black/30 px-1.5 rounded">${a.guild}</span></div><span class="text-discord text-sm">${a.action}</span></div><span class="text-xs text-gray-500 font-mono bg-gray-800 px-2 py-1 rounded border border-gray-700">${a.timestamp}</span></li>`).join('');
             }
-
-            // Update Logs
             if(data.logs) {
-                const term = document.getElementById('terminal-logs');
-                let html = '';
-                data.logs.forEach(l => {
-                    let color = "text-gray-300";
-                    let badge = "bg-gray-800 text-gray-300";
-                    if(l.level==="ERROR") { color = "text-red-300"; badge = "bg-red-900 text-red-100"; }
-                    else if(l.level==="WARNING") { color = "text-yellow-300"; badge = "bg-yellow-900 text-yellow-100"; }
-                    else if(l.level==="INFO") { color = "text-green-300"; badge = "bg-green-900/50 text-green-100"; }
-                    
-                    html += `
-                        <div class="flex gap-3 hover:bg-white/5 p-0.5 rounded transition">
-                            <span class="text-gray-500 select-none text-[10px] w-14 font-mono pt-0.5 opacity-60">${l.time}</span>
-                            <span class="${badge} text-[10px] px-1 rounded font-bold w-10 text-center h-fit mt-0.5 select-none">${l.level}</span>
-                            <div class="flex-1 break-all">
-                                <span class="text-purple-400 font-bold text-xs mr-1">[${l.logger}]</span>
-                                <span class="${color} font-mono text-xs">${l.message}</span>
-                            </div>
-                        </div>`;
-                });
-                term.innerHTML = html;
-                term.scrollTop = term.scrollHeight;
+                 const term = document.getElementById('terminal-logs');
+                 term.innerHTML = data.logs.map(l => {
+                    let c="text-gray-300", b="bg-gray-800 text-gray-300";
+                    if(l.level==="ERROR"){c="text-red-300";b="bg-red-900 text-red-100";} else if(l.level==="WARNING"){c="text-yellow-300";b="bg-yellow-900 text-yellow-100";} else if(l.level==="INFO"){c="text-green-300";b="bg-green-900/50 text-green-100";}
+                    return `<div class="flex gap-3 hover:bg-white/5 p-0.5 rounded transition"><span class="text-gray-500 select-none text-[10px] w-14 font-mono pt-0.5 opacity-60">${l.time}</span><span class="${b} text-[10px] px-1 rounded font-bold w-10 text-center h-fit mt-0.5 select-none">${l.level}</span><div class="flex-1 break-all"><span class="text-purple-400 font-bold text-xs mr-1">[${l.logger}]</span><span class="${c} font-mono text-xs">${l.message}</span></div></div>`;
+                 }).join('');
+                 term.scrollTop = term.scrollHeight;
             }
         };
 
-        // --- RPG & MODAL LOGIC (Preserved) ---
-        let currentRPGData = [];
-        let currentRPGFilter = 'active';
-
-        async function deleteRPG(threadId) {
-            if(!confirm("🛑 WARNING: DELETION IS PERMANENT.\n\nThis will:\n1. Delete the Database Entry\n2. Delete the Discord Thread (if accessible)\n\nProceed?")) return;
+        async function showDetails(type) {
+            const modal=document.getElementById('modal-overlay'), content=document.getElementById('modal-content'), title=document.getElementById('modal-title'), filters=document.getElementById('rpg-filters');
+            modal.classList.remove('hidden'); content.innerHTML='<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
+            if(type==='rpgs') filters.classList.remove('hidden'); else filters.classList.add('hidden');
+            title.innerText = {'users':'User Directory','guilds':'Server Statistics','rpgs':'RPG Campaigns','commands':'Command Registry'}[type] || 'Details';
             try {
-                const res = await fetch(`/api/rpg/delete/${threadId}`, { method: 'POST' });
-                const json = await res.json();
-                if(json.error) alert("Error: " + json.error);
-                else {
-                    currentRPGData = currentRPGData.filter(r => r.thread_id !== threadId);
-                    renderRPGTable(); 
-                    alert("✅ Session deleted.");
-                }
-            } catch(e) { alert("Failed to communicate with backend."); }
-        }
-
-        function filterRPG(mode) {
-            currentRPGFilter = mode;
-            ['active', 'inactive', 'all'].forEach(m => {
-                const btn = document.getElementById(`btn-${m}`);
-                if(m === mode) btn.className = "px-3 py-1 text-xs font-bold rounded text-white bg-discord transition shadow";
-                else btn.className = "px-3 py-1 text-xs font-bold rounded text-gray-400 hover:text-white transition hover:bg-white/10";
-            });
-            renderRPGTable();
+                const res = await fetch(`/api/details/${type}`); const data = await res.json();
+                if(type==='rpgs') { currentRPGData=data; renderRPGTable(); } else renderGenericTable(type, data);
+            } catch(e) { content.innerHTML='<div class="text-red-400 p-10 text-center">Failed to load data.</div>'; }
         }
 
         function renderRPGTable() {
             const content = document.getElementById('modal-content');
             let filtered = currentRPGData;
-            
-            if (currentRPGFilter === 'active') filtered = currentRPGData.filter(r => r.is_active);
-            if (currentRPGFilter === 'inactive') filtered = currentRPGData.filter(r => !r.is_active);
-
-            if(filtered.length === 0) {
-                content.innerHTML = `<div class="text-center py-20 text-gray-500 fade-in"><div class="text-4xl mb-4">📭</div>No ${currentRPGFilter} sessions found.</div>`;
-                return;
-            }
-
-            let html = `<div class="overflow-hidden rounded-lg border border-gray-700 shadow-xl fade-in"><table class="w-full text-left border-collapse">
-                <thead class="bg-gray-900 text-gray-400 text-xs uppercase tracking-wider">
-                    <tr><th class="p-4 border-b border-gray-800">Title</th><th class="p-4 border-b border-gray-800">Host</th><th class="p-4 border-b border-gray-800">Scenario</th><th class="p-4 border-b border-gray-800">Status</th><th class="p-4 border-b border-gray-800 text-right">Actions</th></tr>
-                </thead>
-                <tbody class="divide-y divide-gray-800 bg-card">`;
-            
-            filtered.forEach(r => {
-                const statusBadge = r.is_active 
-                    ? `<span class="bg-green-900/30 text-green-400 px-2 py-0.5 rounded text-xs border border-green-900">Active</span>` 
-                    : `<span class="bg-gray-700/50 text-gray-400 px-2 py-0.5 rounded text-xs border border-gray-600">Archived</span>`;
-                
-                html += `
-                    <tr class="hover:bg-discord/5 transition group">
-                        <td class="p-4 font-bold text-white">${r.title}</td>
-                        <td class="p-4 text-gray-300">${r.host}</td>
-                        <td class="p-4 text-sm text-discord">${r.scenario}</td>
-                        <td class="p-4">${statusBadge}</td>
-                        <td class="p-4 text-right">
-                            <button onclick="deleteRPG('${r.thread_id}')" class="bg-red-900/20 hover:bg-red-600 text-red-300 hover:text-white px-3 py-1.5 rounded text-xs border border-red-900/50 transition flex items-center gap-2 ml-auto">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                                Delete
-                            </button>
-                        </td>
-                    </tr>`;
-            });
-            html += `</tbody></table></div>`;
-            content.innerHTML = html;
-        }
-
-        async function showDetails(type) {
-            const modal = document.getElementById('modal-overlay');
-            const content = document.getElementById('modal-content');
-            const title = document.getElementById('modal-title');
-            const filters = document.getElementById('rpg-filters');
-
-            modal.classList.remove('hidden');
-            content.innerHTML = '<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
-            
-            if(type === 'rpgs') filters.classList.remove('hidden'); 
-            else filters.classList.add('hidden');
-
-            const titles = { 'users': 'User Directory', 'guilds': 'Server Statistics', 'rpgs': 'RPG Campaigns', 'commands': 'Command Registry' };
-            title.innerText = titles[type] || 'Details';
-
-            try {
-                const response = await fetch(`/api/details/${type}`);
-                const data = await response.json();
-
-                if (type === 'rpgs') {
-                    currentRPGData = data;
-                    renderRPGTable(); 
-                } else {
-                    renderGenericTable(type, data);
-                }
-            } catch(e) { content.innerHTML = `<div class="text-red-400 p-10 text-center">Failed to load data. API might be down.</div>`; }
+            if(currentRPGFilter==='active') filtered=currentRPGData.filter(r=>r.is_active);
+            if(currentRPGFilter==='inactive') filtered=currentRPGData.filter(r=>!r.is_active);
+            if(filtered.length===0) { content.innerHTML=`<div class="text-center py-20 text-gray-500 fade-in">No ${currentRPGFilter} sessions found.</div>`; return; }
+            content.innerHTML = `<div class="overflow-hidden rounded-lg border border-gray-700 shadow-xl fade-in"><table class="w-full text-left border-collapse"><thead class="bg-gray-900 text-gray-400 text-xs uppercase tracking-wider"><tr><th class="p-4 border-b border-gray-800">Title</th><th class="p-4 border-b border-gray-800">Host</th><th class="p-4 border-b border-gray-800">Scenario</th><th class="p-4 border-b border-gray-800">Status</th><th class="p-4 border-b border-gray-800 text-right">Actions</th></tr></thead><tbody class="divide-y divide-gray-800 bg-card">` + filtered.map(r => `
+                <tr class="hover:bg-discord/5 transition group">
+                    <td class="p-4 font-bold text-white">${r.title}</td><td class="p-4 text-gray-300">${r.host}</td><td class="p-4 text-sm text-discord">${r.scenario}</td>
+                    <td class="p-4">${r.is_active ? '<span class="bg-green-900/30 text-green-400 px-2 py-0.5 rounded text-xs border border-green-900">Active</span>' : '<span class="bg-gray-700/50 text-gray-400 px-2 py-0.5 rounded text-xs border border-gray-600">Archived</span>'}</td>
+                    <td class="p-4 text-right flex justify-end gap-2">
+                        <button onclick="viewRPGMemory('${r.thread_id}')" class="bg-purple-900/20 hover:bg-purple-600 text-purple-300 hover:text-white px-3 py-1.5 rounded text-xs border border-purple-900/50 transition flex items-center gap-2">
+                             🧠 Memory
+                        </button>
+                        <button onclick="deleteRPG('${r.thread_id}')" class="bg-red-900/20 hover:bg-red-600 text-red-300 hover:text-white px-3 py-1.5 rounded text-xs border border-red-900/50 transition flex items-center gap-2">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                        </button>
+                    </td>
+                </tr>`).join('') + `</tbody></table></div>`;
         }
 
         function renderGenericTable(type, data) {
             const content = document.getElementById('modal-content');
             if(data.length===0) { content.innerHTML='<div class="text-center text-gray-500 py-10">No records found.</div>'; return; }
-            
             let headers = type==='users'?['Name','ID','Msgs']: type==='guilds'?['Server','ID','Msgs']:['Command','Uses'];
             let html = '<div class="overflow-hidden rounded-lg border border-gray-700 shadow-xl fade-in"><table class="w-full text-left"><thead class="bg-gray-900 text-gray-400 text-xs uppercase tracking-wider"><tr>';
             headers.forEach(h => html += `<th class="p-4 border-b border-gray-800">${h}</th>`);
             html += '</tr></thead><tbody class="divide-y divide-gray-800 bg-card">';
-            
-            data.forEach(r => {
-                html += '<tr class="hover:bg-white/5 transition">';
-                Object.values(r).forEach(v => html += `<td class="p-4 text-gray-300 font-mono text-sm select-all">${v}</td>`);
-                html += '</tr>';
-            });
+            data.forEach(r => { html += '<tr class="hover:bg-white/5 transition">'; Object.values(r).forEach(v => html += `<td class="p-4 text-gray-300 font-mono text-sm select-all">${v}</td>`); html += '</tr>'; });
             html += '</tbody></table></div>';
             content.innerHTML = html;
         }
 
+        async function deleteRPG(threadId) {
+            if(!confirm("🛑 WARNING: PERMANENT DELETION.\nProceed?")) return;
+            try { const res=await fetch(`/api/rpg/delete/${threadId}`, {method:'POST'}); const json=await res.json();
+                if(json.error) alert("Error: "+json.error); else { currentRPGData=currentRPGData.filter(r=>r.thread_id!==threadId); renderRPGTable(); }
+            } catch(e) { alert("Failed."); }
+        }
         function closeModal(e) { if(e && e.target.id!=='modal-overlay') return; document.getElementById('modal-overlay').classList.add('hidden'); }
         document.addEventListener('keydown', (e) => { if(e.key==='Escape') closeModal(); });
+        function clearConsole() { document.getElementById('terminal-logs').innerHTML = '<div class="text-gray-500 italic p-2">>> Buffer cleared.</div>'; }
+        function downloadLogs() { const blob=new Blob([document.getElementById('terminal-logs').innerText], {type:'text/plain'}); const a=document.createElement('a'); a.href=window.URL.createObjectURL(blob); a.download='antima.log'; a.click(); }
+        async function restartBot() { if(!confirm("Restart bot?")) return; await fetch('/api/action/restart', {method:'POST'}); location.reload(); }
         
-        // --- CONSOLE & HISTORY (Preserved) ---
-        function clearConsole() { document.getElementById('terminal-logs').innerHTML = '<div class="text-gray-500 italic p-2">>> Buffer cleared by user.</div>'; }
-        function downloadLogs() { 
-            const blob = new Blob([document.getElementById('terminal-logs').innerText], { type: 'text/plain' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = `antima-system.log`; a.click();
-        }
-        async function restartBot() { 
-            if(!confirm("⚠️ SYSTEM RESTART\n\nThis will restart the bot process. All connections will be reset.\n\nContinue?")) return; 
-            await fetch('/api/action/restart', {method:'POST'}); 
-            setTimeout(() => location.reload(), 5000); 
-        }
-
         async function showHistory() {
-            const modal = document.getElementById('modal-overlay');
-            const content = document.getElementById('modal-content');
-            document.getElementById('modal-title').innerText = "System Archives";
-            document.getElementById('rpg-filters').classList.add('hidden');
-            modal.classList.remove('hidden');
-            content.innerHTML = '<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
-            
-            const res = await fetch('/api/history/dates');
-            const dates = await res.json();
-            let html = '<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 fade-in">';
-            dates.forEach(d => {
-                html += `
-                    <div onclick="loadLogDate('${d.date}')" class="bg-card hover:bg-gray-700 p-4 rounded-xl cursor-pointer border border-gray-700 text-center group transition shadow-lg hover:shadow-discord/20 hover:border-discord">
-                        <div class="text-3xl mb-2">📁</div>
-                        <div class="text-lg font-bold text-white group-hover:text-discord">${d.date}</div>
-                        <div class="text-xs text-gray-500 bg-black/40 rounded-full px-2 py-1 inline-block mt-2">${d.count} entries</div>
-                    </div>`;
-            });
-            content.innerHTML = html + '</div>';
+             const modal=document.getElementById('modal-overlay'), content=document.getElementById('modal-content');
+             document.getElementById('modal-title').innerText = "System Archives"; document.getElementById('rpg-filters').classList.add('hidden'); modal.classList.remove('hidden');
+             content.innerHTML='<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
+             const res=await fetch('/api/history/dates'); const dates=await res.json();
+             content.innerHTML = '<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 fade-in">' + dates.map(d => `<div onclick="loadLogDate('${d.date}')" class="bg-card hover:bg-gray-700 p-4 rounded-xl cursor-pointer border border-gray-700 text-center group transition shadow-lg hover:shadow-discord/20 hover:border-discord"><div class="text-3xl mb-2">📁</div><div class="text-lg font-bold text-white group-hover:text-discord">${d.date}</div><div class="text-xs text-gray-500 bg-black/40 rounded-full px-2 py-1 inline-block mt-2">${d.count} entries</div></div>`).join('') + '</div>';
         }
-
         async function loadLogDate(d) {
-            const content = document.getElementById('modal-content');
-            content.innerHTML = '<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
-            const res = await fetch(`/api/history/view/${d}`);
-            const logs = await res.json();
-            
-            let html = `
-                <div class="mb-4 flex items-center justify-between fade-in">
-                    <button onclick="showHistory()" class="text-gray-400 hover:text-white flex items-center gap-2 px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 transition"><span>←</span> Back</button>
-                    <span class="text-discord font-mono font-bold">${d}</span>
-                </div>
-                <div class="bg-black p-4 rounded-xl h-[65vh] overflow-y-auto font-mono text-xs text-gray-300 border border-gray-800 shadow-inner fade-in custom-scrollbar">`;
-            
-            logs.forEach(l => {
-                let color = "text-green-400";
-                if(l.level === "ERROR") color = "text-red-500 font-bold";
-                if(l.level === "WARNING") color = "text-yellow-400";
-                html += `<div class="mb-1 border-b border-gray-900/50 pb-0.5 hover:bg-white/5 px-1"><span class="text-gray-600 select-none mr-2">[${l.time}]</span><span class="${color} w-16 inline-block">${l.level}</span> ${l.message}</div>`;
-            });
-            content.innerHTML = html + '</div>';
+             const content=document.getElementById('modal-content'); content.innerHTML='<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
+             const res=await fetch(`/api/history/view/${d}`); const logs=await res.json();
+             content.innerHTML = `<div class="mb-4 flex items-center justify-between fade-in"><button onclick="showHistory()" class="text-gray-400 hover:text-white flex items-center gap-2 px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 transition"><span>←</span> Back</button><span class="text-discord font-mono font-bold">${d}</span></div><div class="bg-black p-4 rounded-xl h-[65vh] overflow-y-auto font-mono text-xs text-gray-300 border border-gray-800 shadow-inner fade-in custom-scrollbar">` + logs.map(l => `<div class="mb-1 border-b border-gray-900/50 pb-0.5 hover:bg-white/5 px-1"><span class="text-gray-600 select-none mr-2">[${l.time}]</span><span class="${l.level==='ERROR'?'text-red-500 font-bold':l.level==='WARNING'?'text-yellow-400':'text-green-400'} w-16 inline-block">${l.level}</span> ${l.message}</div>`).join('') + `</div>`;
         }
     </script>
 </body>

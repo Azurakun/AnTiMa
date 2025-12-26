@@ -1,7 +1,7 @@
 # cogs/rpg_system/tools.py
 import random
 from datetime import datetime
-from utils.db import rpg_sessions_collection, rpg_inventory_collection
+from utils.db import rpg_sessions_collection, rpg_inventory_collection, rpg_world_state_collection
 
 def grant_item_to_player(user_id: str, item_name: str, description: str):
     """Adds an item to the player's permanent inventory."""
@@ -42,35 +42,52 @@ def deduct_mana(thread_id: str, user_id: str, mana_cost: int):
 def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: str = None):
     """
     Simulates a D20 dice roll against a difficulty class (DC).
-    
     Args:
-        check_type: The name of the action being attempted (e.g., "Strength Check", "Persuasion", "Attack").
-        difficulty: The Target Number (DC) the player needs to beat.
-        modifier: The numerical bonus (or penalty) to add to the roll based on stats/skills.
-        stat_label: The name of the stat or skill providing the modifier (e.g., "STR", "Acrobatics").
+        check_type: The name of the action (e.g., "Attack", "Persuasion").
+        difficulty: The Target Number (DC).
+        modifier: The bonus/penalty.
     """
-    # Note: The logic for the actual roll and display is handled in cog.py to support rerolls and Discord formatting.
-    # This function definition exists primarily to provide the schema to the AI.
     roll = random.randint(1, 20)
     total = roll + modifier
     return f"Rolled {roll} + {modifier} ({stat_label}) = {total} vs DC {difficulty}"
 
-def update_journal(thread_id: str, log_entry: str, npc_update: str = None, quest_update: str = None):
-    """Updates the campaign log and world state."""
+def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active"):
+    """
+    Updates the World Sheet (JSON Database) for NPCs, Locations, or Lore.
+    Use this to remember detailed info about people and places.
+    
+    Args:
+        category: "NPC", "Location", "Quest", or "Lore"
+        name: The name of the entity (e.g., "Grom the Goblin", "Darkwood Tavern").
+        details: Detailed description, personality, secret notes, or current state.
+        status: "active" (currently relevant) or "inactive" (moved to background).
+    """
     try:
-        updates = {}
-        if log_entry:
-            entry = f"[{datetime.utcnow().strftime('%H:%M')}] {log_entry}"
-            updates["$push"] = {"campaign_log": entry}
-        if npc_update:
-            if "$push" not in updates: updates["$push"] = {}
-            updates["$push"]["npc_registry"] = npc_update
-        if quest_update:
-            if "$push" not in updates: updates["$push"] = {}
-            updates["$push"]["quest_log"] = quest_update
+        # We store these in a structured dictionary within the DB
+        key = f"{category.lower()}s.{name.replace('.', '_')}" 
         
-        if updates:
-            rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, updates)
-            return "System: Journal updated."
-        return "System: No updates."
+        rpg_world_state_collection.update_one(
+            {"thread_id": int(thread_id)},
+            {"$set": {
+                key: {
+                    "name": name,
+                    "details": details,
+                    "status": status,
+                    "last_updated": datetime.utcnow()
+                }
+            }},
+            upsert=True
+        )
+        return f"System: Updated World Sheet for [{category}] {name}."
+    except Exception as e: return f"System Error: {e}"
+
+def update_journal(thread_id: str, log_entry: str):
+    """Updates the simple chronological campaign log."""
+    try:
+        entry = f"[{datetime.utcnow().strftime('%H:%M')}] {log_entry}"
+        rpg_sessions_collection.update_one(
+            {"thread_id": int(thread_id)}, 
+            {"$push": {"campaign_log": entry}}
+        )
+        return "System: Journal updated."
     except Exception as e: return f"System Error: {e}"
