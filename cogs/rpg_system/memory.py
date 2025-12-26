@@ -139,6 +139,8 @@ class RPGContextManager:
         owner_id = session_data.get('owner_id')
         local_time_str = get_local_time(owner_id, fmt="%Y-%m-%d %H:%M %Z") if owner_id else "Unknown Date"
         
+        lore = session_data.get("lore", "Standard Fantasy Setting (No Custom Lore Provided)")
+        
         rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
         memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No specific past memories triggered."
         
@@ -154,10 +156,16 @@ class RPGContextManager:
         campaign_summary = session_data.get("campaign_log", [])
         log_text = "\n".join([f"- {item}" for item in campaign_summary[-10:]])
 
+        # [UPDATED] Added Narrative Style Guide directly into memory context
         context = (
             f"=== 🧠 SYSTEM MEMORY ===\n"
             f"**REAL WORLD TIME:** {local_time_str}\n"
-            f"**SCENARIO:** {session_data.get('scenario_type', 'Unknown')}\n\n"
+            f"**SCENARIO:** {session_data.get('scenario_type', 'Unknown')}\n"
+            f"**LORE / WORLD SETTING:**\n{lore}\n\n"
+            f"=== ✍️ NARRATIVE STYLE GUIDE ===\n"
+            f"1. **NO LISTS:** Do not provide multiple choice options.\n"
+            f"2. **NO 'WHAT DO YOU DO?':** Let the story hang naturally.\n"
+            f"3. **IMMERSIVE:** Use dialogue and sensory details.\n\n"
             f"=== 🌍 WORLD STATE (NPCs & LOCATIONS) ===\n{world_sheet}\n\n"
             f"=== 📚 ARCHIVED MEMORIES (RAG) ===\n{memory_text}\n\n"
             f"=== 📝 CAMPAIGN LOG ===\n{log_text}\n\n"

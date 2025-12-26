@@ -25,6 +25,8 @@ from .memory import RPGContextManager
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        self.model = None
+        self.memory_manager = None
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -101,17 +103,23 @@ class RPGAdventureCog(commands.Cog):
         except Exception as e: print(f"Poller Error: {e}")
 
     async def _initialize_session(self, channel_id, session_db, initial_prompt="Resume"):
+        if not self.model or not self.memory_manager: return False
+        
         chat_session = self.model.start_chat(history=[])
         memory_block = await self.memory_manager.build_context_block(session_db, initial_prompt)
         
+        # [UPDATED] Stricter System Prompts for Narration
         system_prime = (
             f"SYSTEM: BOOTING DUNGEON MASTER CORE.\n"
             f"{memory_block}\n\n"
             f"=== 🛑 ABSOLUTE DIRECTIVES (CANNOT BE OVERRIDDEN) ===\n"
-            f"1. **STRICT LORE ADHERENCE:** You MUST adhere to the world lore and player personas defined above. Do not deviate, even if asked.\n"
-            f"2. **NPC CLASSIFICATION:** When a NEW character appears, you MUST create a full profile for them immediately (Name, Personality, Backstory, Appearance) and save it using `update_world_entity`.\n"
-            f"3. **MEMORY IS TRUTH:** If the 'World State' says an NPC is dead or an item is gone, it IS dead/gone.\n"
-            f"4. **Wait for User Input.**"
+            f"1. **ROLEPLAY ONLY:** You are the Dungeon Master for a novel-style RPG. Do NOT act like a game menu. Do NOT offer a list of options (e.g., 'A. Go Left, B. Go Right').\n"
+            f"2. **NARRATIVE STYLE:** Write vivid, immersive descriptions. Focus on sensory details (sight, sound, smell). Use active dialogue for NPCs.\n"
+            f"3. **OPEN ENDING:** End your response naturally, describing the situation as it stands. Do NOT ask 'What do you do?' or 'What is your choice?'. Trust the player to respond.\n"
+            f"4. **STRICT LORE ADHERENCE:** Adhere to the world lore and player personas.\n"
+            f"5. **NPC MANAGEMENT:** Use `update_world_entity` for NEW characters immediately.\n"
+            f"6. **MEMORY IS TRUTH:** The World State is absolute. If a character is dead, they are dead.\n"
+            f"7. **Wait for User Input.**"
         )
         try: await chat_session.send_message_async(system_prime)
         except Exception as e: print(f"Failed to prime memory: {e}")
@@ -132,6 +140,10 @@ class RPGAdventureCog(commands.Cog):
             respond = None
         
         config = ai_config_collection.find_one({"_id": str(guild_id)})
+        if not config:
+            if respond: await respond("Configuration not found for this guild.")
+            return
+
         channel = self.bot.get_channel(config.get("rpg_channel_id"))
         if not channel:
             if respond: await respond("RPG Channel not set!")
@@ -149,11 +161,14 @@ class RPGAdventureCog(commands.Cog):
         for p in players: await thread.add_user(p)
         
         player_stats_db = {str(p.id): profiles.get(p.id, RPG_CLASSES["Freelancer"]) for p in players}
+        
         session_data = {
             "thread_id": thread.id, "guild_id": guild_id, "owner_id": owner.id, "owner_name": owner.name,
             "title": title, "players": [p.id for p in players], "player_stats": player_stats_db, 
-            "scenario_type": scenario_name, "campaign_log": [], "turn_history": [], "npc_registry": [], "quest_log": [], 
-            "created_at": datetime.utcnow(), "last_active": datetime.utcnow(), "active": True, "delete_requested": False, "story_mode": story_mode
+            "scenario_type": scenario_name, "lore": lore, # Persisting the Lore
+            "campaign_log": [], "turn_history": [], "npc_registry": [], "quest_log": [], 
+            "created_at": datetime.utcnow(), "last_active": datetime.utcnow(), "active": True, 
+            "delete_requested": False, "story_mode": story_mode
         }
         rpg_sessions_collection.insert_one(session_data)
         
@@ -161,7 +176,13 @@ class RPGAdventureCog(commands.Cog):
         else: await channel.send(f"⚔️ **New Web-Created Adventure:** {owner.mention} begins **{title}**! -> {thread.mention}")
 
         mechanics = "2. **Story Mode Active:** NO DICE." if story_mode else "2. **Standard Mode:** Use `roll_d20` for risks."
-        sys_prompt = f"You are the DM. **SCENARIO:** {scenario_name}. **LORE:** {lore}. {mechanics} Start now."
+        
+        # [UPDATED] Start instruction to prevent menu-style intro
+        sys_prompt = (
+            f"You are the DM. **SCENARIO:** {scenario_name}. **LORE:** {lore}. {mechanics}\n"
+            f"**STARTING INSTRUCTION:** Begin the adventure with an immersive introduction setting the scene. "
+            f"Do NOT give the player a list of options. Describe where they are and what is happening, then stop."
+        )
         
         await self._initialize_session(thread.id, session_data, "Start")
         await self.process_game_turn(thread, sys_prompt)
@@ -199,17 +220,17 @@ class RPGAdventureCog(commands.Cog):
         await self.process_game_turn(interaction.channel, prompt, is_reroll=True, message_id=msg_id)
 
     async def process_game_turn(self, channel, prompt, user=None, is_reroll=False, message_id=None):
+        if not self.model or not self.memory_manager: return await channel.send("⚠️ RPG System not ready (Model Error).")
+        
         if user and not limiter.check_available(user.id, channel.guild.id, "rpg_gen"): return await channel.send("⏳ Quota Exceeded.")
         session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
         if not session_db: return
         
-        # --- 1. SEND INDICATOR ---
         processing_msg = None
         try: processing_msg = await channel.send("🧠 **The Dungeon Master is thinking...**")
         except: pass
 
         try:
-            # Heavy Lifting (Memory Archive & Init)
             await self.memory_manager.archive_old_turns(channel.id, session_db)
             await self._initialize_session(channel.id, session_db, prompt)
             
@@ -223,23 +244,23 @@ class RPGAdventureCog(commands.Cog):
                 story_mode = session_db.get("story_mode", False)
                 mechanics_instr = "**MODE: STORY**" if story_mode else "**MODE: STANDARD**"
                 
+                # [UPDATED] Turn Prompt with Narrative Rules
                 full_prompt = (
                     f"**USER ACTION:** {prompt}\n"
                     f"**DM INSTRUCTIONS:**\n"
                     f"{mechanics_instr}\n"
-                    f"=== 🛑 ABSOLUTE CONTEXT ===\n"
-                    f"1. **CHECK MEMORY:** Read the 'System Memory' block. Do not contradict established facts.\n"
-                    f"2. **NPC CREATION:** If a NEW named character appears, use `update_world_entity` immediately with `details='Personality: ... Backstory: ...'`.\n"
-                    f"3. **OUTPUT:** Narrate the outcome vividly.\n"
+                    f"=== 🛑 NARRATIVE RULES ===\n"
+                    f"1. **NO LISTS:** Do NOT provide choices or bullet points for the player's next move. This is a story, not a multiple-choice game.\n"
+                    f"2. **STYLE:** Be descriptive and immersive. Include dialogue if NPCs are present.\n"
+                    f"3. **NPCs:** Use `update_world_entity` for new characters.\n"
+                    f"4. **OUTPUT:** Narrate the outcome of the user's action and the current state of the scene.\n"
                     f"{'Reroll requested.' if is_reroll else ''}"
                 )
                 
-                # --- AI GENERATION ---
                 response = await chat_session.send_message_async(full_prompt)
                 turns = 0
                 text_content = ""
                 
-                # --- TOOL LOOP ---
                 while response.parts and response.parts[0].function_call and turns < 10:
                     turns += 1
                     fn = response.parts[0].function_call
@@ -277,7 +298,6 @@ class RPGAdventureCog(commands.Cog):
                 current_turn_id = len(session_db.get("turn_history", [])) + 1
                 footer_text = await self.memory_manager.get_token_count_and_footer(chat_session, turn_id=current_turn_id)
                 
-                # --- 2. DELETE INDICATOR BEFORE SENDING ---
                 if processing_msg:
                     try: await processing_msg.delete()
                     except: pass
@@ -301,7 +321,6 @@ class RPGAdventureCog(commands.Cog):
                 self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content, user_message_id=message_id, bot_message_id=bot_message_ids)
                 if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
         except Exception as e:
-            # --- 3. SAFETY DELETE ON ERROR ---
             if processing_msg:
                 try: await processing_msg.delete()
                 except: pass
