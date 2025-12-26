@@ -20,8 +20,8 @@ from utils.db import (
     user_personas_collection,
     rpg_web_tokens_collection,
     web_actions_collection,
-    rpg_world_state_collection,   # <--- ADDED
-    rpg_vector_memory_collection, # <--- ADDED
+    rpg_world_state_collection,
+    rpg_vector_memory_collection,
     db 
 )
 from cogs.rpg_system.config import SCENARIOS, PREMADE_CHARACTERS
@@ -82,21 +82,24 @@ def serialize_persona(persona):
         persona["updated_at"] = persona["updated_at"].isoformat()
     return persona
 
+def serialize_world_entity(entity):
+    """Helper to fix datetime errors in NPC/Location data."""
+    if not entity: return entity
+    if "last_updated" in entity and isinstance(entity["last_updated"], datetime):
+        entity["last_updated"] = entity["last_updated"].isoformat()
+    return entity
+
 def fetch_rpg_full_memory(thread_id: str):
     """Fetches comprehensive state data for a specific RPG session."""
     tid = int(thread_id)
     
-    # 1. Basic Session Data
     session = rpg_sessions_collection.find_one({"thread_id": tid})
     if not session: return None
 
-    # 2. World State (NPCs, Locations)
     world_state = rpg_world_state_collection.find_one({"thread_id": tid}) or {}
     
-    # 3. Vector Memories (Last 20)
     vectors = list(rpg_vector_memory_collection.find({"thread_id": tid}).sort("timestamp", -1).limit(20))
     
-    # Clean up Vector Data for JSON
     clean_vectors = []
     for v in vectors:
         clean_vectors.append({
@@ -104,16 +107,16 @@ def fetch_rpg_full_memory(thread_id: str):
             "timestamp": v.get("timestamp", datetime.utcnow()).isoformat()
         })
 
-    # Clean up World State
+    # Clean up World State (Fix JSON Serialization Error)
     clean_npcs = []
     if "npcs" in world_state:
         for key, val in world_state["npcs"].items():
-            clean_npcs.append(val)
+            clean_npcs.append(serialize_world_entity(val))
     
     clean_locations = []
     if "locations" in world_state:
         for key, val in world_state["locations"].items():
-            clean_locations.append(val)
+            clean_locations.append(serialize_world_entity(val))
 
     return {
         "meta": {
@@ -125,7 +128,7 @@ def fetch_rpg_full_memory(thread_id: str):
         "players": session.get("player_stats", {}),
         "npcs": clean_npcs,
         "locations": clean_locations,
-        "campaign_log": session.get("campaign_log", [])[-20:], # Last 20 logs
+        "campaign_log": session.get("campaign_log", [])[-20:], 
         "memories": clean_vectors
     }
 
