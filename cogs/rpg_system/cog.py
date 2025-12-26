@@ -257,26 +257,37 @@ class RPGAdventureCog(commands.Cog):
         if not session_db or interaction.user.id != session_db['owner_id']:
              return await interaction.followup.send("Leader only.", ephemeral=True)
         
-        # 1. DELETE THE OLD MESSAGE (Visual cleanup)
         try:
             await interaction.message.delete()
-        except:
-            pass # Ignore if already deleted
+        except: pass 
         
-        # 2. DELETE LAST TURN FROM MEMORY (DB cleanup)
+        last_turn = None
+        if session_db.get("turn_history"):
+            last_turn = session_db["turn_history"][-1]
+
         self.memory_manager.delete_last_turn(thread_id)
         
-        if thread_id in self.active_sessions:
-            data = self.active_sessions[thread_id]
-            # 3. REWIND GEMINI SESSION (AI Context cleanup)
-            try: data['session'].rewind() 
-            except: pass
+        prompt = "Continue" 
+        msg_id = None
+        
+        if last_turn:
+            prompt = last_turn.get("input", "Continue")
+            msg_id = last_turn.get("user_message_id")
             
-            # 4. REPROCESS (Silently)
-            # We assume the interaction is handled by message deletion, so we just process the turn.
-            await self.process_game_turn(interaction.channel, data.get('last_prompt', "Continue"), is_reroll=True)
+            if msg_id:
+                try:
+                    original_msg = await interaction.channel.fetch_message(int(msg_id))
+                    if original_msg and original_msg.content:
+                        prompt = f"{original_msg.author.name}: {original_msg.content}"
+                except Exception:
+                    pass
 
-    async def process_game_turn(self, channel, prompt, user=None, is_reroll=False):
+        if thread_id in self.active_sessions:
+            del self.active_sessions[thread_id]
+
+        await self.process_game_turn(interaction.channel, prompt, is_reroll=True, message_id=msg_id)
+
+    async def process_game_turn(self, channel, prompt, user=None, is_reroll=False, message_id=None):
         if user and not limiter.check_available(user.id, channel.guild.id, "rpg_gen"):
             return await channel.send("⏳ Quota Exceeded.")
 
@@ -357,20 +368,51 @@ class RPGAdventureCog(commands.Cog):
                     except Exception as e:
                         text_content = f"**[System Notice]** Narrative unavailable (Safety Filter). Action executed."
 
-                self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content)
-                footer_text = await self.memory_manager.get_token_count_and_footer(chat_session)
+                # Calculate Current Turn ID (Current History + 1 for new entry)
+                current_history = session_db.get("turn_history", [])
+                current_turn_id = len(current_history) + 1
                 
-                view = RPGGameView(self, channel.id)
-                story_emb = discord.Embed(description=text_content, color=discord.Color.from_rgb(47, 49, 54))
-                story_emb.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None)
-                story_emb.set_footer(text=footer_text)
+                footer_text = await self.memory_manager.get_token_count_and_footer(chat_session, turn_id=current_turn_id)
+                
+                # --- SMART CHUNKING (Prevents 4096 Error) ---
+                chunks = [text_content[i:i+4000] for i in range(0, len(text_content), 4000)]
+                bot_message_ids = []
 
-                embeds = [story_emb]
-                if not story_mode:
-                    stat_emb = self.get_status_embed(channel.id)
-                    if stat_emb: embeds.append(stat_emb)
+                if not chunks: chunks = ["..."] 
 
-                await channel.send(embeds=embeds, view=view)
+                for i, chunk in enumerate(chunks):
+                    is_last = (i == len(chunks) - 1)
+                    
+                    story_emb = discord.Embed(description=chunk, color=discord.Color.from_rgb(47, 49, 54))
+                    
+                    # Author on first chunk only
+                    if i == 0:
+                        story_emb.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None)
+                    
+                    embeds = [story_emb]
+                    view = None
+                    
+                    # Status & Footer on last chunk only
+                    if is_last:
+                        story_emb.set_footer(text=footer_text)
+                        if not story_mode:
+                            stat_emb = self.get_status_embed(channel.id)
+                            if stat_emb: embeds.append(stat_emb)
+                        view = RPGGameView(self, channel.id)
+
+                    bot_msg = await channel.send(embeds=embeds, view=view)
+                    bot_message_ids.append(bot_msg.id)
+
+                # SAVE TURN WITH ALL BOT MSG IDs
+                self.memory_manager.save_turn(
+                    channel.id, 
+                    user.name if user else "System", 
+                    prompt, 
+                    text_content, 
+                    user_message_id=message_id, 
+                    bot_message_id=bot_message_ids
+                )
+                
                 if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
             except Exception as e:
                 await channel.send(f"⚠️ Game Error: {e}")
@@ -403,11 +445,8 @@ class RPGAdventureCog(commands.Cog):
             "token": token, "user_id": interaction.user.id, "guild_id": interaction.guild_id,
             "status": "pending", "created_at": datetime.utcnow()
         })
-        
-        # YOUR NGROK URL
         dashboard_url = "https://ray-goniometrical-implausibly.ngrok-free.dev" 
         url = f"{dashboard_url}/rpg/setup?token={token}"
-        
         embed = discord.Embed(title="🌐 Web Setup Initiated", description="Design your adventure with detailed lore, stats, and character backstory.", color=discord.Color.blue())
         embed.add_field(name="Setup Link", value=f"[**Click Here to Create Adventure**]({url})")
         embed.set_footer(text="Link expires once used.")
@@ -424,15 +463,83 @@ class RPGAdventureCog(commands.Cog):
             "type": "persona_management",
             "created_at": datetime.utcnow()
         })
-        
-        # YOUR NGROK URL
         dashboard_url = "https://ray-goniometrical-implausibly.ngrok-free.dev" 
         url = f"{dashboard_url}/rpg/personas?token={token}"
-        
         embed = discord.Embed(title="🎭 Persona Manager", description="Create, edit, or delete your saved characters.", color=discord.Color.purple())
         embed.add_field(name="Management Link", value=f"[**Open Persona Manager**]({url})")
         embed.set_footer(text="Link expires once used.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @rpg_group.command(name="history", description="View turn history to find a rewind point.")
+    async def rpg_history(self, interaction: discord.Interaction):
+        if not isinstance(interaction.channel, discord.Thread): 
+            return await interaction.response.send_message("Threads only.", ephemeral=True)
+        
+        session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
+        if not session or "turn_history" not in session: 
+            return await interaction.response.send_message("No history found.", ephemeral=True)
+            
+        history = session["turn_history"]
+        if not history: return await interaction.response.send_message("History is empty.", ephemeral=True)
+
+        desc = ""
+        # Show last 10 turns
+        start_index = max(0, len(history) - 10)
+        for i in range(start_index, len(history)):
+            turn = history[i]
+            snippet = (turn['input'][:50] + '...') if len(turn['input']) > 50 else turn['input']
+            desc += f"**Turn {i+1}**: {snippet}\n"
+        
+        embed = discord.Embed(title="📜 Recent History", description=desc, color=discord.Color.blue())
+        embed.set_footer(text="Use /rpg rewind <Turn ID> to revert state.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @rpg_group.command(name="rewind", description="Rewind the story to a specific turn (Deletes messages).")
+    async def rpg_rewind(self, interaction: discord.Interaction, turn_id: int):
+        if not isinstance(interaction.channel, discord.Thread): 
+            return await interaction.response.send_message("Threads only.", ephemeral=True)
+            
+        session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
+        if not session or interaction.user.id != session.get('owner_id'):
+            return await interaction.response.send_message("Leader only.", ephemeral=True)
+
+        history = session.get("turn_history", [])
+        target_index = turn_id - 1 # Convert 1-based to 0-based
+        
+        if target_index < 0 or target_index >= len(history):
+            return await interaction.response.send_message(f"Invalid Turn ID. Max: {len(history)}", ephemeral=True)
+            
+        await interaction.response.send_message(f"⏳ **Rewinding to Turn {turn_id}...** (Clearing messages)", ephemeral=True)
+        
+        # 1. Trim Database & Get Deleted Turns
+        deleted_turns = self.memory_manager.trim_history(interaction.channel.id, target_index)
+        
+        # 2. Delete Messages from Discord
+        if deleted_turns:
+            for turn in deleted_turns:
+                # Delete User Message
+                if turn.get("user_message_id"):
+                    try:
+                        msg = await interaction.channel.fetch_message(int(turn["user_message_id"]))
+                        await msg.delete()
+                    except: pass
+                
+                # Delete Bot Message(s)
+                b_ids = turn.get("bot_message_id")
+                if b_ids:
+                    if isinstance(b_ids, list):
+                        for bid in b_ids:
+                            try: await (await interaction.channel.fetch_message(bid)).delete()
+                            except: pass
+                    else:
+                        try: await (await interaction.channel.fetch_message(int(b_ids))).delete()
+                        except: pass
+                    
+        # 3. Clear Session Memory to Force Rebuild
+        if interaction.channel.id in self.active_sessions:
+            del self.active_sessions[interaction.channel.id]
+            
+        await interaction.followup.send(f"✅ Rewind Complete! Resuming from **Turn {turn_id}**.", ephemeral=True)
 
     @rpg_group.command(name="mode", description="Switch Game Mode.")
     @app_commands.choices(mode=[app_commands.Choice(name="Standard", value="standard"), app_commands.Choice(name="Story", value="story")])
@@ -470,4 +577,4 @@ class RPGAdventureCog(commands.Cog):
         if message.author.bot or not isinstance(message.channel, discord.Thread): return
         session = rpg_sessions_collection.find_one({"thread_id": message.channel.id})
         if session and message.author.id in session.get("players", []):
-            await self.process_game_turn(message.channel, f"{message.author.name}: {message.content}", message.author)
+            await self.process_game_turn(message.channel, f"{message.author.name}: {message.content}", message.author, message_id=message.id)

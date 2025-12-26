@@ -16,13 +16,19 @@ class RPGContextManager:
         content = "\n".join([f"- {item}" for item in unique_items])
         return f"**{title}:**\n{content}"
 
-    def save_turn(self, thread_id, user_name, user_input, ai_output):
-        """Permanently saves the turn interaction to the database (UTC for storage)."""
+    def save_turn(self, thread_id, user_name, user_input, ai_output, user_message_id=None, bot_message_id=None):
+        """
+        Permanently saves the turn interaction to the database.
+        Args:
+            bot_message_id: Can be a single ID (int) or a list of IDs (list) if the response was chunked.
+        """
         entry = {
             "timestamp": datetime.utcnow(),
             "user_name": user_name,
             "input": user_input,
-            "output": ai_output
+            "output": ai_output,
+            "user_message_id": user_message_id,
+            "bot_message_id": bot_message_id 
         }
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id)},
@@ -30,11 +36,32 @@ class RPGContextManager:
         )
 
     def delete_last_turn(self, thread_id):
-        """Removes the last turn from the database history."""
+        """Removes the last turn from the database history (used for single reroll)."""
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id)},
             {"$pop": {"turn_history": 1}}
         )
+
+    def trim_history(self, thread_id, target_index):
+        """
+        Slices the history to keep only turns up to target_index (0-based exclusive).
+        Example: target_index=3 means keep indices 0, 1, 2.
+        """
+        session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
+        if not session or "turn_history" not in session: return
+        
+        full_history = session["turn_history"]
+        # Ensure we don't trim more than exists or invalid amounts
+        if target_index < 0: target_index = 0
+        if target_index >= len(full_history): return # Nothing to trim
+        
+        new_history = full_history[:target_index]
+        
+        rpg_sessions_collection.update_one(
+            {"thread_id": int(thread_id)},
+            {"$set": {"turn_history": new_history}}
+        )
+        return full_history[target_index:] # Return the deleted turns so we can wipe messages
 
     def load_full_history(self, session_data):
         """Reconstructs the entire story from the database logs."""
@@ -49,10 +76,8 @@ class RPGContextManager:
     def build_context_block(self, session_data):
         """
         Aggregates ALL persistent data into a structured prompt block.
-        Uses the owner's timezone for the 'WORLD DATE'.
         """
         owner_id = session_data.get('owner_id')
-        # Format the date according to the user's timezone (or default GMT+7)
         local_time_str = get_local_time(owner_id, fmt="%Y-%m-%d %H:%M %Z") if owner_id else "Unknown Date"
 
         quests = session_data.get("quest_log", [])
@@ -74,12 +99,16 @@ class RPGContextManager:
         )
         return context
 
-    async def get_token_count_and_footer(self, chat_session):
+    async def get_token_count_and_footer(self, chat_session, turn_id=None):
         try:
             if not chat_session.history: return "🧠 Memory: 0 Tokens"
             count_result = await self.model.count_tokens_async(chat_session.history)
             used = count_result.total_tokens
             percent = (used / self.max_tokens) * 100
-            return f"🧠 Memory: {used:,} / {self.max_tokens:,} Tokens ({percent:.1f}%) | 💾 Auto-Saved"
+            
+            # Display Turn ID if provided
+            turn_str = f" | 📜 Turn {turn_id}" if turn_id else ""
+            
+            return f"🧠 Memory: {used:,} / {self.max_tokens:,} Tokens ({percent:.1f}%){turn_str} | 💾 Auto-Saved"
         except Exception as e:
             return "🧠 Memory: Calc Error"
