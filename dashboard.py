@@ -98,6 +98,7 @@ def fetch_rpg_full_memory(thread_id: str):
 
     world_state = rpg_world_state_collection.find_one({"thread_id": tid}) or {}
     
+    # Sort by timestamp -1 (DESCENDING) means NEWEST/LATEST are FIRST/ABOVE
     vectors = list(rpg_vector_memory_collection.find({"thread_id": tid}).sort("timestamp", -1).limit(20))
     
     clean_vectors = []
@@ -250,6 +251,16 @@ async def get_rpg_memory(thread_id: str):
         data = await run_sync_db(fetch_rpg_full_memory, thread_id)
         if not data: return JSONResponse({"error": "Session not found"}, status_code=404)
         return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/rpg/memory/clear/{thread_id}")
+async def clear_rpg_memory(thread_id: str):
+    """API Endpoint to clear neural (vector) memory for a specific story."""
+    try:
+        # Delete all vector memories for this thread
+        result = await run_sync_db(lambda: rpg_vector_memory_collection.delete_many({"thread_id": int(thread_id)}))
+        return JSONResponse({"status": "cleared", "count": result.deleted_count})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

@@ -404,27 +404,56 @@ class RPGAdventureCog(commands.Cog):
             raw_messages = [m async for m in interaction.channel.history(limit=None, oldest_first=True)]
             cleaned_history = []
             full_text_log = ""
+            
+            # Reconstruct Turn History
+            reconstructed_turns = []
+            last_user_msg = None
+            
             for msg in raw_messages:
+                # Track for vector ingest
                 if msg.author.bot and msg.author.id != self.bot.user.id: continue 
                 content = msg.content or (msg.embeds[0].description if msg.embeds else "")
                 if content: 
                     cleaned_history.append({"author": msg.author.name, "content": content, "timestamp": msg.created_at})
                     full_text_log += f"{msg.author.name}: {content}\n"
+                
+                # Turn Logic: Count AI messages as Turns
+                if msg.author.id == self.bot.user.id:
+                    u_name = last_user_msg.author.name if last_user_msg else "System"
+                    u_input = last_user_msg.content if last_user_msg else "Start"
+                    u_id = str(last_user_msg.id) if last_user_msg else None
+                    
+                    reconstructed_turns.append({
+                        "timestamp": msg.created_at,
+                        "user_name": u_name,
+                        "input": u_input,
+                        "output": content,
+                        "user_message_id": u_id,
+                        "bot_message_id": msg.id
+                    })
+                    last_user_msg = None # Turn consumed
+                elif not msg.author.bot:
+                    last_user_msg = msg
 
             if not cleaned_history: return await interaction.followup.send("⚠️ No history.")
 
-            # 2. Vector Indexing (Existing)
+            # Update DB with verified turns
+            rpg_sessions_collection.update_one(
+                {"thread_id": interaction.channel.id},
+                {"$set": {"turn_history": reconstructed_turns}}
+            )
+
+            # Invalidate Session Cache (Forces Token Recalc on next message)
+            if interaction.channel.id in self.active_sessions:
+                del self.active_sessions[interaction.channel.id]
+
+            # 2. Vector Indexing
             await self.memory_manager.clear_thread_vectors(interaction.channel.id)
             chunks = await self.memory_manager.batch_ingest_history(interaction.channel.id, cleaned_history)
             
-            # 3. Retroactive Entity Extraction (New)
-            # We spin up a temporary chat session just for this analysis
+            # 3. Retroactive Entity Extraction
             scan_session = self.model.start_chat(history=[])
-            
-            # We limit the log size to prevent massive token usage, though Gemini handles large context well.
-            # Taking the last 60,000 characters (approx 15k tokens) should cover most active contexts.
             trimmed_log = full_text_log[-60000:] 
-            
             analysis_prompt = (
                 "SYSTEM: RETROACTIVE MEMORY SCAN INITIATED.\n"
                 "Your task is to analyze the story log below and populate the database with any MISSING entities.\n"
@@ -435,13 +464,8 @@ class RPGAdventureCog(commands.Cog):
                 "5. **FORMAT:** Use strict details: '**Race:** X | **Gender:** Y | **App:** Z...'\n"
                 f"STORY LOG:\n{trimmed_log}"
             )
-            
-            # Send prompt and wait for tool calls
             response = await scan_session.send_message_async(analysis_prompt)
-            
-            # Handle potentially multiple tool calls
             entities_found = 0
-            # Gemini 1.5/2.5 can return multiple function calls in one turn
             if response.parts:
                 for part in response.parts:
                     if part.function_call:
@@ -456,7 +480,9 @@ class RPGAdventureCog(commands.Cog):
                             )
                             entities_found += 1
             
-            await interaction.followup.send(f"✅ Synced **{chunks}** memory blocks.\n🧠 **Neural Scan:** Discovered/Updated **{entities_found}** world entities.")
+            # Add Turn Count to Response
+            turn_count = len(reconstructed_turns)
+            await interaction.followup.send(f"✅ Synced **{chunks}** memory blocks.\n📜 **Turns Verified:** {turn_count}\n🧠 **Neural Scan:** Discovered/Updated **{entities_found}** world entities.")
             
         except Exception as e: await interaction.followup.send(f"❌ Error: {e}")
 

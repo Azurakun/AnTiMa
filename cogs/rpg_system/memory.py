@@ -78,10 +78,19 @@ class RPGContextManager:
         for mem in candidates:
             score = self._cosine_similarity(query_vector, mem['vector'])
             if score >= threshold:
-                results.append((score, mem['text']))
+                # Include timestamp for secondary sorting (Default to min if missing)
+                ts = mem.get("timestamp", datetime.min)
+                results.append((score, mem['text'], ts))
         
+        # 1. Sort by Similarity Score DESC (Best matches first)
         results.sort(key=lambda x: x[0], reverse=True)
-        return [r[1] for r in results[:limit]]
+        top_matches = results[:limit]
+
+        # 2. Sort the top matches by Timestamp DESC (Latest Info "Above"/First)
+        # This ensures the AI reads the most recent relevant events at the top of the list.
+        top_matches.sort(key=lambda x: x[2], reverse=True)
+        
+        return [r[1] for r in top_matches]
 
     def save_turn(self, thread_id, user_name, user_input, ai_output, user_message_id=None, bot_message_id=None):
         entry = {
@@ -105,6 +114,7 @@ class RPGContextManager:
             archive_text = ""
             for turn in to_archive:
                 archive_text += f"[{turn['user_name']}]: {turn['input']}\n[DM]: {turn['output']}\n"
+            # Ensure timestamp is recorded for sorting
             await self.store_memory(thread_id, archive_text, metadata={"type": "archived_history"})
             rpg_sessions_collection.update_one(
                 {"thread_id": int(thread_id)},
@@ -217,7 +227,7 @@ class RPGContextManager:
             f"{world_sheet}\n\n"
             f"=== 📜 LORE & RAG MEMORY ===\n"
             f"{lore}\n"
-            f"**Recalled Memories:**\n{memory_text}\n\n"
+            f"**Recalled Memories (Latest Above):**\n{memory_text}\n\n"
             f"=== 📝 CAMPAIGN LOG ===\n{log_text}\n\n"
             f"=== 💬 RECENT DIALOGUE ===\n{recent_history}\n"
             f"=== END MEMORY ==="

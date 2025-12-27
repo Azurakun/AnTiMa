@@ -267,7 +267,10 @@
                             </div>
 
                             <div class="bg-gray-900 p-4 rounded-lg border border-gray-700">
-                                <h3 class="text-purple-400 font-bold mb-3 uppercase text-xs">🧠 Recent Neural Memories (RAG)</h3>
+                                <div class="flex justify-between items-center mb-3">
+                                    <h3 class="text-purple-400 font-bold uppercase text-xs">🧠 Recent Neural Memories (RAG)</h3>
+                                    <button onclick="clearRPGMemory('${threadId}')" class="text-xs bg-red-900/30 hover:bg-red-600 text-red-300 hover:text-white px-2 py-0.5 rounded border border-red-900/50 transition">Clear All</button>
+                                </div>
                                 <div class="space-y-2 max-h-60 overflow-y-auto custom-scrollbar pr-2">
                                     ${data.memories.map(m => `
                                         <div class="text-xs text-gray-400 border-l-2 border-purple-900 pl-2 py-1 hover:bg-white/5 transition">
@@ -289,6 +292,19 @@
                 `;
                 content.innerHTML = html;
             } catch(e) { content.innerHTML = `<div class="text-red-400 p-10">Error fetching memory data.</div>`; }
+        }
+
+        async function clearRPGMemory(threadId) {
+            if(!confirm("Are you sure you want to wipe all neural memories for this session? This cannot be undone.")) return;
+            try {
+                const res = await fetch(`/api/rpg/memory/clear/${threadId}`, {method: 'POST'});
+                const data = await res.json();
+                if(data.error) alert("Error: " + data.error);
+                else {
+                    alert(`Cleared ${data.count} memories.`);
+                    viewRPGMemory(threadId); // Refresh view
+                }
+            } catch(e) { alert("Failed to clear memories."); }
         }
 
         // --- EXISTING RPG & WS LOGIC ---
