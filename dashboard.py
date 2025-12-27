@@ -83,23 +83,18 @@ def serialize_persona(persona):
     return persona
 
 def serialize_world_entity(entity):
-    """Helper to fix datetime errors in NPC/Location data."""
     if not entity: return entity
     if "last_updated" in entity and isinstance(entity["last_updated"], datetime):
         entity["last_updated"] = entity["last_updated"].isoformat()
     return entity
 
 def fetch_rpg_full_memory(thread_id: str):
-    """Fetches comprehensive state data for a specific RPG session."""
     tid = int(thread_id)
-    
     session = rpg_sessions_collection.find_one({"thread_id": tid})
     if not session: return None
 
     world_state = rpg_world_state_collection.find_one({"thread_id": tid}) or {}
-    
-    # Sort by timestamp -1 (DESCENDING) means NEWEST/LATEST are FIRST/ABOVE
-    vectors = list(rpg_vector_memory_collection.find({"thread_id": tid}).sort("timestamp", -1).limit(20))
+    vectors = list(rpg_vector_memory_collection.find({"thread_id": tid}).sort("timestamp", -1).limit(50))
     
     clean_vectors = []
     for v in vectors:
@@ -108,32 +103,31 @@ def fetch_rpg_full_memory(thread_id: str):
             "timestamp": v.get("timestamp", datetime.utcnow()).isoformat()
         })
 
-    # Clean up World State (Fix JSON Serialization Error)
-    clean_npcs = []
-    if "npcs" in world_state:
-        for key, val in world_state["npcs"].items():
-            clean_npcs.append(serialize_world_entity(val))
-    
-    clean_locations = []
-    if "locations" in world_state:
-        for key, val in world_state["locations"].items():
-            clean_locations.append(serialize_world_entity(val))
+    def process_category(category_key):
+        items = []
+        if category_key in world_state:
+            for key, val in world_state[category_key].items():
+                items.append(serialize_world_entity(val))
+        return items
 
     return {
         "meta": {
             "title": session.get("title"),
             "scenario": session.get("scenario_type"),
             "active": session.get("active"),
-            "turn_count": len(session.get("turn_history", []))
+            "turn_count": len(session.get("turn_history", [])),
+            "owner": session.get("owner_name", "Unknown")
         },
         "players": session.get("player_stats", {}),
-        "npcs": clean_npcs,
-        "locations": clean_locations,
-        "campaign_log": session.get("campaign_log", [])[-20:], 
+        "quests": process_category("quests"),
+        "npcs": process_category("npcs"),
+        "locations": process_category("locations"),
+        "events": process_category("events"),
+        "campaign_log": session.get("campaign_log", [])[-50:], 
         "memories": clean_vectors
     }
 
-# --- FETCH FUNCTIONS (Stats & Logs) ---
+# --- FETCH FUNCTIONS ---
 
 def fetch_overview():
     global_stats = stats_collection.find_one({"_id": "global"}) or {}
@@ -207,7 +201,7 @@ def fetch_logs_by_date(date_str: str):
     logs.sort(key=lambda x: x["timestamp"])
     return [{"time": l["timestamp"].strftime("%H:%M:%S"), "level": l["level"], "logger": l["logger"], "message": l["message"]} for l in logs]
 
-# --- API ROUTES (STATS & LOGS) ---
+# --- API ROUTES ---
 
 @app.get("/", response_class=HTMLResponse)
 async def get_home(request: Request):
@@ -246,7 +240,6 @@ async def delete_rpg_session(thread_id: str):
 
 @app.get("/api/rpg/memory/{thread_id}")
 async def get_rpg_memory(thread_id: str):
-    """API Endpoint to fetch full memory details for a story."""
     try:
         data = await run_sync_db(fetch_rpg_full_memory, thread_id)
         if not data: return JSONResponse({"error": "Session not found"}, status_code=404)
@@ -254,23 +247,18 @@ async def get_rpg_memory(thread_id: str):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-@app.post("/api/rpg/memory/clear/{thread_id}")
-async def clear_rpg_memory(thread_id: str):
-    """API Endpoint to clear neural (vector) memory for a specific story."""
-    try:
-        # Delete all vector memories for this thread
-        result = await run_sync_db(lambda: rpg_vector_memory_collection.delete_many({"thread_id": int(thread_id)}))
-        return JSONResponse({"status": "cleared", "count": result.deleted_count})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+@app.get("/rpg/inspect/{thread_id}", response_class=HTMLResponse)
+async def inspect_rpg_page(request: Request, thread_id: str):
+    """Dedicated page for inspecting RPG memory."""
+    return templates.TemplateResponse("memory_inspector.html", {"request": request, "thread_id": thread_id})
 
-# --- RPG SETUP & PERSONA ROUTES ---
+# --- RPG SETUP & PERSONAS ---
 
 @app.get("/rpg/setup", response_class=HTMLResponse)
 async def rpg_setup_page(request: Request, token: str):
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token, "status": "pending"}))
     if not token_doc:
-        return HTMLResponse("<h1>Invalid or Expired Link</h1><p>Please generate a new link in Discord using <code>/rpg web_new</code>.</p>", status_code=404)
+        return HTMLResponse("<h1>Invalid or Expired Link</h1>", status_code=404)
     user_id = token_doc["user_id"]
     personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
     personas = [serialize_persona(p) for p in personas]
@@ -282,7 +270,7 @@ async def rpg_setup_page(request: Request, token: str):
 async def rpg_personas_page(request: Request, token: str):
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token, "status": "pending"}))
     if not token_doc:
-        return HTMLResponse("<h1>Invalid or Expired Link</h1><p>Please generate a new link in Discord using <code>/rpg personas</code>.</p>", status_code=404)
+        return HTMLResponse("<h1>Invalid Link</h1>", status_code=404)
     user_id = token_doc["user_id"]
     personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
     personas = [serialize_persona(p) for p in personas]
@@ -291,7 +279,7 @@ async def rpg_personas_page(request: Request, token: str):
 @app.post("/api/rpg/persona/save")
 async def save_persona(data: PersonaModel):
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": data.token}))
-    if not token_doc: raise HTTPException(403, "Invalid Token or Session Expired")
+    if not token_doc: raise HTTPException(403, "Invalid Token")
     user_id = token_doc["user_id"]
     if data.id:
         update_data = {
@@ -325,7 +313,7 @@ async def submit_rpg_setup(data: RPGSetupData):
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one_and_update(
         {"token": data.token, "status": "pending"}, {"$set": {"status": "submitted"}}
     ))
-    if not token_doc: raise HTTPException(status_code=400, detail="Invalid or used token.")
+    if not token_doc: raise HTTPException(status_code=400, detail="Invalid token.")
     if data.character.get("save_as_persona"):
         persona_doc = {
             "id": str(uuid.uuid4()), "user_id": token_doc["user_id"], "name": data.character["name"],
@@ -346,7 +334,7 @@ async def submit_rpg_setup(data: RPGSetupData):
     await run_sync_db(lambda: web_actions_collection.insert_one(action_doc))
     return JSONResponse({"status": "success", "message": "Adventure queued."})
 
-# --- CONTROL PANEL ROUTES ---
+# --- CONTROL ROUTES ---
 
 @app.post("/api/control/config/update")
 async def update_bot_config(data: ConfigRequest):
@@ -382,7 +370,6 @@ async def queue_admin_action(data: ActionRequest):
         return JSONResponse({"status": f"Action '{data.action_type}' queued."})
     except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
 
-# --- WEBSOCKET ---
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()

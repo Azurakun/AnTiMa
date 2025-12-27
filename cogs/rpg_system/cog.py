@@ -23,6 +23,9 @@ from . import tools
 from .ui import RPGGameView, AdventureSetupView, CloseVoteView
 from .memory import RPGContextManager
 
+# BASE URL for the Web Dashboard
+WEB_DASHBOARD_URL = "https://ray-goniometrical-implausibly.ngrok-free.dev"
+
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -74,6 +77,7 @@ class RPGAdventureCog(commands.Cog):
 
     @tasks.loop(seconds=3)
     async def poll_web_creations(self):
+        """Polls for RPGs created via the Web Dashboard."""
         try:
             actions = list(web_actions_collection.find({"type": "create_rpg_web", "status": "pending"}))
             for action in actions:
@@ -113,14 +117,23 @@ class RPGAdventureCog(commands.Cog):
         system_prime = (
             f"SYSTEM: BOOTING DUNGEON MASTER CORE.\n"
             f"{memory_block}\n\n"
-            f"=== 🛑 NEURAL MEMORY PROTOCOLS ===\n"
-            f"1. **AUTO-DETECTION:** You must scan the narrative for any NEW proper names introduced.\n"
-            f"   - **Family Name Exclusions:** Do NOT create a new entity if the name is just a Family Name referring to an existing character. Only create if it is a DISTINCT individual.\n"
-            f"2. **IMMEDIATE UPDATES:** If a valid new character or location appears, you MUST call `update_world_entity` IMMEDIATELY.\n"
-            f"3. **NPC FORMAT:** When calling the tool, use this format for the 'details' field:\n"
-            f"   '**Race:** [Race] | **Gender:** [Gender] | **App:** [Appearance] | **Relation:** [Status]\\n[Bio/Personality]'\n"
-            f"4. **RELATIONSHIP TRACKING:** If an existing NPC's relationship with the player changes, call `update_world_entity`.\n"
-            f"5. **NARRATIVE:** Focus on the story. The tools handle the memory in the background."
+            f"=== 🛑 IDENTITY & ROLE PROTOCOL ===\n"
+            f"1. **YOU ARE THE DUNGEON MASTER (DM):** You describe the world, NPCs, and consequences.\n"
+            f"2. **NEVER PLAY AS THE USER:** Do not write the user's dialogue, actions, or internal thoughts. Do not use 'I' unless speaking as an NPC.\n"
+            f"3. **PERSPECTIVE:** Address the user as 'You'. (e.g., 'You see a dark cave...', NOT 'I walk into the cave...').\n"
+            f"4. **NARRATIVE STYLE:** detailed, immersive, and atmospheric. Write like a novel. Describe the surroundings (lighting, smells, sounds) and NPC mannerisms in detail. Do not be brief.\n"
+            f"5. **HANDLING USER DIALOGUE:** You may quote the user's dialogue exactly to weave it into the narrative (e.g., '\"Hello,\" you say, stepping forward...'). You may split their dialogue with descriptions. You MUST NOT alter their words or invent new lines for them.\n"
+            f"6. **PACING:** End your turn by inviting the user to act. Do not resolve the entire adventure in one message.\n\n"
+            f"=== 🛑 MEMORY MANAGEMENT PROTOCOLS ===\n"
+            f"You are responsible for maintaining the STRUCTURED WORLD STATE using the `update_world_entity` tool.\n"
+            f"**1. CLASSIFY INFORMATION:**\n"
+            f"   - **'Quest':** When a new objective is given, completed, or failed. (e.g. 'Find the key')\n"
+            f"   - **'NPC':** New people or significant updates to existing ones. (Use format: Race | Gender | App | Role)\n"
+            f"   - **'Location':** When moving to a NEW area. (e.g. 'The Dark Cave')\n"
+            f"   - **'Event':** Major plot points or boss kills. (e.g. 'Defeated the Dragon')\n"
+            f"**2. PRIORITIZE:**\n"
+            f"   - Always update Quests and Locations immediately.\n"
+            f"   - Do not rely on the 'Fallback Memory' for current objectives; store them explicitly.\n"
         )
         try: await chat_session.send_message_async(system_prime)
         except Exception as e: print(f"Failed to prime memory: {e}")
@@ -129,6 +142,49 @@ class RPGAdventureCog(commands.Cog):
             'session': chat_session, 'owner_id': session_db['owner_id'], 'last_prompt': initial_prompt
         }
         return True
+
+    async def _scan_narrative_for_entities(self, thread_id, narrative_text):
+        """
+        Background Scribe: Analyzes DM output to auto-detect and update World Entities.
+        Strictly separates concise 'details' from deep 'attributes'.
+        """
+        try:
+            scribe_session = self.model.start_chat(history=[])
+            analysis_prompt = (
+                f"SYSTEM: You are the WORLD SCRIBE. Extract structured data from the narrative below.\n"
+                f"Identify any **NPCs** (People), **LOCATIONS**, or **QUESTS**.\n"
+                f"**IMPORTANT DATA STRUCTURE:**\n"
+                f"1. **`details`**: Must be a SHORT, 1-2 sentence summary (e.g., 'A grumpy blacksmith in Riverwood'). Used for list views.\n"
+                f"2. **`attributes`**: You MUST populate this dictionary with DEEP details for the inspection view:\n"
+                f"   - 'race', 'gender', 'age' (estimate if unknown)\n"
+                f"   - 'appearance' (Detailed visual description)\n"
+                f"   - 'personality' (Traits and mannerisms)\n"
+                f"   - 'relationships' (Text describing relations with the Player AND other NPCs)\n"
+                f"   - 'bio' (A long, dynamic text field accumulating their backstory, current state, and secrets. If they were already known, append new info.)\n"
+                f"**NARRATIVE TO ANALYZE:**\n{narrative_text}"
+            )
+            response = await scribe_session.send_message_async(analysis_prompt)
+            
+            if response.parts:
+                for part in response.parts:
+                    if part.function_call:
+                        fn = part.function_call
+                        if fn.name == "update_world_entity":
+                            # Convert protobuf Struct to dict for attributes
+                            attrs = {}
+                            if "attributes" in fn.args:
+                                attrs = dict(fn.args["attributes"])
+                            
+                            tools.update_world_entity(
+                                str(thread_id), 
+                                fn.args["category"], 
+                                fn.args["name"], 
+                                fn.args["details"], 
+                                fn.args.get("status", "active"),
+                                attributes=attrs
+                            )
+        except Exception as e:
+            print(f"[SCRIBE ERROR] {e}")
 
     async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name, story_mode=False, custom_title=None, manual_guild_id=None, manual_user=None):
         if interaction:
@@ -180,8 +236,12 @@ class RPGAdventureCog(commands.Cog):
         
         sys_prompt = (
             f"You are the DM. **SCENARIO:** {scenario_name}. **LORE:** {lore}. {mechanics}\n"
-            f"**INSTRUCTION:** Start the adventure. Establish the scene. "
-            f"Use the Player's Persona (Appearance/Backstory) to ground them in the world."
+            f"**INSTRUCTION:** Start the adventure now. \n"
+            f"1. **Set the Scene:** Write a detailed, immersive opening. Paint the environment with sensory details (sight, sound, smell). Write like a novelist.\n"
+            f"2. **Hook:** Present the immediate situation or threat based on the Backstory.\n"
+            f"3. **Style:** Narrative prose. Not a list.\n"
+            f"4. **Perspective:** 2nd Person ('You...').\n"
+            f"5. **Constraint:** Do NOT act for the player. Stop and wait for their input."
         )
         
         await self._initialize_session(thread.id, session_data, "Start")
@@ -248,12 +308,14 @@ class RPGAdventureCog(commands.Cog):
                     f"**USER ACTION:** {prompt}\n"
                     f"**DM INSTRUCTIONS:**\n"
                     f"{mechanics_instr}\n"
-                    f"=== 🛑 AUTO-DETECTION & MEMORY RULES ===\n"
-                    f"1. **DETECT:** Scan for NEW characters. If found, call `update_world_entity`.\n"
-                    f"   - **Exclusion:** Ignore simple Family Names if the individual is already known.\n"
-                    f"2. **UPDATE:** If an existing NPC is present, update their status if relationships change.\n"
-                    f"3. **FORMAT:** Use the '|' separator format for NPC details.\n"
-                    f"4. **OUTPUT:** Narrative only. No lists.\n"
+                    f"1. **ROLEPLAY:** Narrate in **high detail** (Sensory details, atmosphere). Write like a novel. Do not be brief.\n"
+                    f"   - Describe the environment, sounds, and smells.\n"
+                    f"   - If the user spoke, you may quote them exactly to integrate it, but DO NOT change their words.\n"
+                    f"   - Do NOT speak for the user or describe their internal thoughts.\n"
+                    f"2. **NPCS:** If you introduce or update an NPC, use `update_world_entity`.\n"
+                    f"   - Use the `attributes` parameter for deep details (bio, relationships).\n"
+                    f"   - Keep the `details` parameter short (1 sentence summary).\n"
+                    f"3. **TOOLS:** Use `update_world_entity` to track everything.\n"
                     f"{'Reroll requested.' if is_reroll else ''}"
                 )
                 
@@ -277,7 +339,15 @@ class RPGAdventureCog(commands.Cog):
                             await channel.send(embed=discord.Embed(title=f"🎲 {fn.args.get('check_type', 'Check')}", description=desc, color=color))
                             res_txt = f"Roll: {roll}, Total: {total}, DC: {diff}, Success: {success}"
                             if not is_reroll: data['last_roll_result'] = res_txt
-                    elif fn.name == "update_world_entity": res_txt = tools.update_world_entity(str(channel.id), fn.args["category"], fn.args["name"], fn.args["details"], fn.args.get("status", "active"))
+                    elif fn.name == "update_world_entity": 
+                        # Handle the new attributes argument
+                        attrs = {}
+                        if "attributes" in fn.args:
+                            attrs = dict(fn.args["attributes"])
+                        res_txt = tools.update_world_entity(
+                            str(channel.id), fn.args["category"], fn.args["name"], 
+                            fn.args["details"], fn.args.get("status", "active"), attributes=attrs
+                        )
                     elif fn.name == "grant_item_to_player": res_txt = tools.grant_item_to_player(fn.args["user_id"], fn.args["item_name"], fn.args["description"])
                     elif fn.name == "apply_damage": res_txt = "Story Mode." if story_mode else tools.apply_damage(str(channel.id), fn.args["user_id"], fn.args["damage_amount"])
                     elif fn.name == "apply_healing": res_txt = "Story Mode." if story_mode else tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
@@ -319,6 +389,11 @@ class RPGAdventureCog(commands.Cog):
                     bot_message_ids.append(bot_msg.id)
 
                 self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content, user_message_id=message_id, bot_message_id=bot_message_ids)
+                
+                # --- AUTO-DETECT ENTITIES (SCRIBE) ---
+                # This runs in background to catch any missed updates in the text
+                asyncio.create_task(self._scan_narrative_for_entities(channel.id, text_content))
+                
                 if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
         except Exception as e:
             if processing_msg:
@@ -345,7 +420,7 @@ class RPGAdventureCog(commands.Cog):
         view = AdventureSetupView(self.bot, interaction.user)
         view.message = await interaction.followup.send(content=f"⚔️ **RPG Lobby** {interaction.user.mention}", embed=view._get_party_embed(), view=view)
 
-    @rpg_group.command(name="world", description="Admin: Inspect the AI's World Knowledge (NPCs/Locations).")
+    @rpg_group.command(name="world", description="Inspect the AI's World Knowledge & Open Memory Panel.")
     async def rpg_world(self, interaction: discord.Interaction):
         if not isinstance(interaction.channel, discord.Thread): 
             return await interaction.response.send_message("Use this inside an active Adventure Thread.", ephemeral=True)
@@ -353,43 +428,37 @@ class RPGAdventureCog(commands.Cog):
         session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
         if not session: return await interaction.response.send_message("No session data found.", ephemeral=True)
         
-        if interaction.user.id != session['owner_id']:
-            return await interaction.response.send_message("Only the Party Leader can check the World State.", ephemeral=True)
-
         world_data = rpg_world_state_collection.find_one({"thread_id": interaction.channel.id})
-        if not world_data:
-            return await interaction.response.send_message("🌍 The world is blank. No entities discovered yet.", ephemeral=True)
-
-        npcs = world_data.get("npcs", {})
-        locations = world_data.get("locations", {})
-
-        if not npcs and not locations:
-            return await interaction.response.send_message("🌍 No entities recorded yet.", ephemeral=True)
+        quests = world_data.get("quests", {}) if world_data else {}
+        npcs = world_data.get("npcs", {}) if world_data else {}
 
         await interaction.response.defer(ephemeral=True)
 
-        def chunk_dict(d, size=5):
-            it = iter(d.values())
-            for i in range(0, len(d), size):
-                yield [next(it) for _ in range(min(size, len(d) - i))]
-
         embeds = []
-        for chunk in chunk_dict(npcs):
-            emb = discord.Embed(title="👥 NPC Registry", color=discord.Color.blue())
-            for npc in chunk:
-                status_icon = "🟢" if npc.get('status') == 'active' else "⚪"
-                emb.add_field(name=f"{status_icon} {npc['name']}", value=f"_{npc.get('details', 'No data')}_", inline=False)
+        if quests:
+            emb = discord.Embed(title="🛡️ Active Objectives", color=discord.Color.gold())
+            count = 0
+            for q in quests.values():
+                if q.get("status") == "active":
+                    emb.add_field(name=q['name'], value=q['details'], inline=False)
+                    count += 1
+            if count > 0: embeds.append(emb)
+
+        if npcs:
+            emb = discord.Embed(title="👥 Known Contacts", color=discord.Color.blue())
+            for npc in list(npcs.values())[:5]: # Limit for display in Discord
+                emb.add_field(name=npc['name'], value=npc.get('details', 'No data').split('|')[0][:100], inline=False)
+            if len(npcs) > 5: emb.set_footer(text=f"... and {len(npcs)-5} more (See Inspector)")
             embeds.append(emb)
 
-        for chunk in chunk_dict(locations):
-            emb = discord.Embed(title="📍 Discovered Locations", color=discord.Color.green())
-            for loc in chunk:
-                status_icon = "🟢" if loc.get('status') == 'active' else "⚪"
-                emb.add_field(name=f"{status_icon} {loc['name']}", value=f"_{loc.get('details', 'No data')}_", inline=False)
-            embeds.append(emb)
+        view = discord.ui.View()
+        url = f"{WEB_DASHBOARD_URL}/rpg/inspect/{interaction.channel.id}"
+        view.add_item(discord.ui.Button(label="🧠 Open Memory Inspector", url=url, style=discord.ButtonStyle.link, emoji="🔗"))
 
-        if not embeds: await interaction.followup.send("Nothing to display.")
-        else: await interaction.followup.send(embeds=embeds)
+        msg_content = "🌍 **World State Summary**"
+        if not embeds: msg_content += "\n*(No major discoveries yet. Check the web inspector for details)*"
+        
+        await interaction.followup.send(content=msg_content, embeds=embeds, view=view)
 
     @rpg_group.command(name="sync", description="🔄 Re-reads and indexes history. Also scans for missing Entities!")
     async def rpg_sync(self, interaction: discord.Interaction):
@@ -397,92 +466,53 @@ class RPGAdventureCog(commands.Cog):
         session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
         if not session or interaction.user.id != session.get('owner_id'): return await interaction.response.send_message("Host only.", ephemeral=True)
         
-        await interaction.response.send_message("🔄 **Syncing Memory & World State...**")
+        await interaction.response.send_message("🔄 **Syncing Memory, Turn Sequence, & World State...**")
         
         try:
-            # 1. Fetch History
+            # 1. Fetch History & Reconstruct Turns
             raw_messages = [m async for m in interaction.channel.history(limit=None, oldest_first=True)]
-            cleaned_history = []
-            full_text_log = ""
-            
-            # Reconstruct Turn History
             reconstructed_turns = []
-            last_user_msg = None
+            current_user_msg = None
             
             for msg in raw_messages:
-                # Track for vector ingest
+                if msg.author.id == self.bot.user.id:
+                    if msg.embeds and current_user_msg:
+                        turn_data = {
+                            "timestamp": msg.created_at, "user_name": current_user_msg.author.name,
+                            "input": current_user_msg.content or "Action", "output": msg.embeds[0].description,
+                            "user_message_id": current_user_msg.id, "bot_message_id": msg.id
+                        }
+                        reconstructed_turns.append(turn_data)
+                        current_user_msg = None
+                elif not msg.author.bot:
+                    current_user_msg = msg
+
+            rpg_sessions_collection.update_one({"thread_id": interaction.channel.id}, {"$set": {"turn_history": reconstructed_turns}})
+
+            # 2. Vector Indexing
+            cleaned_history = []
+            full_text_log = ""
+            for msg in raw_messages:
                 if msg.author.bot and msg.author.id != self.bot.user.id: continue 
                 content = msg.content or (msg.embeds[0].description if msg.embeds else "")
                 if content: 
                     cleaned_history.append({"author": msg.author.name, "content": content, "timestamp": msg.created_at})
                     full_text_log += f"{msg.author.name}: {content}\n"
-                
-                # Turn Logic: Count AI messages as Turns
-                if msg.author.id == self.bot.user.id:
-                    u_name = last_user_msg.author.name if last_user_msg else "System"
-                    u_input = last_user_msg.content if last_user_msg else "Start"
-                    u_id = str(last_user_msg.id) if last_user_msg else None
-                    
-                    reconstructed_turns.append({
-                        "timestamp": msg.created_at,
-                        "user_name": u_name,
-                        "input": u_input,
-                        "output": content,
-                        "user_message_id": u_id,
-                        "bot_message_id": msg.id
-                    })
-                    last_user_msg = None # Turn consumed
-                elif not msg.author.bot:
-                    last_user_msg = msg
 
             if not cleaned_history: return await interaction.followup.send("⚠️ No history.")
 
-            # Update DB with verified turns
-            rpg_sessions_collection.update_one(
-                {"thread_id": interaction.channel.id},
-                {"$set": {"turn_history": reconstructed_turns}}
-            )
-
-            # Invalidate Session Cache (Forces Token Recalc on next message)
-            if interaction.channel.id in self.active_sessions:
-                del self.active_sessions[interaction.channel.id]
-
-            # 2. Vector Indexing
             await self.memory_manager.clear_thread_vectors(interaction.channel.id)
             chunks = await self.memory_manager.batch_ingest_history(interaction.channel.id, cleaned_history)
             
             # 3. Retroactive Entity Extraction
-            scan_session = self.model.start_chat(history=[])
-            trimmed_log = full_text_log[-60000:] 
-            analysis_prompt = (
-                "SYSTEM: RETROACTIVE MEMORY SCAN INITIATED.\n"
-                "Your task is to analyze the story log below and populate the database with any MISSING entities.\n"
-                "1. Identify all **NPCs** and **Locations** that are present in the story but might not be in the database.\n"
-                "2. For each one, call the `update_world_entity` tool.\n"
-                "3. **IGNORE** characters that are clearly Player Characters.\n"
-                "4. **IGNORE** family names if they refer to an existing person (e.g. 'Stark' for 'Tony Stark').\n"
-                "5. **FORMAT:** Use strict details: '**Race:** X | **Gender:** Y | **App:** Z...'\n"
-                f"STORY LOG:\n{trimmed_log}"
-            )
-            response = await scan_session.send_message_async(analysis_prompt)
-            entities_found = 0
-            if response.parts:
-                for part in response.parts:
-                    if part.function_call:
-                        fn = part.function_call
-                        if fn.name == "update_world_entity":
-                            tools.update_world_entity(
-                                str(interaction.channel.id), 
-                                fn.args["category"], 
-                                fn.args["name"], 
-                                fn.args["details"], 
-                                fn.args.get("status", "active")
-                            )
-                            entities_found += 1
+            # We trigger the scribe manually on the large text block
+            asyncio.create_task(self._scan_narrative_for_entities(interaction.channel.id, full_text_log[-60000:]))
             
-            # Add Turn Count to Response
-            turn_count = len(reconstructed_turns)
-            await interaction.followup.send(f"✅ Synced **{chunks}** memory blocks.\n📜 **Turns Verified:** {turn_count}\n🧠 **Neural Scan:** Discovered/Updated **{entities_found}** world entities.")
+            view = discord.ui.View()
+            url = f"{WEB_DASHBOARD_URL}/rpg/inspect/{interaction.channel.id}"
+            view.add_item(discord.ui.Button(label="🧠 Check Inspector", url=url, style=discord.ButtonStyle.link))
+
+            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{len(reconstructed_turns)}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧠 Retroactive Scan Queued.", view=view)
             
         except Exception as e: await interaction.followup.send(f"❌ Error: {e}")
 
@@ -490,7 +520,7 @@ class RPGAdventureCog(commands.Cog):
     async def rpg_web_new(self, interaction: discord.Interaction):
         token = str(uuid.uuid4())
         rpg_web_tokens_collection.insert_one({"token": token, "user_id": interaction.user.id, "guild_id": interaction.guild_id, "status": "pending", "created_at": datetime.utcnow()})
-        url = f"https://ray-goniometrical-implausibly.ngrok-free.dev/rpg/setup?token={token}"
+        url = f"{WEB_DASHBOARD_URL}/rpg/setup?token={token}"
         embed = discord.Embed(title="🌐 Web Setup", description=f"[**Click Here**]({url})", color=discord.Color.blue())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -498,7 +528,7 @@ class RPGAdventureCog(commands.Cog):
     async def rpg_personas(self, interaction: discord.Interaction):
         token = str(uuid.uuid4())
         rpg_web_tokens_collection.insert_one({"token": token, "user_id": interaction.user.id, "guild_id": interaction.guild_id, "status": "pending", "type": "persona_management", "created_at": datetime.utcnow()})
-        url = f"https://ray-goniometrical-implausibly.ngrok-free.dev/rpg/personas?token={token}"
+        url = f"{WEB_DASHBOARD_URL}/rpg/personas?token={token}"
         embed = discord.Embed(title="🎭 Persona Manager", description=f"[**Click Here**]({url})", color=discord.Color.purple())
         await interaction.response.send_message(embed=embed, ephemeral=True)
 

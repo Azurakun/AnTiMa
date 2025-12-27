@@ -8,6 +8,7 @@ from utils.timezone_manager import get_local_time
 import google.generativeai as genai
 
 class RPGContextManager:
+    # ... (Init and other methods remain same) ...
     def __init__(self, model):
         self.model = model
         self.max_tokens = 1_000_000
@@ -78,19 +79,10 @@ class RPGContextManager:
         for mem in candidates:
             score = self._cosine_similarity(query_vector, mem['vector'])
             if score >= threshold:
-                # Include timestamp for secondary sorting (Default to min if missing)
-                ts = mem.get("timestamp", datetime.min)
-                results.append((score, mem['text'], ts))
+                results.append((score, mem['text']))
         
-        # 1. Sort by Similarity Score DESC (Best matches first)
         results.sort(key=lambda x: x[0], reverse=True)
-        top_matches = results[:limit]
-
-        # 2. Sort the top matches by Timestamp DESC (Latest Info "Above"/First)
-        # This ensures the AI reads the most recent relevant events at the top of the list.
-        top_matches.sort(key=lambda x: x[2], reverse=True)
-        
-        return [r[1] for r in top_matches]
+        return [r[1] for r in results[:limit]]
 
     def save_turn(self, thread_id, user_name, user_input, ai_output, user_message_id=None, bot_message_id=None):
         entry = {
@@ -114,7 +106,6 @@ class RPGContextManager:
             archive_text = ""
             for turn in to_archive:
                 archive_text += f"[{turn['user_name']}]: {turn['input']}\n[DM]: {turn['output']}\n"
-            # Ensure timestamp is recorded for sorting
             await self.store_memory(thread_id, archive_text, metadata={"type": "archived_history"})
             rpg_sessions_collection.update_one(
                 {"thread_id": int(thread_id)},
@@ -122,72 +113,69 @@ class RPGContextManager:
             )
 
     def _format_player_profiles(self, session_data):
-        """Extracts deep persona details for players."""
         profiles = session_data.get("player_stats", {})
         output = []
         for user_id, stats in profiles.items():
             name = stats.get("name", "Unknown Hero")
             p_class = stats.get("class", "Freelancer")
-            pronouns = stats.get("pronouns", "They/Them")
+            pronouns = stats.get("pronouns", "They/They")
             backstory = stats.get("backstory", "No history known.")
             appearance = stats.get("appearance", "Standard adventurer gear.")
             personality = stats.get("personality", "Determined.")
             
             profile_txt = (
-                f"👤 **PLAYER: {name}** ({p_class})\n"
-                f"   - **Pronouns:** {pronouns}\n"
-                f"   - **Appearance:** {appearance}\n"
+                f"👤 **{name}** ({p_class}) [{pronouns}]\n"
+                f"   - **App:** {appearance}\n"
                 f"   - **Personality:** {personality}\n"
                 f"   - **Backstory:** {backstory}"
             )
             output.append(profile_txt)
-        return "\n\n".join(output)
+        return "\n".join(output)
 
     def _format_world_sheet(self, thread_id, current_input=""):
-        """
-        Dynamically fetches Active NPCs AND Referenced Inactive NPCs.
-        Matches names in 'current_input' to inactive entities to 'wake' them up in context.
-        """
         data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)})
-        if not data: return "No detailed world data."
+        if not data: return "**System:** No world data established."
         
-        output = []
-        npcs = data.get("npcs", {})
+        # 1. OBJECTIVES
+        quests = data.get("quests", {})
+        active_quests = [v for v in quests.values() if v.get("status") == "active"]
+        quest_text = "**🛡️ ACTIVE OBJECTIVES:**\n" + "".join([f"> 🔸 **{q['name']}**: {q['details']}\n" for q in active_quests]) if active_quests else "**🛡️ OBJECTIVES:** None active.\n"
+
+        # 2. LOCATIONS
         locations = data.get("locations", {})
-        
-        # 1. Process Active Entities (Always Visible)
-        active_output = []
-        active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
-        if active_npcs:
-            active_output.append("**👥 ACTIVE NPCs (In Scene):**")
-            for npc in active_npcs:
-                # Expecting rich details in 'details' field from the updated Prompt
-                active_output.append(f"> **{npc['name']}**: {npc['details']}")
-        
         active_locs = [v for v in locations.values() if v.get("status") == "active"]
-        if active_locs:
-             active_output.append("\n**📍 CURRENT LOCATION:**")
-             for loc in active_locs:
-                 active_output.append(f"> **{loc['name']}**: {loc['details']}")
+        loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_locs]) if active_locs else ""
 
-        # 2. Context Refinement: Check for Mentions of Inactive NPCs
-        mentioned_output = []
-        input_lower = current_input.lower()
+        # 3. NPCs (Enhanced)
+        npcs = data.get("npcs", {})
+        active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
         
-        # Check inactive NPCs
+        npc_list = []
+        for npc in active_npcs:
+            details = npc['details']
+            # If we have rich attributes, explicitly add them to the prompt so AI remembers appearances/relationships
+            attrs = npc.get("attributes", {})
+            if attrs:
+                app_str = f"App: {attrs.get('appearance', 'N/A')}"
+                rel_str = f"Rel: {attrs.get('relationship', 'Neutral')}"
+                trait_str = f"Traits: {attrs.get('personality', 'N/A')}"
+                details = f"{details} | {app_str} | {rel_str} | {trait_str}"
+            
+            npc_list.append(f"> 👤 **{npc['name']}** (Present): {details}")
+        
+        input_lower = current_input.lower()
         for key, npc in npcs.items():
-            if npc.get("status") != "active":
-                # Check if name or alias is in input
-                name = npc['name']
-                # Simple check: is the name (or significant part of it) in the input?
-                if name.lower() in input_lower:
-                    mentioned_output.append(f"   - **{name}** (Recalled): {npc['details']}")
+            if npc.get("status") != "active" and npc['name'].lower() in input_lower:
+                npc_list.append(f"> 🧠 **{npc['name']}** (Recalled): {npc['details']}")
+        
+        npc_text = "**👥 CHARACTERS:**\n" + "\n".join(npc_list) if npc_list else "**👥 CHARACTERS:** None in scene."
 
-        if mentioned_output:
-            active_output.append("\n**🧠 RECALLED ENTITIES (Context Injection):**")
-            active_output.extend(mentioned_output)
+        # 4. EVENTS
+        events = data.get("events", {})
+        event_list = list(events.values())[-5:] 
+        event_text = "**📅 KEY EVENTS (MEMORY):**\n" + "".join([f"> 🔹 {e['name']}: {e['details']}\n" for e in event_list]) if event_list else ""
 
-        return "\n".join(active_output)
+        return f"{quest_text}\n{loc_text}\n{npc_text}\n{event_text}"
 
     async def build_context_block(self, session_data, current_user_input):
         thread_id = session_data['thread_id']
@@ -195,42 +183,33 @@ class RPGContextManager:
         local_time_str = get_local_time(owner_id, fmt="%Y-%m-%d %H:%M %Z") if owner_id else "Unknown Date"
         
         lore = session_data.get("lore", "Standard Fantasy Setting")
-        
-        # 1. Player Personas
         player_context = self._format_player_profiles(session_data)
-
-        # 2. World State (Active + Triggered)
         world_sheet = self._format_world_sheet(thread_id, current_user_input)
         
-        # 3. RAG Memories
-        rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
-        memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No specific past memories triggered."
-        
-        # 4. Recent History
         history = session_data.get("turn_history", [])
         text_log = []
-        for turn in history[-8:]: # Last 8 turns for immediate context
+        for turn in history[-8:]: 
             text_log.append(f"[{turn['user_name']}]: {turn['input']}")
             text_log.append(f"[DM]: {turn['output']}")
         recent_history = "\n\n".join(text_log)
 
-        campaign_summary = session_data.get("campaign_log", [])
-        log_text = "\n".join([f"- {item}" for item in campaign_summary[-10:]])
+        rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
+        memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No deep archives found."
 
         context = (
             f"=== 🧠 SYSTEM CONTEXT ===\n"
             f"**REAL TIME:** {local_time_str}\n"
-            f"**SCENARIO:** {session_data.get('scenario_type', 'Unknown')}\n\n"
-            f"=== 🎭 PLAYER PERSONAS (RESPECT PRONOUNS & BACKSTORY) ===\n"
+            f"**SCENARIO:** {session_data.get('scenario_type', 'Unknown')}\n"
+            f"**LORE:** {lore}\n\n"
+            f"=== 🎭 PROTAGONISTS ===\n"
             f"{player_context}\n\n"
-            f"=== 🌍 WORLD STATE & NPC DOSSIERS ===\n"
+            f"=== 🌍 WORLD STATE (STRUCTURED MEMORY) ===\n"
             f"{world_sheet}\n\n"
-            f"=== 📜 LORE & RAG MEMORY ===\n"
-            f"{lore}\n"
-            f"**Recalled Memories (Latest Above):**\n{memory_text}\n\n"
-            f"=== 📝 CAMPAIGN LOG ===\n{log_text}\n\n"
-            f"=== 💬 RECENT DIALOGUE ===\n{recent_history}\n"
-            f"=== END MEMORY ==="
+            f"=== 💬 RECENT DIALOGUE ===\n{recent_history}\n\n"
+            f"=== 📚 ANCIENT ARCHIVES (FALLBACK MEMORY) ===\n"
+            f"Use this information ONLY if the specific details are missing from the World State or Dialogue above.\n"
+            f"{memory_text}\n"
+            f"=== END CONTEXT ==="
         )
         return context
 
@@ -241,7 +220,7 @@ class RPGContextManager:
             used = count_result.total_tokens
             percent = (used / self.max_tokens) * 100
             turn_str = f" | 📜 Turn {turn_id}" if turn_id else ""
-            return f"🧠 Mem: {used:,} ({percent:.1f}%){turn_str} | 💾 RAG Active"
+            return f"🧠 Mem: {used:,} ({percent:.1f}%){turn_str}"
         except: return "🧠 Mem: Calc Error"
         
     def delete_last_turn(self, thread_id):

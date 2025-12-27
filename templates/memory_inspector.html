@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neural Memory Inspector | AnTiMa</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: { extend: { colors: { discord: '#5865F2', darkbg: '#202225', card: '#2f3136', hover: '#36393f', sidebar: '#18191c' } } }
+        }
+    </script>
+    <style>
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1a1b1e; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        .memory-card { transition: all 0.2s; }
+        .memory-card:hover { transform: translateY(-2px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5); }
+        .nav-item.active { background-color: #5865F2; color: white; border-right: 4px solid white; }
+        .nav-item { transition: all 0.2s; }
+        .fade-in { animation: fadeIn 0.2s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-darkbg text-gray-100 font-sans h-screen flex flex-col overflow-hidden">
+
+    <nav class="bg-card border-b border-gray-700 p-4 shrink-0 shadow-md z-20">
+        <div class="flex justify-between items-center px-4">
+            <div class="flex items-center gap-4">
+                <h1 class="text-xl font-bold tracking-wide text-white flex items-center gap-2">
+                    <span class="text-2xl">🧠</span> Neural Memory Inspector
+                </h1>
+            </div>
+            <div id="connection-status" class="text-xs font-mono text-gray-500 bg-black/30 px-3 py-1 rounded-full border border-gray-700">Connecting...</div>
+        </div>
+    </nav>
+
+    <div class="flex flex-1 overflow-hidden">
+        
+        <aside class="w-64 bg-sidebar border-r border-gray-700 flex flex-col shrink-0">
+            <div class="p-6 border-b border-gray-800">
+                <h2 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-4">Memory Banks</h2>
+                <nav class="space-y-2">
+                    <button onclick="switchTab('overview')" id="nav-overview" class="nav-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-gray-800 text-sm font-bold">
+                        <span>📊</span> Overview
+                    </button>
+                    <button onclick="switchTab('quests')" id="nav-quests" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-gray-800 text-gray-400 text-sm font-bold">
+                        <span>🛡️</span> Quests & Objectives
+                    </button>
+                    <button onclick="switchTab('events')" id="nav-events" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-gray-800 text-gray-400 text-sm font-bold">
+                        <span>📅</span> Story Events
+                    </button>
+                    <button onclick="switchTab('npcs')" id="nav-npcs" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-gray-800 text-gray-400 text-sm font-bold">
+                        <span>👥</span> NPC Registry
+                    </button>
+                    <button onclick="switchTab('locations')" id="nav-locations" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-gray-800 text-gray-400 text-sm font-bold">
+                        <span>📍</span> Locations
+                    </button>
+                    <button onclick="switchTab('logs')" id="nav-logs" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 hover:bg-gray-800 text-gray-400 text-sm font-bold">
+                        <span>🔌</span> Neural & Logs
+                    </button>
+                </nav>
+            </div>
+            
+            <div class="mt-auto p-6 border-t border-gray-800">
+                 <div class="bg-black/30 p-3 rounded-lg border border-gray-800">
+                    <h3 class="text-[10px] font-bold text-gray-500 uppercase mb-2">Session Info</h3>
+                    <div id="sidebar-meta" class="text-xs space-y-1 text-gray-400">Loading...</div>
+                 </div>
+            </div>
+        </aside>
+
+        <main class="flex-1 overflow-y-auto bg-darkbg p-8 custom-scrollbar relative">
+            
+            <div id="view-overview" class="tab-view fade-in space-y-8">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-3xl font-bold text-white" id="meta-title">Loading...</h2>
+                    <span class="px-3 py-1 bg-green-900/30 text-green-400 border border-green-900 rounded-full text-xs font-bold uppercase">Session Active</span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
+                    <div class="bg-card p-6 rounded-xl border border-gray-700 shadow-lg">
+                        <div class="text-gray-400 text-xs font-bold uppercase">Total Turns</div>
+                        <div class="text-3xl font-bold text-white mt-2" id="stat-turns">-</div>
+                    </div>
+                    <div class="bg-card p-6 rounded-xl border border-gray-700 shadow-lg">
+                         <div class="text-gray-400 text-xs font-bold uppercase">NPCs Met</div>
+                         <div class="text-3xl font-bold text-blue-400 mt-2" id="stat-npcs">-</div>
+                    </div>
+                     <div class="bg-card p-6 rounded-xl border border-gray-700 shadow-lg">
+                         <div class="text-gray-400 text-xs font-bold uppercase">Active Quests</div>
+                         <div class="text-3xl font-bold text-orange-400 mt-2" id="stat-quests">-</div>
+                    </div>
+                     <div class="bg-card p-6 rounded-xl border border-gray-700 shadow-lg">
+                         <div class="text-gray-400 text-xs font-bold uppercase">Locations</div>
+                         <div class="text-3xl font-bold text-emerald-400 mt-2" id="stat-locs">-</div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div class="bg-card rounded-xl border border-gray-700 overflow-hidden">
+                        <div class="bg-gray-800 px-6 py-4 border-b border-gray-700"><h3 class="font-bold text-gray-200">🎭 Adventuring Party</h3></div>
+                        <div id="overview-party" class="p-6 space-y-4"></div>
+                    </div>
+                    <div class="bg-card rounded-xl border border-gray-700 overflow-hidden">
+                        <div class="bg-gray-800 px-6 py-4 border-b border-gray-700 flex justify-between">
+                            <h3 class="font-bold text-orange-400">🛡️ Current Objectives</h3>
+                            <button onclick="switchTab('quests')" class="text-xs text-gray-400 hover:text-white">View All →</button>
+                        </div>
+                        <div id="overview-quests" class="p-6 space-y-3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="view-quests" class="tab-view hidden fade-in max-w-5xl mx-auto">
+                <h2 class="text-2xl font-bold text-orange-400 mb-6 flex items-center gap-3">
+                    <span class="bg-orange-900/20 p-2 rounded-lg border border-orange-900/50">🛡️</span> Quest Log
+                </h2>
+                <div id="container-quests" class="space-y-4"></div>
+            </div>
+
+            <div id="view-events" class="tab-view hidden fade-in max-w-5xl mx-auto">
+                <h2 class="text-2xl font-bold text-yellow-400 mb-6 flex items-center gap-3">
+                    <span class="bg-yellow-900/20 p-2 rounded-lg border border-yellow-900/50">📅</span> Event Timeline
+                </h2>
+                <div id="container-events" class="space-y-4"></div>
+            </div>
+
+            <div id="view-npcs" class="tab-view hidden fade-in max-w-6xl mx-auto">
+                <h2 class="text-2xl font-bold text-blue-400 mb-6 flex items-center gap-3">
+                     <span class="bg-blue-900/20 p-2 rounded-lg border border-blue-900/50">👥</span> NPC Database
+                </h2>
+                <div id="container-npcs" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"></div>
+            </div>
+
+            <div id="view-locations" class="tab-view hidden fade-in max-w-6xl mx-auto">
+                <h2 class="text-2xl font-bold text-emerald-400 mb-6 flex items-center gap-3">
+                    <span class="bg-emerald-900/20 p-2 rounded-lg border border-emerald-900/50">📍</span> World Map
+                </h2>
+                <div id="container-locations" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
+            </div>
+
+            <div id="view-logs" class="tab-view hidden fade-in h-full flex flex-col">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
+                    <div class="flex flex-col h-full overflow-hidden bg-card rounded-xl border border-gray-700">
+                        <div class="bg-gray-800 p-4 border-b border-gray-700"><h3 class="font-bold text-purple-400">🧠 RAG Vector Memory</h3></div>
+                        <div id="container-memories" class="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar"></div>
+                    </div>
+                     <div class="flex flex-col h-full overflow-hidden bg-black rounded-xl border border-gray-700">
+                        <div class="bg-gray-800 p-4 border-b border-gray-700"><h3 class="font-bold text-gray-300 font-mono">System.log</h3></div>
+                        <div id="container-log" class="flex-1 overflow-y-auto p-4 space-y-1 font-mono text-xs text-gray-400 custom-scrollbar"></div>
+                    </div>
+                </div>
+            </div>
+
+        </main>
+    </div>
+
+    <div id="npc-modal" class="fixed inset-0 bg-black/90 hidden z-[100] flex justify-center items-center backdrop-blur-sm p-4 fade-in" onclick="closeNPCModal(event)">
+        <div class="bg-card w-full max-w-3xl rounded-xl shadow-2xl border border-gray-700 flex flex-col max-h-[90vh]" onclick="event.stopPropagation()">
+            <div class="p-6 border-b border-gray-700 bg-gray-800 rounded-t-xl flex justify-between items-center relative overflow-hidden">
+                <div class="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
+                <div>
+                    <h2 id="modal-npc-name" class="text-3xl font-bold text-white relative z-10">NPC Name</h2>
+                    <div id="modal-npc-role" class="text-blue-400 text-sm font-bold uppercase tracking-wider mt-1 relative z-10">Role / Class</div>
+                </div>
+                <button onclick="closeNPCModal()" class="bg-gray-700 hover:bg-gray-600 rounded-full p-2 transition z-20"><svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+            </div>
+            
+            <div class="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-8">
+                
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="bg-black/30 p-3 rounded-lg border border-gray-700 text-center">
+                        <div class="text-[10px] uppercase text-gray-500 font-bold">Age</div>
+                        <div id="modal-npc-age" class="text-lg font-bold text-white">-</div>
+                    </div>
+                    <div class="bg-black/30 p-3 rounded-lg border border-gray-700 text-center">
+                        <div class="text-[10px] uppercase text-gray-500 font-bold">Gender</div>
+                        <div id="modal-npc-gender" class="text-lg font-bold text-white">-</div>
+                    </div>
+                    <div class="bg-black/30 p-3 rounded-lg border border-gray-700 text-center">
+                        <div class="text-[10px] uppercase text-gray-500 font-bold">Race</div>
+                        <div id="modal-npc-race" class="text-lg font-bold text-white">-</div>
+                    </div>
+                </div>
+
+                <div class="space-y-6">
+                    <div>
+                        <h3 class="text-blue-400 font-bold uppercase text-xs mb-2 border-b border-gray-700 pb-1">👁️ Appearance</h3>
+                        <p id="modal-npc-app" class="text-gray-300 leading-relaxed text-sm">No data.</p>
+                    </div>
+
+                    <div>
+                        <h3 class="text-purple-400 font-bold uppercase text-xs mb-2 border-b border-gray-700 pb-1">🧠 Personality & Traits</h3>
+                        <p id="modal-npc-personality" class="text-gray-300 leading-relaxed text-sm">No data.</p>
+                    </div>
+
+                    <div class="bg-blue-900/10 p-4 rounded-lg border border-blue-900/30">
+                        <h3 class="text-blue-300 font-bold uppercase text-xs mb-2">🤝 Relationships (User & NPCs)</h3>
+                        <p id="modal-npc-rel" class="text-blue-100/80 leading-relaxed text-sm italic">Neutral</p>
+                    </div>
+
+                    <div>
+                        <h3 class="text-gray-400 font-bold uppercase text-xs mb-2 border-b border-gray-700 pb-1">📖 Biography & Dynamics</h3>
+                        <p id="modal-npc-backstory" class="text-gray-400 leading-relaxed text-sm">No history recorded.</p>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const threadId = "{{ thread_id }}";
+
+        function switchTab(tabId) {
+            document.querySelectorAll('.nav-item').forEach(el => {
+                el.classList.remove('active', 'bg-discord', 'text-white');
+                el.classList.add('text-gray-400');
+            });
+            const btn = document.getElementById(`nav-${tabId}`);
+            btn.classList.add('active');
+            btn.classList.remove('text-gray-400');
+            document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`view-${tabId}`).classList.remove('hidden');
+        }
+
+        // Global NPC Data Storage
+        let npcDatabase = {};
+
+        function openNPCModal(npcName) {
+            const npc = npcDatabase[npcName];
+            if (!npc) return;
+            
+            const attrs = npc.attributes || {};
+            
+            document.getElementById('modal-npc-name').innerText = npc.name;
+            // Provide fallback if role isn't explicitly in attributes
+            document.getElementById('modal-npc-role').innerText = attrs.role || (npc.details ? npc.details.split('.')[0] : "Character");
+            
+            document.getElementById('modal-npc-age').innerText = attrs.age || "?";
+            document.getElementById('modal-npc-gender').innerText = attrs.gender || "?";
+            document.getElementById('modal-npc-race').innerText = attrs.race || "?";
+            
+            document.getElementById('modal-npc-app').innerText = attrs.appearance || "No visual description provided.";
+            document.getElementById('modal-npc-personality').innerText = attrs.personality || "No personality traits recorded.";
+            
+            // Handle Relationships explicitly
+            document.getElementById('modal-npc-rel').innerText = attrs.relationships || attrs.relationship || "Neutral";
+            
+            // Handle Biography/Dynamic History
+            // Fallback to the 'details' field if 'bio' is empty, but 'details' is supposed to be short now.
+            document.getElementById('modal-npc-backstory').innerText = attrs.bio || attrs.backstory || "No detailed biography available.";
+
+            document.getElementById('npc-modal').classList.remove('hidden');
+        }
+
+        function closeNPCModal(e) {
+            if (e && e.target.id !== 'npc-modal' && !e.target.closest('button')) return;
+            document.getElementById('npc-modal').classList.add('hidden');
+        }
+
+        async function loadData() {
+            try {
+                const res = await fetch(`/api/rpg/memory/${threadId}`);
+                const data = await res.json();
+                
+                if (data.error) {
+                    document.querySelector('main').innerHTML = `<div class="text-center text-red-500 text-xl py-20 font-bold">⚠️ ${data.error}</div>`;
+                    return;
+                }
+
+                document.getElementById('connection-status').innerText = "Connected";
+                document.getElementById('connection-status').className = "text-xs font-mono text-green-400 font-bold bg-green-900/30 px-3 py-1 rounded-full border border-green-700";
+
+                // Meta Side
+                document.getElementById('sidebar-meta').innerHTML = `
+                    <div class="flex justify-between"><span>Host:</span> <span class="text-white">${data.meta.owner}</span></div>
+                    <div class="flex justify-between"><span>Scenario:</span> <span class="text-white">${data.meta.scenario}</span></div>
+                    <div class="flex justify-between"><span>Turns:</span> <span class="text-white">${data.meta.turn_count}</span></div>
+                `;
+
+                // --- OVERVIEW TAB ---
+                document.getElementById('meta-title').innerText = data.meta.title || "Untitled Adventure";
+                document.getElementById('stat-turns').innerText = data.meta.turn_count;
+                document.getElementById('stat-npcs').innerText = data.npcs.length;
+                document.getElementById('stat-quests').innerText = data.quests.filter(q => q.status === 'active').length;
+                document.getElementById('stat-locs').innerText = data.locations.length;
+
+                document.getElementById('overview-party').innerHTML = Object.values(data.players).map(p => `
+                    <div class="flex items-center justify-between bg-black/30 p-3 rounded border border-gray-700">
+                        <div class="flex items-center gap-3">
+                             <div class="w-8 h-8 rounded-full bg-discord flex items-center justify-center font-bold text-white text-xs">${p.name.substring(0,2).toUpperCase()}</div>
+                             <div>
+                                 <div class="font-bold text-sm text-white">${p.name}</div>
+                                 <div class="text-xs text-gray-500">${p.class}</div>
+                             </div>
+                        </div>
+                        <div class="text-right text-xs">
+                             <div class="text-green-400">HP ${p.hp}/${p.max_hp}</div>
+                             <div class="text-blue-400">MP ${p.mp}/${p.max_mp}</div>
+                        </div>
+                    </div>
+                `).join('');
+
+                const activeQuests = data.quests.filter(q => q.status === 'active').slice(0, 3);
+                document.getElementById('overview-quests').innerHTML = activeQuests.map(q => `
+                    <div class="border-l-2 border-orange-500 pl-3 py-1">
+                        <div class="text-sm font-bold text-gray-200">${q.name}</div>
+                        <div class="text-xs text-gray-500 truncate">${q.details}</div>
+                    </div>
+                `).join('') || '<div class="text-gray-600 text-sm italic">No active quests.</div>';
+
+                // --- DETAILED TABS ---
+                renderList('container-quests', data.quests, 'orange', 'No quests logged.');
+                renderList('container-events', data.events, 'yellow', 'No major events.');
+                
+                // Store NPCs for Modal
+                data.npcs.forEach(n => npcDatabase[n.name] = n);
+                renderNPCGrid('container-npcs', data.npcs, 'blue', 'No NPCs discovered.');
+                
+                renderGrid('container-locations', data.locations, 'emerald', 'No locations mapped.');
+
+                // Memories
+                document.getElementById('container-memories').innerHTML = data.memories.map(m => `
+                    <div class="bg-card p-3 rounded border border-gray-700 text-sm text-gray-300 hover:bg-gray-800 transition">
+                        <div class="text-[10px] text-purple-400 mb-1 font-mono uppercase tracking-wide">${m.timestamp.split('T')[1].split('.')[0]}</div>
+                        ${m.text}
+                    </div>
+                `).join('') || '<div class="text-gray-500 italic p-4">No neural archives found.</div>';
+
+                // Logs
+                document.getElementById('container-log').innerHTML = data.campaign_log.map(l => 
+                    `<div class="hover:bg-white/5 px-2 py-0.5 rounded cursor-default border-b border-gray-800/50">${l}</div>`
+                ).join('') || '<div class="text-gray-600 italic">Log empty.</div>';
+
+            } catch (e) {
+                console.error(e);
+                document.getElementById('connection-status').innerText = "Offline";
+                document.getElementById('connection-status').className = "text-xs font-mono text-red-500 bg-red-900/30 px-3 py-1 rounded-full border border-red-700";
+            }
+        }
+
+        function renderList(containerId, items, color, emptyMsg) {
+            const container = document.getElementById(containerId);
+            if (!items || items.length === 0) {
+                container.innerHTML = `<div class="p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">${emptyMsg}</div>`;
+                return;
+            }
+            container.innerHTML = items.map(item => `
+                <div class="bg-card p-5 rounded-xl border border-gray-700 shadow-sm hover:border-${color}-500 transition group">
+                    <div class="flex justify-between items-start mb-2">
+                        <h4 class="font-bold text-gray-100 text-lg group-hover:text-${color}-400 transition">${item.name}</h4>
+                        ${item.status === 'active' ? `<span class="bg-${color}-900/30 text-${color}-400 text-[10px] px-2 py-0.5 rounded uppercase font-bold border border-${color}-900/50">Active</span>` : '<span class="bg-gray-800 text-gray-500 text-[10px] px-2 py-0.5 rounded uppercase border border-gray-700">Archived</span>'}
+                    </div>
+                    <div class="text-gray-300 leading-relaxed whitespace-pre-wrap text-sm">${item.details}</div>
+                    ${item.last_updated ? `<div class="text-[10px] text-gray-600 mt-4 font-mono">Last Update: ${item.last_updated.split('T')[1].split('.')[0]}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        function renderNPCGrid(containerId, items, color, emptyMsg) {
+            const container = document.getElementById(containerId);
+            if (!items || items.length === 0) {
+                container.innerHTML = `<div class="col-span-full p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">${emptyMsg}</div>`;
+                return;
+            }
+            container.innerHTML = items.map(item => `
+                <div onclick="openNPCModal('${item.name}')" class="bg-card p-5 rounded-xl border border-gray-700 shadow-md hover:-translate-y-1 transition duration-200 hover:shadow-xl hover:border-${color}-500/50 relative overflow-hidden cursor-pointer group">
+                    <div class="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-${color}-500/10 to-transparent -mr-4 -mt-4 rounded-full group-hover:bg-${color}-500/20 transition"></div>
+                    <h4 class="font-bold text-white text-lg mb-2 flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-${color}-500"></span> ${item.name}
+                    </h4>
+                    <div class="text-gray-400 text-sm h-16 overflow-hidden relative">
+                         ${item.details.split('|')[0]}
+                         <div class="absolute bottom-0 left-0 w-full h-8 bg-gradient-to-t from-card to-transparent"></div>
+                    </div>
+                    <div class="mt-3 flex justify-between items-center border-t border-gray-700 pt-3">
+                         <span class="text-[10px] font-bold text-blue-400 uppercase tracking-wider">Click for Profile</span>
+                         <span class="text-gray-500 text-xs">➜</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+        
+        function renderGrid(containerId, items, color, emptyMsg) {
+            const container = document.getElementById(containerId);
+            if (!items || items.length === 0) {
+                container.innerHTML = `<div class="col-span-full p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">${emptyMsg}</div>`;
+                return;
+            }
+            container.innerHTML = items.map(item => `
+                <div class="bg-card p-5 rounded-xl border border-gray-700 shadow-md hover:-translate-y-1 transition duration-200 hover:shadow-xl hover:border-${color}-500/50 relative overflow-hidden">
+                    <div class="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-${color}-500/10 to-transparent -mr-4 -mt-4 rounded-full"></div>
+                    <h4 class="font-bold text-white text-lg mb-2 flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-${color}-500"></span> ${item.name}
+                    </h4>
+                    <div class="text-gray-400 text-sm h-24 overflow-y-auto custom-scrollbar pr-1">${item.details}</div>
+                </div>
+            `).join('');
+        }
+
+        loadData();
+        setInterval(loadData, 5000); // Live update every 5s
+    </script>
+</body>
+</html>

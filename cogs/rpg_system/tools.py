@@ -40,50 +40,47 @@ def deduct_mana(thread_id: str, user_id: str, mana_cost: int):
     return update_player_stats(thread_id, user_id, hp_change=0, mp_change=-int(mana_cost))
 
 def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: str = None):
-    """
-    Simulates a D20 dice roll against a difficulty class (DC).
-    Args:
-        check_type: The name of the action (e.g., "Attack", "Persuasion").
-        difficulty: The Target Number (DC).
-        modifier: The bonus/penalty.
-    """
     roll = random.randint(1, 20)
     total = roll + modifier
     return f"Rolled {roll} + {modifier} ({stat_label}) = {total} vs DC {difficulty}"
 
-def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active"):
+def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None):
     """
-    Updates the World Sheet (JSON Database) for NPCs, Locations, or Lore.
-    Use this to remember detailed info about people and places.
+    Updates the World Sheet.
     
     Args:
-        category: "NPC", "Location", "Quest", or "Lore"
-        name: The name of the entity (e.g., "Grom the Goblin", "Darkwood Tavern").
-        details: Detailed description. MUST follow the prompt's formatting guidelines (Race, Gender, App, etc.)
-        status: "active" (currently relevant) or "inactive" (moved to background).
+        category: "NPC", "Location", "Quest", "Event".
+        name: Name of entity.
+        details: Short summary/status.
+        status: "active" or "inactive".
+        attributes: (Optional) Detailed structured data for NPCs.
+                    Expected keys: 'age', 'gender', 'race', 'appearance', 
+                    'personality', 'backstory', 'relationship', 'stats'.
     """
     try:
-        # Sanitize keys to prevent MongoDB dot-notation errors
         safe_name = name.replace('.', '_').replace('$', '')
         key = f"{category.lower()}s.{safe_name}" 
         
+        update_payload = {
+            "name": name,
+            "details": details,
+            "status": status,
+            "last_updated": datetime.utcnow()
+        }
+
+        # If it's an NPC and we have detailed attributes, save them
+        if category == "NPC" and attributes:
+            update_payload["attributes"] = attributes
+
         rpg_world_state_collection.update_one(
             {"thread_id": int(thread_id)},
-            {"$set": {
-                key: {
-                    "name": name,
-                    "details": details,
-                    "status": status,
-                    "last_updated": datetime.utcnow()
-                }
-            }},
+            {"$set": {key: update_payload}},
             upsert=True
         )
-        return f"System: Updated World Sheet for [{category}] {name}."
+        return f"System: Updated {category} '{name}' with details."
     except Exception as e: return f"System Error: {e}"
 
 def update_journal(thread_id: str, log_entry: str):
-    """Updates the simple chronological campaign log."""
     try:
         entry = f"[{datetime.utcnow().strftime('%H:%M')}] {log_entry}"
         rpg_sessions_collection.update_one(
