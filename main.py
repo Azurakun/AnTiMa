@@ -64,8 +64,28 @@ bot = AnTiMaBot()
 async def run_bot():
     init_db()
     
-    print("🌐 Launching Dashboard...")
-    dashboard_process = subprocess.Popen([sys.executable, "dashboard.py"])
+    print("🌐 Launching Dashboard with Gunicorn...")
+
+    # --- GUNICORN CONFIGURATION ---
+    # Railway assigns a PORT env var. We fallback to 8000 for local testing.
+    port = os.getenv("PORT", "8000")
+
+    # Command to run Gunicorn
+    # -w 2: Two worker processes
+    # -k uvicorn.workers.UvicornWorker: Use Uvicorn for FastAPI support
+    # --bind 0.0.0.0:PORT: Bind to the external interface and assigned port
+    gunicorn_cmd = [
+        "gunicorn", 
+        "dashboard:app", 
+        "-w", "2", 
+        "-k", "uvicorn.workers.UvicornWorker", 
+        "--bind", f"0.0.0.0:{port}",
+        "--access-logfile", "-", 
+        "--error-logfile", "-"
+    ]
+    
+    # Start Gunicorn as a subprocess so it runs alongside the bot
+    dashboard_process = subprocess.Popen(gunicorn_cmd)
     
     try:
         async with bot:
@@ -74,6 +94,7 @@ async def run_bot():
         pass
     finally:
         print("\n🛑 Shutting down...")
+        # Ensure the dashboard process is terminated when the bot stops
         if dashboard_process.poll() is None:
             dashboard_process.terminate()
             try:

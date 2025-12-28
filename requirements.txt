@@ -24,3 +24,4 @@ fastapi
 uvicorn
 jinja2
 websockets
+gunicorn

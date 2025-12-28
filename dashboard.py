@@ -394,4 +394,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception: pass
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    # Get the PORT from environment variables, default to 8000 if not found
+    port = int(os.environ.get("PORT", 8000))
+    # Run uvicorn on "0.0.0.0" and the assigned port
+    uvicorn.run(app, host="0.0.0.0", port=port)
