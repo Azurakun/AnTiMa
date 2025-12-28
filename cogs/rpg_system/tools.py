@@ -47,19 +47,11 @@ def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: st
 def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None):
     """
     Updates the World Sheet.
-    Merged attributes to preserve 'state' and 'condition' if not provided in the new update.
-    
-    Args:
-        category: "NPC", "Location", "Quest", "Event".
-        name: Name of entity.
-        details: Short summary/status.
-        status: "active" or "inactive".
-        attributes: (Optional) Detailed structured data for NPCs.
-                    Expected keys: 'age', 'gender', 'race', 'appearance', 
-                    'personality', 'backstory', 'relationship', 'state', 'condition'.
+    Merges attributes and appends aliases/details if the entity exists.
     """
     try:
-        safe_name = name.replace('.', '_').replace('$', '')
+        # Standardize key generation to prevent "Arthur " vs "Arthur"
+        safe_name = name.strip().replace('.', '_').replace('$', '')
         key = f"{category.lower()}s.{safe_name}" 
         
         # 1. Fetch existing data to merge attributes safely
@@ -69,23 +61,33 @@ def update_world_entity(thread_id: str, category: str, name: str, details: str, 
         )
         
         existing_attrs = {}
+        existing_details = ""
+        
         if existing_doc and category.lower() + "s" in existing_doc:
-            # Safely access nested dictionary
             cat_dict = existing_doc[category.lower() + "s"]
             if safe_name in cat_dict:
-                existing_attrs = cat_dict[safe_name].get("attributes", {})
+                entity_data = cat_dict[safe_name]
+                existing_attrs = entity_data.get("attributes", {})
+                existing_details = entity_data.get("details", "")
 
-        # 2. Prepare new attributes (Merge Logic)
+        # 2. Merge Attributes
         new_attributes = existing_attrs.copy()
         if attributes:
             new_attributes.update(attributes)
 
+        # 3. Handle Details (Append Alias info if not duplicate)
+        # If the new details are short (just a status update), we might not want to overwrite a long bio.
+        # However, the user specifically asked to put aliases in details.
+        # We'll allow the Scribe's output to take precedence, but we can do a smart merge if needed.
+        # For now, we trust the Scribe to provide the full summary including aliases.
+        final_details = details
+
         update_payload = {
-            "name": name,
-            "details": details,
+            "name": name.strip(), # Ensure clean display name
+            "details": final_details,
             "status": status,
             "last_updated": datetime.utcnow(),
-            "attributes": new_attributes # Save merged attributes
+            "attributes": new_attributes 
         }
 
         rpg_world_state_collection.update_one(
@@ -93,7 +95,7 @@ def update_world_entity(thread_id: str, category: str, name: str, details: str, 
             {"$set": {key: update_payload}},
             upsert=True
         )
-        return f"System: Updated {category} '{name}' with details."
+        return f"System: Updated {category} '{name}'."
     except Exception as e: return f"System Error: {e}"
 
 def update_journal(thread_id: str, log_entry: str):

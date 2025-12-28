@@ -146,8 +146,7 @@ class RPGAdventureCog(commands.Cog):
     async def _scan_narrative_for_entities(self, thread_id, narrative_text):
         """
         Background Scribe: Analyzes DM output to auto-detect and update World Entities.
-        Strictly separates concise 'details' from deep 'attributes'.
-        Now specifically looks for Vital States and Physical Conditions, handling sync timeline analysis.
+        Strictly enforces IDENTITY RESOLUTION to prevent duplicates.
         """
         try:
             scribe_session = self.model.start_chat(history=[])
@@ -155,16 +154,15 @@ class RPGAdventureCog(commands.Cog):
                 f"SYSTEM: You are the WORLD SCRIBE. Extract structured data from the narrative below.\n"
                 f"Identify any **NPCs** (People), **LOCATIONS**, or **QUESTS**.\n"
                 f"**IMPORTANT DATA STRUCTURE:**\n"
-                f"1. **`details`**: Must be a SHORT, 1-2 sentence summary (e.g., 'A grumpy blacksmith in Riverwood').\n"
-                f"2. **`attributes`**: You MUST populate this dictionary with DEEP details:\n"
-                f"   - 'race', 'gender', 'age'\n"
-                f"   - 'appearance' (Visual description)\n"
-                f"   - 'personality' (Traits)\n"
-                f"   - 'relationships' (Text describing relations with the Player AND other NPCs)\n"
-                f"   - 'state': CURRENT vital state ('Alive', 'Unconscious', 'Dead', 'Missing', or 'Captured').\n"
-                f"   - 'condition': CURRENT physical condition ('Healthy', 'Injured', 'Critical', 'Exhausted', 'Sick', or 'Poisoned').\n"
-                f"   - 'bio' (Backstory)\n"
-                f"**CRITICAL SYNC INSTRUCTION:** If analyzing a chat log or history, determine the NPC's status as it is at the **VERY END** of the narrative. Ignore temporary states that were resolved (e.g., if they were Injured but then Healed, record 'Healthy').\n"
+                f"1. **`details`**: **MANDATORY FOR ALIASES**. Store Titles, Aliases, and a short summary here. (e.g. 'Known as Strider. A ranger from the north.').\n"
+                f"2. **`attributes`** (NPCs): Populate with 'race', 'gender', 'age', 'appearance', 'personality', 'relationships', 'bio', 'state', 'condition'.\n"
+                f"3. **`attributes`** (QUESTS): 'issuer', 'trigger', 'rewards', 'status' (active/completed/failed).\n\n"
+                f"**IDENTITY RESOLUTION PROTOCOL (CRITICAL):**\n"
+                f"1. **NO DUPLICATES:** Always use the **TRUE FULL NAME** as the `name` field.\n"
+                f"2. **HANDLE ALIASES:** If an NPC is revealed to be someone else (e.g., 'The Stranger is Aragorn'), DO NOT create a new entry for the Alias.\n"
+                f"   - **Right:** Name='Aragorn', Details='Also known as Strider. A Ranger.'\n"
+                f"   - **Wrong:** Name='Strider'.\n"
+                f"3. **MERGE:** If an existing NPC appears, use their existing TRUE NAME to update their record.\n"
                 f"**NARRATIVE TO ANALYZE:**\n{narrative_text}"
             )
             response = await scribe_session.send_message_async(analysis_prompt)
@@ -179,12 +177,17 @@ class RPGAdventureCog(commands.Cog):
                             if "attributes" in fn.args:
                                 attrs = dict(fn.args["attributes"])
                             
+                            # Extract explicit status from attributes if Scribe put it there
+                            status = fn.args.get("status", "active")
+                            if "status" in attrs:
+                                status = attrs["status"]
+                            
                             tools.update_world_entity(
                                 str(thread_id), 
                                 fn.args["category"], 
                                 fn.args["name"], 
                                 fn.args["details"], 
-                                fn.args.get("status", "active"),
+                                status, 
                                 attributes=attrs
                             )
         except Exception as e:
@@ -439,15 +442,24 @@ class RPGAdventureCog(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         embeds = []
-        if quests:
+        # ACTIVE QUESTS
+        active_qs = [q for q in quests.values() if q.get("status") == "active"]
+        if active_qs:
             emb = discord.Embed(title="🛡️ Active Objectives", color=discord.Color.gold())
-            count = 0
-            for q in quests.values():
-                if q.get("status") == "active":
-                    emb.add_field(name=q['name'], value=q['details'], inline=False)
-                    count += 1
-            if count > 0: embeds.append(emb)
+            for q in active_qs:
+                emb.add_field(name=q['name'], value=q['details'], inline=False)
+            embeds.append(emb)
 
+        # COMPLETED QUESTS
+        completed_qs = [q for q in quests.values() if q.get("status") == "completed"]
+        if completed_qs:
+            emb = discord.Embed(title="✅ Completed Log", color=discord.Color.green())
+            for q in completed_qs[:5]: # Limit to 5 recently completed
+                emb.add_field(name=q['name'], value=q['details'], inline=False)
+            if len(completed_qs) > 5: emb.set_footer(text=f"...and {len(completed_qs)-5} more.")
+            embeds.append(emb)
+
+        # NPCS
         if npcs:
             emb = discord.Embed(title="👥 Known Contacts", color=discord.Color.blue())
             count = 0
@@ -527,15 +539,21 @@ class RPGAdventureCog(commands.Cog):
             await self.memory_manager.clear_thread_vectors(interaction.channel.id)
             chunks = await self.memory_manager.batch_ingest_history(interaction.channel.id, cleaned_history)
             
-            # 3. Retroactive Entity Extraction
-            # We trigger the scribe manually on the large text block
-            asyncio.create_task(self._scan_narrative_for_entities(interaction.channel.id, full_text_log[-60000:]))
+            # 3. WIPE EXISTING QUESTS (For strict rebuild)
+            rpg_world_state_collection.update_one(
+                {"thread_id": interaction.channel.id}, 
+                {"$set": {"quests": {}}}
+            )
+
+            # 4. Retroactive Entity Extraction (Full History)
+            # Passing 200k chars to ensure we catch early quests
+            asyncio.create_task(self._scan_narrative_for_entities(interaction.channel.id, full_text_log[-200000:]))
             
             view = discord.ui.View()
             url = f"{WEB_DASHBOARD_URL}/rpg/inspect/{interaction.channel.id}"
             view.add_item(discord.ui.Button(label="🧠 Check Inspector", url=url, style=discord.ButtonStyle.link))
 
-            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{len(reconstructed_turns)}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧠 Retroactive Scan Queued.", view=view)
+            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{len(reconstructed_turns)}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **Quest Log Rebuilt** (Strict Mode).\n- 🧠 Retroactive Scan Queued.", view=view)
             
         except Exception as e: await interaction.followup.send(f"❌ Error: {e}")
 
