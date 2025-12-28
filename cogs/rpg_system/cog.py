@@ -24,7 +24,7 @@ from .ui import RPGGameView, AdventureSetupView, CloseVoteView
 from .memory import RPGContextManager
 
 # BASE URL for the Web Dashboard
-WEB_DASHBOARD_URL = "https://ray-goniometrical-implausibly.ngrok-free.dev"
+WEB_DASHBOARD_URL = "https://antima-production.up.railway.app"
 
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
