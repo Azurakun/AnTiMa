@@ -156,12 +156,13 @@ class RPGAdventureCog(commands.Cog):
                 f"**IMPORTANT DATA STRUCTURE:**\n"
                 f"1. **`details`**: **MANDATORY FOR ALIASES**. Store Titles, Aliases, and a short summary here. (e.g. 'Known as Strider. A ranger from the north.').\n"
                 f"2. **`attributes`** (NPCs): Populate with 'race', 'gender', 'age', 'appearance', 'personality', 'relationships', 'bio', 'state', 'condition'.\n"
+                f"   - **`aliases`**: Extract a LIST of short names/titles. (e.g. ['Strider', 'Elessar', 'The King']).\n"
                 f"3. **`attributes`** (QUESTS): 'issuer', 'trigger', 'rewards', 'status' (active/completed/failed).\n\n"
                 f"**IDENTITY RESOLUTION PROTOCOL (CRITICAL):**\n"
                 f"1. **NO DUPLICATES:** Always use the **TRUE FULL NAME** as the `name` field.\n"
                 f"2. **HANDLE ALIASES:** If an NPC is revealed to be someone else (e.g., 'The Stranger is Aragorn'), DO NOT create a new entry for the Alias.\n"
-                f"   - **Right:** Name='Aragorn', Details='Also known as Strider. A Ranger.'\n"
-                f"   - **Wrong:** Name='Strider'.\n"
+                f"   - **Right:** Name='Aragorn', attributes={{'aliases': ['The Stranger']}}\n"
+                f"   - **Wrong:** Name='The Stranger'.\n"
                 f"3. **MERGE:** If an existing NPC appears, use their existing TRUE NAME to update their record.\n"
                 f"**NARRATIVE TO ANALYZE:**\n{narrative_text}"
             )
@@ -321,6 +322,7 @@ class RPGAdventureCog(commands.Cog):
                     f"   - Do NOT speak for the user or describe their internal thoughts.\n"
                     f"2. **NPCS:** If you introduce or update an NPC, use `update_world_entity`.\n"
                     f"   - Use the `attributes` parameter for deep details (bio, relationships).\n"
+                    f"   - **ALIASES:** If they have known aliases, pass them as a list in `attributes['aliases']`.\n"
                     f"   - Keep the `details` parameter short (1 sentence summary).\n"
                     f"3. **TOOLS:** Use `update_world_entity` to track everything.\n"
                     f"{'Reroll requested.' if is_reroll else ''}"
@@ -472,10 +474,15 @@ class RPGAdventureCog(commands.Cog):
                 state = attrs.get("state", "Alive")
                 cond = attrs.get("condition", "Unknown")
                 details = npc.get('details', 'No data').split('|')[0]
+                
+                # ALIAS FORMATTING FOR EMBED
+                aliases = attrs.get("aliases", [])
+                alias_display = " ".join([f"`{a}`" for a in aliases]) if aliases else "No aliases known."
 
                 # Format as requested by user
                 val_text = (
                     f"{details}\n"
+                    f"**Aliases:** {alias_display}\n"
                     f"**Last Seen State:** {state}\n"
                     f"**Last Seen Condition:** {cond}"
                 )

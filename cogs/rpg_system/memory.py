@@ -145,7 +145,7 @@ class RPGContextManager:
         active_locs = [v for v in locations.values() if v.get("status") == "active"]
         loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_locs]) if active_locs else ""
 
-        # 3. NPCs (Enhanced with State System)
+        # 3. NPCs (Enhanced with State System AND Alias Chips)
         npcs = data.get("npcs", {})
         active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
         
@@ -154,17 +154,23 @@ class RPGContextManager:
             details = npc['details']
             attrs = npc.get("attributes", {})
             
-            # Extract State and Condition specifically
+            # Extract State and Condition
             state = attrs.get("state", "Alive")
             cond = attrs.get("condition", "Healthy")
             
+            # Extract Aliases and Format as Chips
+            aliases = attrs.get("aliases", [])
+            alias_str = " ".join([f"`{a}`" for a in aliases]) if aliases else ""
+            
             extra_info = []
+            if alias_str: extra_info.append(f"AKA: {alias_str}")
             if attrs.get('appearance'): extra_info.append(f"App: {attrs['appearance']}")
             if attrs.get('relationship'): extra_info.append(f"Rel: {attrs['relationship']}")
             
             # Format: Name [Alive | Healthy]: Details...
+            # New Line for clean reading if aliases exist
             info_str = " | ".join(extra_info)
-            npc_list.append(f"> 👤 **{npc['name']}** [{state} | {cond}]: {details} | {info_str}")
+            npc_list.append(f"> 👤 **{npc['name']}** [{state} | {cond}]: {details}\n>    ↳ {info_str}")
         
         input_lower = current_input.lower()
         for key, npc in npcs.items():

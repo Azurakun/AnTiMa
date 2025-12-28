@@ -211,9 +211,6 @@
                 <div class="absolute top-0 right-0 w-32 h-32 bg-blue-500/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
                 <div>
                     <h2 id="modal-npc-name" class="text-3xl font-bold text-white relative z-10">NPC Name</h2>
-                    
-                    <div id="modal-npc-alias" class="text-blue-300 text-base italic mt-0.5 relative z-10">Alias / Title</div>
-                    
                     <div id="modal-npc-role" class="text-gray-500 text-xs font-bold uppercase tracking-wider mt-2 relative z-10">Role / Class</div>
                 </div>
                 <button onclick="closeNPCModal()" class="bg-gray-700 hover:bg-gray-600 rounded-full p-2 transition z-20"><svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
@@ -221,6 +218,11 @@
             
             <div class="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-8">
                 
+                <div id="modal-npc-aliases-container" class="hidden">
+                    <h3 class="text-indigo-400 font-bold uppercase text-xs mb-2">🏷️ Known Aliases</h3>
+                    <div id="modal-npc-aliases" class="flex flex-wrap gap-2"></div>
+                </div>
+
                 <div class="grid grid-cols-2 gap-4">
                     <div class="bg-black/30 p-3 rounded-lg border border-gray-700 flex flex-col items-center">
                         <div class="text-[10px] uppercase text-gray-500 font-bold mb-1">State</div>
@@ -259,12 +261,12 @@
                     </div>
 
                     <div class="bg-blue-900/10 p-4 rounded-lg border border-blue-900/30">
-                        <h3 class="text-blue-300 font-bold uppercase text-xs mb-2">🤝 Relationships (User & NPCs)</h3>
+                        <h3 class="text-blue-300 font-bold uppercase text-xs mb-2">🤝 Relationships</h3>
                         <p id="modal-npc-rel" class="text-blue-100/80 leading-relaxed text-sm italic">Neutral</p>
                     </div>
 
                     <div>
-                        <h3 class="text-gray-400 font-bold uppercase text-xs mb-2 border-b border-gray-700 pb-1">📖 Biography & Dynamics</h3>
+                        <h3 class="text-gray-400 font-bold uppercase text-xs mb-2 border-b border-gray-700 pb-1">📖 Biography</h3>
                         <p id="modal-npc-backstory" class="text-gray-400 leading-relaxed text-sm">No history recorded.</p>
                     </div>
                 </div>
@@ -288,7 +290,6 @@
             document.getElementById(`view-${tabId}`).classList.remove('hidden');
         }
 
-        // Global Data Storage
         let npcDatabase = {};
         let questDatabase = {};
 
@@ -309,9 +310,25 @@
             const attrs = npc.attributes || {};
             
             document.getElementById('modal-npc-name').innerText = npc.name;
-            document.getElementById('modal-npc-alias').innerText = npc.details || "No alias known.";
             document.getElementById('modal-npc-role').innerText = attrs.role || "Character";
             
+            // --- ALIASES RENDERING ---
+            const aliasesContainer = document.getElementById('modal-npc-aliases-container');
+            const aliasesList = document.getElementById('modal-npc-aliases');
+            aliasesList.innerHTML = ""; // clear previous
+            
+            if (attrs.aliases && Array.isArray(attrs.aliases) && attrs.aliases.length > 0) {
+                aliasesContainer.classList.remove('hidden');
+                attrs.aliases.forEach(alias => {
+                    const chip = document.createElement('span');
+                    chip.className = "bg-indigo-900 text-indigo-200 text-xs px-2 py-0.5 rounded-full border border-indigo-700 shadow-sm";
+                    chip.innerText = alias;
+                    aliasesList.appendChild(chip);
+                });
+            } else {
+                aliasesContainer.classList.add('hidden');
+            }
+
             const state = attrs.state || "Alive";
             const cond = attrs.condition || "Healthy";
             const stateEl = document.getElementById('modal-npc-state');
@@ -344,14 +361,12 @@
             document.getElementById('modal-quest-name').innerText = quest.name;
             document.getElementById('modal-quest-desc').innerText = quest.details || "No details.";
             
-            // Status styling
             const statusEl = document.getElementById('modal-quest-status');
             statusEl.innerText = quest.status.toUpperCase();
             statusEl.className = quest.status === 'active' 
                 ? "text-green-400 text-xs font-bold uppercase tracking-wider mt-1 relative z-10"
                 : "text-gray-500 text-xs font-bold uppercase tracking-wider mt-1 relative z-10";
 
-            // Specific fields
             document.getElementById('modal-quest-issuer').innerText = attrs.issuer || attrs.lender || "Unknown";
             document.getElementById('modal-quest-trigger').innerText = attrs.trigger || attrs.completion_condition || "Unknown Condition";
             document.getElementById('modal-quest-rewards').innerText = attrs.rewards || "None listed.";
@@ -377,20 +392,21 @@
                 document.getElementById('connection-status').innerText = "Connected";
                 document.getElementById('connection-status').className = "text-xs font-mono text-green-400 font-bold bg-green-900/30 px-3 py-1 rounded-full border border-green-700";
 
-                // Meta Side
+                // Sidebar Meta
                 document.getElementById('sidebar-meta').innerHTML = `
                     <div class="flex justify-between"><span>Host:</span> <span class="text-white">${data.meta.owner}</span></div>
                     <div class="flex justify-between"><span>Scenario:</span> <span class="text-white">${data.meta.scenario}</span></div>
                     <div class="flex justify-between"><span>Turns:</span> <span class="text-white">${data.meta.turn_count}</span></div>
                 `;
 
-                // --- OVERVIEW TAB ---
+                // Overview Stats
                 document.getElementById('meta-title').innerText = data.meta.title || "Untitled Adventure";
                 document.getElementById('stat-turns').innerText = data.meta.turn_count;
                 document.getElementById('stat-npcs').innerText = data.npcs.length;
                 document.getElementById('stat-quests').innerText = data.quests.filter(q => q.status === 'active').length;
                 document.getElementById('stat-locs').innerText = data.locations.length;
 
+                // Party
                 document.getElementById('overview-party').innerHTML = Object.values(data.players).map(p => `
                     <div class="flex items-center justify-between bg-black/30 p-3 rounded border border-gray-700">
                         <div class="flex items-center gap-3">
@@ -407,6 +423,7 @@
                     </div>
                 `).join('');
 
+                // Recent Quests
                 const activeQuests = data.quests.filter(q => q.status === 'active').slice(0, 3);
                 document.getElementById('overview-quests').innerHTML = activeQuests.map(q => `
                     <div class="border-l-2 border-orange-500 pl-3 py-1 cursor-pointer hover:bg-white/5 transition" onclick="switchTab('quests')">
@@ -415,18 +432,14 @@
                     </div>
                 `).join('') || '<div class="text-gray-600 text-sm italic">No active quests.</div>';
 
-                // --- DETAILED TABS ---
+                // --- TAB RENDERING ---
                 
-                // Quests - Split into Active and Completed
+                // Quests
                 data.quests.forEach(q => questDatabase[q.name] = q);
+                renderQuestList('container-quests-active', data.quests.filter(q => q.status === 'active'), 'orange', 'No active objectives.');
+                renderQuestList('container-quests-completed', data.quests.filter(q => q.status !== 'active'), 'green', 'No completed quests yet.');
                 
-                const activeQList = data.quests.filter(q => q.status === 'active');
-                const completedQList = data.quests.filter(q => q.status !== 'active');
-
-                renderQuestList('container-quests-active', activeQList, 'orange', 'No active objectives.');
-                renderQuestList('container-quests-completed', completedQList, 'green', 'No completed quests yet.');
-                
-                // Events (Normal List)
+                // Events
                 renderList('container-events', data.events, 'yellow', 'No major events.');
                 
                 // NPCs
@@ -436,7 +449,7 @@
                 // Locations
                 renderGrid('container-locations', data.locations, 'emerald', 'No locations mapped.');
 
-                // Memories & Logs
+                // Memories
                 document.getElementById('container-memories').innerHTML = data.memories.map(m => `
                     <div class="bg-card p-3 rounded border border-gray-700 text-sm text-gray-300 hover:bg-gray-800 transition">
                         <div class="text-[10px] text-purple-400 mb-1 font-mono uppercase tracking-wide">${m.timestamp.split('T')[1].split('.')[0]}</div>
@@ -455,7 +468,7 @@
             }
         }
 
-        // Specific Render for Clickable Quests
+        // --- RENDER HELPERS ---
         function renderQuestList(containerId, items, color, emptyMsg) {
             const container = document.getElementById(containerId);
             if (!items || items.length === 0) {
@@ -505,6 +518,14 @@
                 const condition = attrs.condition || "Healthy";
                 const stateColor = getStatusColorClass(state);
                 
+                // Generate Chips for Aliases in Card View
+                let aliasChips = "";
+                if (attrs.aliases && Array.isArray(attrs.aliases) && attrs.aliases.length > 0) {
+                    aliasChips = attrs.aliases.slice(0, 3).map(a => 
+                        `<span class="text-[9px] bg-indigo-900/50 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-800 inline-block mr-1 mb-1">${a}</span>`
+                    ).join('') + (attrs.aliases.length > 3 ? '<span class="text-[9px] text-gray-500">...</span>' : '');
+                }
+
                 return `
                 <div onclick="openNPCModal('${item.name}')" class="bg-card p-5 rounded-xl border border-gray-700 shadow-md hover:-translate-y-1 transition duration-200 hover:shadow-xl hover:border-${color}-500/50 relative overflow-hidden cursor-pointer group">
                     <div class="absolute top-0 right-0 w-16 h-16 bg-gradient-to-bl from-${color}-500/10 to-transparent -mr-4 -mt-4 rounded-full group-hover:bg-${color}-500/20 transition"></div>
@@ -516,7 +537,10 @@
                             </h4>
                             <span class="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-black/40 border border-gray-700 ${stateColor}">${state}</span>
                         </div>
-                        <div class="text-blue-300 text-xs italic mt-0.5 truncate">${item.details}</div>
+                        
+                        ${aliasChips ? `<div class="mt-1">${aliasChips}</div>` : ''}
+
+                        <div class="text-blue-300 text-xs italic mt-1 truncate">${item.details}</div>
                     </div>
 
                     <div class="text-xs bg-black/20 p-2 rounded border border-gray-700/50 flex justify-between">

@@ -47,7 +47,7 @@ def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: st
 def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None):
     """
     Updates the World Sheet.
-    Merges attributes and appends aliases/details if the entity exists.
+    Merges attributes and handles Alias accumulation properly.
     """
     try:
         # Standardize key generation to prevent "Arthur " vs "Arthur"
@@ -61,30 +61,31 @@ def update_world_entity(thread_id: str, category: str, name: str, details: str, 
         )
         
         existing_attrs = {}
-        existing_details = ""
         
         if existing_doc and category.lower() + "s" in existing_doc:
             cat_dict = existing_doc[category.lower() + "s"]
             if safe_name in cat_dict:
                 entity_data = cat_dict[safe_name]
                 existing_attrs = entity_data.get("attributes", {})
-                existing_details = entity_data.get("details", "")
 
-        # 2. Merge Attributes
+        # 2. Merge Attributes with Special Logic for Aliases
         new_attributes = existing_attrs.copy()
         if attributes:
+            # If aliases are present, we want to UNION them, not overwrite
+            if "aliases" in attributes:
+                new_aliases = attributes.get("aliases", [])
+                if isinstance(new_aliases, str): new_aliases = [new_aliases] # Safety check
+                
+                current_aliases = existing_attrs.get("aliases", [])
+                # Combine and remove duplicates (Set logic), then sort for consistency
+                combined_aliases = sorted(list(set(current_aliases + new_aliases)))
+                attributes["aliases"] = combined_aliases
+
             new_attributes.update(attributes)
 
-        # 3. Handle Details (Append Alias info if not duplicate)
-        # If the new details are short (just a status update), we might not want to overwrite a long bio.
-        # However, the user specifically asked to put aliases in details.
-        # We'll allow the Scribe's output to take precedence, but we can do a smart merge if needed.
-        # For now, we trust the Scribe to provide the full summary including aliases.
-        final_details = details
-
         update_payload = {
-            "name": name.strip(), # Ensure clean display name
-            "details": final_details,
+            "name": name.strip(), 
+            "details": details,
             "status": status,
             "last_updated": datetime.utcnow(),
             "attributes": new_attributes 

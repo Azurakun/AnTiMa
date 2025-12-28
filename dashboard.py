@@ -83,9 +83,19 @@ def serialize_persona(persona):
     return persona
 
 def serialize_world_entity(entity):
+    """
+    Ensures datetime objects in the entity (and its attributes) are stringified for JSON.
+    """
     if not entity: return entity
+    
+    # Handle top-level last_updated
     if "last_updated" in entity and isinstance(entity["last_updated"], datetime):
         entity["last_updated"] = entity["last_updated"].isoformat()
+        
+    # Ensure attributes dict exists
+    if "attributes" not in entity:
+        entity["attributes"] = {}
+        
     return entity
 
 def fetch_rpg_full_memory(thread_id: str):
