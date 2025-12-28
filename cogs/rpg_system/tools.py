@@ -47,6 +47,7 @@ def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: st
 def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None):
     """
     Updates the World Sheet.
+    Merged attributes to preserve 'state' and 'condition' if not provided in the new update.
     
     Args:
         category: "NPC", "Location", "Quest", "Event".
@@ -55,22 +56,37 @@ def update_world_entity(thread_id: str, category: str, name: str, details: str, 
         status: "active" or "inactive".
         attributes: (Optional) Detailed structured data for NPCs.
                     Expected keys: 'age', 'gender', 'race', 'appearance', 
-                    'personality', 'backstory', 'relationship', 'stats'.
+                    'personality', 'backstory', 'relationship', 'state', 'condition'.
     """
     try:
         safe_name = name.replace('.', '_').replace('$', '')
         key = f"{category.lower()}s.{safe_name}" 
         
+        # 1. Fetch existing data to merge attributes safely
+        existing_doc = rpg_world_state_collection.find_one(
+            {"thread_id": int(thread_id)}, 
+            {key: 1}
+        )
+        
+        existing_attrs = {}
+        if existing_doc and category.lower() + "s" in existing_doc:
+            # Safely access nested dictionary
+            cat_dict = existing_doc[category.lower() + "s"]
+            if safe_name in cat_dict:
+                existing_attrs = cat_dict[safe_name].get("attributes", {})
+
+        # 2. Prepare new attributes (Merge Logic)
+        new_attributes = existing_attrs.copy()
+        if attributes:
+            new_attributes.update(attributes)
+
         update_payload = {
             "name": name,
             "details": details,
             "status": status,
-            "last_updated": datetime.utcnow()
+            "last_updated": datetime.utcnow(),
+            "attributes": new_attributes # Save merged attributes
         }
-
-        # If it's an NPC and we have detailed attributes, save them
-        if category == "NPC" and attributes:
-            update_payload["attributes"] = attributes
 
         rpg_world_state_collection.update_one(
             {"thread_id": int(thread_id)},

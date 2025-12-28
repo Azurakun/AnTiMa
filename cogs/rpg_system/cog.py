@@ -11,7 +11,7 @@ from datetime import datetime
 from utils.db import (
     ai_config_collection, 
     rpg_sessions_collection, 
-    rpg_inventory_collection,
+    rpg_inventory_collection, 
     rpg_world_state_collection,
     web_actions_collection, 
     rpg_web_tokens_collection,
@@ -147,6 +147,7 @@ class RPGAdventureCog(commands.Cog):
         """
         Background Scribe: Analyzes DM output to auto-detect and update World Entities.
         Strictly separates concise 'details' from deep 'attributes'.
+        Now specifically looks for Vital States and Physical Conditions, handling sync timeline analysis.
         """
         try:
             scribe_session = self.model.start_chat(history=[])
@@ -154,13 +155,16 @@ class RPGAdventureCog(commands.Cog):
                 f"SYSTEM: You are the WORLD SCRIBE. Extract structured data from the narrative below.\n"
                 f"Identify any **NPCs** (People), **LOCATIONS**, or **QUESTS**.\n"
                 f"**IMPORTANT DATA STRUCTURE:**\n"
-                f"1. **`details`**: Must be a SHORT, 1-2 sentence summary (e.g., 'A grumpy blacksmith in Riverwood'). Used for list views.\n"
-                f"2. **`attributes`**: You MUST populate this dictionary with DEEP details for the inspection view:\n"
-                f"   - 'race', 'gender', 'age' (estimate if unknown)\n"
-                f"   - 'appearance' (Detailed visual description)\n"
-                f"   - 'personality' (Traits and mannerisms)\n"
+                f"1. **`details`**: Must be a SHORT, 1-2 sentence summary (e.g., 'A grumpy blacksmith in Riverwood').\n"
+                f"2. **`attributes`**: You MUST populate this dictionary with DEEP details:\n"
+                f"   - 'race', 'gender', 'age'\n"
+                f"   - 'appearance' (Visual description)\n"
+                f"   - 'personality' (Traits)\n"
                 f"   - 'relationships' (Text describing relations with the Player AND other NPCs)\n"
-                f"   - 'bio' (A long, dynamic text field accumulating their backstory, current state, and secrets. If they were already known, append new info.)\n"
+                f"   - 'state': CURRENT vital state ('Alive', 'Unconscious', 'Dead', 'Missing', or 'Captured').\n"
+                f"   - 'condition': CURRENT physical condition ('Healthy', 'Injured', 'Critical', 'Exhausted', 'Sick', or 'Poisoned').\n"
+                f"   - 'bio' (Backstory)\n"
+                f"**CRITICAL SYNC INSTRUCTION:** If analyzing a chat log or history, determine the NPC's status as it is at the **VERY END** of the narrative. Ignore temporary states that were resolved (e.g., if they were Injured but then Healed, record 'Healthy').\n"
                 f"**NARRATIVE TO ANALYZE:**\n{narrative_text}"
             )
             response = await scribe_session.send_message_async(analysis_prompt)
@@ -446,8 +450,27 @@ class RPGAdventureCog(commands.Cog):
 
         if npcs:
             emb = discord.Embed(title="👥 Known Contacts", color=discord.Color.blue())
-            for npc in list(npcs.values())[:5]: # Limit for display in Discord
-                emb.add_field(name=npc['name'], value=npc.get('details', 'No data').split('|')[0][:100], inline=False)
+            count = 0
+            for npc in list(npcs.values()):
+                if npc.get("status") != "active": continue
+                if count >= 5: break
+                
+                # Fetch Attributes
+                attrs = npc.get("attributes", {})
+                state = attrs.get("state", "Alive")
+                cond = attrs.get("condition", "Unknown")
+                details = npc.get('details', 'No data').split('|')[0]
+
+                # Format as requested by user
+                val_text = (
+                    f"{details}\n"
+                    f"**Last Seen State:** {state}\n"
+                    f"**Last Seen Condition:** {cond}"
+                )
+                
+                emb.add_field(name=f"👤 {npc['name']}", value=val_text, inline=False)
+                count += 1
+                
             if len(npcs) > 5: emb.set_footer(text=f"... and {len(npcs)-5} more (See Inspector)")
             embeds.append(emb)
 

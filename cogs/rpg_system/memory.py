@@ -8,7 +8,6 @@ from utils.timezone_manager import get_local_time
 import google.generativeai as genai
 
 class RPGContextManager:
-    # ... (Init and other methods remain same) ...
     def __init__(self, model):
         self.model = model
         self.max_tokens = 1_000_000
@@ -146,22 +145,26 @@ class RPGContextManager:
         active_locs = [v for v in locations.values() if v.get("status") == "active"]
         loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_locs]) if active_locs else ""
 
-        # 3. NPCs (Enhanced)
+        # 3. NPCs (Enhanced with State System)
         npcs = data.get("npcs", {})
         active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
         
         npc_list = []
         for npc in active_npcs:
             details = npc['details']
-            # If we have rich attributes, explicitly add them to the prompt so AI remembers appearances/relationships
             attrs = npc.get("attributes", {})
-            if attrs:
-                app_str = f"App: {attrs.get('appearance', 'N/A')}"
-                rel_str = f"Rel: {attrs.get('relationship', 'Neutral')}"
-                trait_str = f"Traits: {attrs.get('personality', 'N/A')}"
-                details = f"{details} | {app_str} | {rel_str} | {trait_str}"
             
-            npc_list.append(f"> 👤 **{npc['name']}** (Present): {details}")
+            # Extract State and Condition specifically
+            state = attrs.get("state", "Alive")
+            cond = attrs.get("condition", "Healthy")
+            
+            extra_info = []
+            if attrs.get('appearance'): extra_info.append(f"App: {attrs['appearance']}")
+            if attrs.get('relationship'): extra_info.append(f"Rel: {attrs['relationship']}")
+            
+            # Format: Name [Alive | Healthy]: Details...
+            info_str = " | ".join(extra_info)
+            npc_list.append(f"> 👤 **{npc['name']}** [{state} | {cond}]: {details} | {info_str}")
         
         input_lower = current_input.lower()
         for key, npc in npcs.items():
