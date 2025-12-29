@@ -159,6 +159,8 @@ class RPGAdventureCog(commands.Cog):
             f"**MANDATORY NPC SCHEMA (Do not deviate):**\n"
             f"1. **`details`**: Summary.\n"
             f"2. **`attributes`** (Fill ALL fields): \n"
+            f"   - **`race`**: (e.g. Human, Elf, Goblin, Unknown).\n"
+            f"   - **`gender`**: (e.g. Male, Female, Non-binary, Unknown).\n"
             f"   - **`condition`**: MUST be exactly **'Alive'** or **'Dead'**. No other values.\n"
             f"   - **`state`**: Detailed physical status (e.g. 'Healthy', 'Lightly Wounded', 'Missing Arm', 'Exhausted').\n"
             f"   - **`appearance`**: **DETAILED**. Describe Hair (style/color), Face, Eyes, Clothing/Armor, Weapons, Height.\n"
@@ -166,9 +168,10 @@ class RPGAdventureCog(commands.Cog):
             f"   - **`backstory`**: **DETAILED**. Their history, origin, and role in the world.\n"
             f"   - **`relationships`**: **DETAILED & RECIPROCAL**. (e.g. 'Mother of Elara', 'Sworn Enemy of the User'). **Output as STRING.**\n"
             f"   - **`age`**: Number/Range only.\n\n"
-            f"**IDENTITY RESOLUTION:**\n"
-            f"- Use TRUE FULL NAME.\n"
-            f"- Merge duplicates.\n"
+            f"**IDENTITY RESOLUTION (NO DUPLICATES):**\n"
+            f"- **MERGE:** If 'The Stranger' is revealed to be 'Aragorn', use 'Aragorn' as the name and add 'The Stranger' to aliases.\n"
+            f"- **DO NOT** create a separate entry for the Alias.\n"
+            f"- **ALWAYS** check if an NPC basically describes an existing one before creating a new one.\n"
             f"**NARRATIVE:**\n{narrative_text}"
         )
 
@@ -217,7 +220,6 @@ class RPGAdventureCog(commands.Cog):
                                 else: attrs["relationships"] = str(rel)
 
                             # Extract explicit status from attributes if Scribe put it there
-                            # Map Scribe's "condition" to "status" if needed, but usually status=active
                             status = fn.args.get("status", "active")
                             if "status" in attrs:
                                 status = attrs["status"]

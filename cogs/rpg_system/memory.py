@@ -161,7 +161,9 @@ class RPGContextManager:
             
             # Use specific fields requested
             condition = attrs.get("condition", "Alive") # The Alive/Dead flag
-            state = attrs.get("state", "Healthy")       # The physical detail (Wounded etc)
+            state = attrs.get("state", "Healthy")       # The physical detail
+            race = attrs.get("race", "Unknown")
+            gender = attrs.get("gender", "Unknown")
             
             # Aliases
             aliases = attrs.get("aliases", [])
@@ -173,15 +175,16 @@ class RPGContextManager:
             elif isinstance(rel, dict): rel = str(rel)
             
             # Format: 
-            # 👤 Name
+            # 👤 Name [Race | Gender]
             #    ├─ CONDITION: Alive | Lightly Wounded
             #    ├─ REL: Mother of Elara
             #    └─ INFO: ...
             
+            header_info = f"[{race} | {gender}]"
             status_line = f"{condition} | {state}"
             
             npc_list.append(
-                f"> 👤 **{npc['name']}** {f'({alias_str})' if alias_str else ''}\n"
+                f"> 👤 **{npc['name']}** {header_info} {f'({alias_str})' if alias_str else ''}\n"
                 f">    ├─ **STATUS:** {status_line}\n"
                 f">    ├─ **RELATIONSHIP:** {rel}\n"
                 f">    └─ **INFO:** {details}"
