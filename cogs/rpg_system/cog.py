@@ -149,6 +149,10 @@ class RPGAdventureCog(commands.Cog):
         Background Scribe: Analyzes DM output to auto-detect and update World Entities.
         Strictly enforces IDENTITY RESOLUTION to prevent duplicates.
         """
+        # --- DEBUG: REPORT START ---
+        chunk_preview = narrative_text[:30].replace('\n', ' ')
+        print(f"   [SCRIBE] 🔍 Analyzing Chunk ({len(narrative_text)} chars) | Starts: '{chunk_preview}...'") 
+
         try:
             scribe_session = self.model.start_chat(history=[])
             analysis_prompt = (
@@ -174,21 +178,33 @@ class RPGAdventureCog(commands.Cog):
             )
             response = await scribe_session.send_message_async(analysis_prompt)
             
+            entities_found = 0
             if response.parts:
                 for part in response.parts:
                     if part.function_call:
                         fn = part.function_call
                         if fn.name == "update_world_entity":
+                            entities_found += 1
                             # Convert protobuf Struct to dict for attributes
                             attrs = {}
                             if "attributes" in fn.args:
                                 attrs = dict(fn.args["attributes"])
                             
+                            # SAFETY: Explicitly sanitize relationships to prevent [Object Object]
+                            rel = attrs.get("relationships") or attrs.get("relationship")
+                            if rel:
+                                if isinstance(rel, list): attrs["relationships"] = ", ".join(rel)
+                                elif isinstance(rel, dict): attrs["relationships"] = str(rel)
+                                else: attrs["relationships"] = str(rel)
+
                             # Extract explicit status from attributes if Scribe put it there
                             status = fn.args.get("status", "active")
                             if "status" in attrs:
                                 status = attrs["status"]
                             
+                            # --- DEBUG: REPORT DETECTION ---
+                            print(f"   [SCRIBE] 📝 DETECTED: {fn.args.get('category')} | {fn.args.get('name')}")
+
                             tools.update_world_entity(
                                 str(thread_id), 
                                 fn.args["category"], 
@@ -197,8 +213,11 @@ class RPGAdventureCog(commands.Cog):
                                 status, 
                                 attributes=attrs
                             )
+            # --- DEBUG: REPORT COMPLETION ---
+            print(f"   [SCRIBE] ✅ Chunk Analysis Complete. Entities Found: {entities_found}")
+
         except Exception as e:
-            print(f"[SCRIBE ERROR] {e}")
+            print(f"   [SCRIBE ERROR] ❌ {e}")
 
     async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name, story_mode=False, custom_title=None, manual_guild_id=None, manual_user=None):
         if interaction:
@@ -578,10 +597,14 @@ class RPGAdventureCog(commands.Cog):
         if not session or interaction.user.id != session.get('owner_id'): return await interaction.response.send_message("Host only.", ephemeral=True)
         
         await interaction.response.send_message("🔄 **Syncing Memory, Turn Sequence, & World State...**")
+        print(f"\n--- [RPG SYNC] STARTED | Thread: {interaction.channel.id} ---")
         
         try:
             # 1. Fetch History & Reconstruct Turns
+            print(f"[RPG SYNC] 1. Fetching Message History...")
             raw_messages = [m async for m in interaction.channel.history(limit=None, oldest_first=True)]
+            print(f"[RPG SYNC]    -> Fetched {len(raw_messages)} messages.")
+
             reconstructed_turns = []
             current_user_msg = None
             
@@ -600,27 +623,31 @@ class RPGAdventureCog(commands.Cog):
 
             # --- FIX: Set total_turns based on full reconstructed length ---
             total_count = len(reconstructed_turns)
+            print(f"[RPG SYNC] 2. Turn Reconstruction: {total_count} turns identified.")
             rpg_sessions_collection.update_one({"thread_id": interaction.channel.id}, {"$set": {
                 "turn_history": reconstructed_turns,
                 "total_turns": total_count 
             }})
 
             # 2. Vector Indexing
+            print(f"[RPG SYNC] 3. Vector Indexing...")
             cleaned_history = []
-            full_text_log = ""
+            # full_text_log = ""  <-- REMOVED SINGLE BLOB LOGIC
             for msg in raw_messages:
                 if msg.author.bot and msg.author.id != self.bot.user.id: continue 
                 content = msg.content or (msg.embeds[0].description if msg.embeds else "")
                 if content: 
                     cleaned_history.append({"author": msg.author.name, "content": content, "timestamp": msg.created_at})
-                    full_text_log += f"{msg.author.name}: {content}\n"
+                    # full_text_log += f"{msg.author.name}: {content}\n"
 
             if not cleaned_history: return await interaction.followup.send("⚠️ No history.")
 
             await self.memory_manager.clear_thread_vectors(interaction.channel.id)
             chunks = await self.memory_manager.batch_ingest_history(interaction.channel.id, cleaned_history)
+            print(f"[RPG SYNC]    -> Indexed {len(cleaned_history)} messages into vector memory.")
             
             # 3. WIPE ALL WORLD STATE (Strict Rebuild)
+            print(f"[RPG SYNC] 4. 🧹 WIPING WORLD STATE (Quests, NPCs, Locations, Events)...")
             rpg_world_state_collection.update_one(
                 {"thread_id": interaction.channel.id}, 
                 {"$set": {
@@ -631,17 +658,46 @@ class RPGAdventureCog(commands.Cog):
                 }}
             )
 
-            # 4. Retroactive Entity Extraction (Full History)
-            # Pass full_text_log without limit to ensure absolute completeness
-            asyncio.create_task(self._scan_narrative_for_entities(interaction.channel.id, full_text_log))
+            # 4. CHUNKED ENTITY EXTRACTION (BATCHING)
+            # Break history into chunks of ~15k characters to prevent AI overload/laziness
+            print(f"[RPG SYNC] 5. Starting Full History Audit (Chunked)...")
+            chunk_size = 15000 
+            current_chunk = ""
+            scan_tasks = []
+            chunk_count = 0
+
+            for msg in raw_messages:
+                author = msg.author.name
+                content = msg.content or (msg.embeds[0].description if msg.embeds else "")
+                if content:
+                    line = f"[{author}]: {content}\n"
+                    if len(current_chunk) + len(line) > chunk_size:
+                        # Dispatch current chunk
+                        chunk_count += 1
+                        print(f"[RPG SYNC]    -> Dispatching Audit Task #{chunk_count} ({len(current_chunk)} chars)")
+                        scan_tasks.append(self._scan_narrative_for_entities(interaction.channel.id, current_chunk))
+                        current_chunk = ""
+                    current_chunk += line
+            
+            # Dispatch final chunk
+            if current_chunk:
+                chunk_count += 1
+                print(f"[RPG SYNC]    -> Dispatching Final Audit Task #{chunk_count} ({len(current_chunk)} chars)")
+                scan_tasks.append(self._scan_narrative_for_entities(interaction.channel.id, current_chunk))
+
+            # Run all extraction tasks
+            print(f"[RPG SYNC] ✅ Sync Logic Finished. {len(scan_tasks)} Background Auditors running.")
+            for t in scan_tasks: asyncio.create_task(t)
             
             view = discord.ui.View()
             url = f"{WEB_DASHBOARD_URL}/rpg/inspect/{interaction.channel.id}"
             view.add_item(discord.ui.Button(label="🧠 Check Inspector", url=url, style=discord.ButtonStyle.link))
 
-            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **World State Wiped & Rebuilding...**\n- 🧠 Retroactive Full Audit Queued.", view=view)
+            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **World State Wiped.**\n- 🧠 **{len(scan_tasks)} Batch Audits** queued (Background).", view=view)
             
-        except Exception as e: await interaction.followup.send(f"❌ Error: {e}")
+        except Exception as e: 
+            print(f"[RPG SYNC] ❌ CRITICAL ERROR: {e}")
+            await interaction.followup.send(f"❌ Error: {e}")
 
     @rpg_group.command(name="web_new", description="Create an adventure via the Web Dashboard.")
     async def rpg_web_new(self, interaction: discord.Interaction):
