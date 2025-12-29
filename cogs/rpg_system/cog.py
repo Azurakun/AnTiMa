@@ -149,35 +149,54 @@ class RPGAdventureCog(commands.Cog):
         Background Scribe: Analyzes DM output to auto-detect and update World Entities.
         Strictly enforces IDENTITY RESOLUTION to prevent duplicates.
         """
-        # --- DEBUG: REPORT START ---
         chunk_preview = narrative_text[:30].replace('\n', ' ')
         print(f"   [SCRIBE] 🔍 Analyzing Chunk ({len(narrative_text)} chars) | Starts: '{chunk_preview}...'") 
 
+        scribe_session = self.model.start_chat(history=[])
+        analysis_prompt = (
+            f"SYSTEM: You are the WORLD SCRIBE. Extract structured data.\n"
+            f"**INSTRUCTION:** Extract **EVERY** Entity (NPC, Location, Quest). Do not be lazy. If it exists, index it.\n\n"
+            f"**MANDATORY NPC SCHEMA (Do not deviate):**\n"
+            f"1. **`details`**: Summary.\n"
+            f"2. **`attributes`** (Fill ALL fields): \n"
+            f"   - **`condition`**: MUST be exactly **'Alive'** or **'Dead'**. No other values.\n"
+            f"   - **`state`**: Detailed physical status (e.g. 'Healthy', 'Lightly Wounded', 'Missing Arm', 'Exhausted').\n"
+            f"   - **`appearance`**: **DETAILED**. Describe Hair (style/color), Face, Eyes, Clothing/Armor, Weapons, Height.\n"
+            f"   - **`personality`**: **DETAILED**. Describe their demeanor, tone, and how they act towards the User.\n"
+            f"   - **`backstory`**: **DETAILED**. Their history, origin, and role in the world.\n"
+            f"   - **`relationships`**: **DETAILED & RECIPROCAL**. (e.g. 'Mother of Elara', 'Sworn Enemy of the User'). **Output as STRING.**\n"
+            f"   - **`age`**: Number/Range only.\n\n"
+            f"**IDENTITY RESOLUTION:**\n"
+            f"- Use TRUE FULL NAME.\n"
+            f"- Merge duplicates.\n"
+            f"**NARRATIVE:**\n{narrative_text}"
+        )
+
+        # --- RETRY LOOP FOR MALFORMED CALLS ---
+        max_retries = 2
+        attempt = 0
+        response = None
+
+        while attempt <= max_retries:
+            try:
+                if attempt == 0:
+                    response = await scribe_session.send_message_async(analysis_prompt)
+                else:
+                    response = await scribe_session.send_message_async("SYSTEM: Previous call MALFORMED. Retry with valid arguments.")
+                break
+            except Exception as e:
+                if "MALFORMED_FUNCTION_CALL" in str(e) or "finish_reason: MALFORMED_FUNCTION_CALL" in str(e):
+                    attempt += 1
+                    print(f"   [SCRIBE] ⚠️ Malformed Call. Retrying ({attempt}/{max_retries})...")
+                    if attempt > max_retries:
+                        print(f"   [SCRIBE] ❌ Failed after retries.")
+                        return 
+                else:
+                    print(f"   [SCRIBE ERROR] ❌ {e}")
+                    return
+
+        # --- PROCESS RESPONSE ---
         try:
-            scribe_session = self.model.start_chat(history=[])
-            analysis_prompt = (
-                f"SYSTEM: You are the WORLD SCRIBE. PERFOMING A FULL AUDIT.\n"
-                f"**MANDATORY INSTRUCTION:** You must read the narrative provided below and extract **EVERY SINGLE** World Entity mentioned.\n"
-                f"**PRIORITY:** Do not skip any NPC, Location, or Quest, no matter how minor. If it has a name or description, it MUST be registered.\n\n"
-                f"**IMPORTANT DATA STRUCTURE:**\n"
-                f"1. **`details`**: **MANDATORY FOR ALIASES**. Store Titles, Aliases, and a short summary here. (e.g. 'Known as Strider. A ranger from the north.').\n"
-                f"2. **`attributes`** (NPCs): Populate with 'race', 'gender', 'age', 'appearance', 'personality', 'relationships', 'bio', 'state', 'condition'.\n"
-                f"   - **`aliases`**: Extract a LIST of short names/titles. (e.g. ['Strider', 'Elessar', 'The King']).\n"
-                f"   - **`age`**: **STRICTLY NUMERIC**. Use a single number (e.g. '25') or a range (e.g. '40-50') if visually estimated. **NEVER** use words like 'Adult', 'Child', or 'Elder'.\n"
-                f"   - **`relationships`**: A concise text description of their dynamic with the User (e.g. 'Wary Ally', 'Bitter Enemy'). **Output as a String only. DO NOT use objects.**\n"
-                f"3. **`attributes`** (QUESTS): 'issuer', 'trigger', 'rewards', 'status' (active/completed/failed).\n"
-                f"   - **DEFINITION**: A Quest is a concrete objective assigned to the player (e.g. 'Retrieve the Amulet', 'Defeat the Goblin King').\n"
-                f"   - **IGNORE**: General motivations (e.g. 'Wants to survive') or simple interactions.\n\n"
-                f"**IDENTITY RESOLUTION PROTOCOL (CRITICAL):**\n"
-                f"1. **NO DUPLICATES:** Always use the **TRUE FULL NAME** as the `name` field.\n"
-                f"2. **HANDLE ALIASES:** If an NPC is revealed to be someone else (e.g., 'The Stranger is Aragorn'), DO NOT create a new entry for the Alias.\n"
-                f"   - **Right:** Name='Aragorn', attributes={{'aliases': ['The Stranger']}}\n"
-                f"   - **Wrong:** Name='The Stranger'.\n"
-                f"3. **MERGE:** If an existing NPC appears, use their existing TRUE NAME to update their record.\n"
-                f"**NARRATIVE TO ANALYZE:**\n{narrative_text}"
-            )
-            response = await scribe_session.send_message_async(analysis_prompt)
-            
             entities_found = 0
             if response.parts:
                 for part in response.parts:
@@ -190,7 +209,7 @@ class RPGAdventureCog(commands.Cog):
                             if "attributes" in fn.args:
                                 attrs = dict(fn.args["attributes"])
                             
-                            # SAFETY: Explicitly sanitize relationships to prevent [Object Object]
+                            # SAFETY: Explicitly sanitize relationships
                             rel = attrs.get("relationships") or attrs.get("relationship")
                             if rel:
                                 if isinstance(rel, list): attrs["relationships"] = ", ".join(rel)
@@ -198,6 +217,7 @@ class RPGAdventureCog(commands.Cog):
                                 else: attrs["relationships"] = str(rel)
 
                             # Extract explicit status from attributes if Scribe put it there
+                            # Map Scribe's "condition" to "status" if needed, but usually status=active
                             status = fn.args.get("status", "active")
                             if "status" in attrs:
                                 status = attrs["status"]
@@ -213,11 +233,10 @@ class RPGAdventureCog(commands.Cog):
                                 status, 
                                 attributes=attrs
                             )
-            # --- DEBUG: REPORT COMPLETION ---
             print(f"   [SCRIBE] ✅ Chunk Analysis Complete. Entities Found: {entities_found}")
 
         except Exception as e:
-            print(f"   [SCRIBE ERROR] ❌ {e}")
+            print(f"   [SCRIBE PROCESS ERROR] ❌ {e}")
 
     async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name, story_mode=False, custom_title=None, manual_guild_id=None, manual_user=None):
         if interaction:

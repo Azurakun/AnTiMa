@@ -150,7 +150,7 @@ class RPGContextManager:
         active_locs = [v for v in locations.values() if v.get("status") == "active"]
         loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_locs]) if active_locs else ""
 
-        # 3. NPC REGISTRY (Enhanced Relationship Visibility)
+        # 3. NPC REGISTRY (Strict State & Relationship Display)
         npcs = data.get("npcs", {})
         active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
         
@@ -159,34 +159,34 @@ class RPGContextManager:
             details = npc['details']
             attrs = npc.get("attributes", {})
             
-            # Extract State and Condition
-            state = attrs.get("state", "Alive")
-            cond = attrs.get("condition", "Healthy")
+            # Use specific fields requested
+            condition = attrs.get("condition", "Alive") # The Alive/Dead flag
+            state = attrs.get("state", "Healthy")       # The physical detail (Wounded etc)
             
-            # Extract Aliases
+            # Aliases
             aliases = attrs.get("aliases", [])
             alias_str = " ".join([f"`{a}`" for a in aliases]) if aliases else ""
             
-            # Extra Info Chips
-            extra_info = []
-            if alias_str: extra_info.append(f"AKA: {alias_str}")
-            if attrs.get('appearance'): extra_info.append(f"App: {attrs['appearance']}")
-            
-            # Relationship Handler - MAKE IT BOLD AND PROMINENT
+            # Relationship (Bold)
             rel = attrs.get("relationships") or attrs.get("relationship") or "Neutral/Unknown"
             if isinstance(rel, list): rel = ", ".join(rel)
             elif isinstance(rel, dict): rel = str(rel)
             
-            # Format: Name [Alive | Healthy]: Details...
-            info_str = " | ".join(extra_info)
+            # Format: 
+            # 👤 Name
+            #    ├─ CONDITION: Alive | Lightly Wounded
+            #    ├─ REL: Mother of Elara
+            #    └─ INFO: ...
+            
+            status_line = f"{condition} | {state}"
+            
             npc_list.append(
-                f"> 👤 **{npc['name']}**\n"
-                f">    ├─ **STATUS:** {state} | {cond}\n"
+                f"> 👤 **{npc['name']}** {f'({alias_str})' if alias_str else ''}\n"
+                f">    ├─ **STATUS:** {status_line}\n"
                 f">    ├─ **RELATIONSHIP:** {rel}\n"
-                f">    └─ **INFO:** {details} {f'({info_str})' if info_str else ''}"
+                f">    └─ **INFO:** {details}"
             )
         
-        # Recall mechanism for inactive NPCs mentioned in input
         input_lower = current_input.lower()
         for key, npc in npcs.items():
             if npc.get("status") != "active" and npc['name'].lower() in input_lower:
