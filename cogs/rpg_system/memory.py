@@ -93,10 +93,7 @@ class RPGContextManager:
             "bot_message_id": bot_message_id 
         }
         
-        # Prepare the update operations
         update_op = {"$push": {"turn_history": entry}}
-        
-        # Explicitly set total_turns if provided
         if current_turn_id is not None:
              update_op["$set"] = {"total_turns": current_turn_id}
 
@@ -153,7 +150,7 @@ class RPGContextManager:
         active_locs = [v for v in locations.values() if v.get("status") == "active"]
         loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_locs]) if active_locs else ""
 
-        # 3. NPCs (Enhanced with State System AND Alias Chips)
+        # 3. NPC REGISTRY (Enhanced Relationship Visibility)
         npcs = data.get("npcs", {})
         active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
         
@@ -166,32 +163,36 @@ class RPGContextManager:
             state = attrs.get("state", "Alive")
             cond = attrs.get("condition", "Healthy")
             
-            # Extract Aliases and Format as Chips
+            # Extract Aliases
             aliases = attrs.get("aliases", [])
             alias_str = " ".join([f"`{a}`" for a in aliases]) if aliases else ""
             
+            # Extra Info Chips
             extra_info = []
             if alias_str: extra_info.append(f"AKA: {alias_str}")
             if attrs.get('appearance'): extra_info.append(f"App: {attrs['appearance']}")
             
-            # Relationship Handler (Robust string conversion)
-            rel = attrs.get("relationships") or attrs.get("relationship")
-            if rel:
-                if isinstance(rel, list): rel = ", ".join(rel)
-                elif isinstance(rel, dict): rel = str(rel) # Safety fallback
-                extra_info.append(f"Rel: {rel}")
+            # Relationship Handler - MAKE IT BOLD AND PROMINENT
+            rel = attrs.get("relationships") or attrs.get("relationship") or "Neutral/Unknown"
+            if isinstance(rel, list): rel = ", ".join(rel)
+            elif isinstance(rel, dict): rel = str(rel)
             
             # Format: Name [Alive | Healthy]: Details...
-            # New Line for clean reading if aliases exist
             info_str = " | ".join(extra_info)
-            npc_list.append(f"> 👤 **{npc['name']}** [{state} | {cond}]: {details}\n>    ↳ {info_str}")
+            npc_list.append(
+                f"> 👤 **{npc['name']}**\n"
+                f">    ├─ **STATUS:** {state} | {cond}\n"
+                f">    ├─ **RELATIONSHIP:** {rel}\n"
+                f">    └─ **INFO:** {details} {f'({info_str})' if info_str else ''}"
+            )
         
+        # Recall mechanism for inactive NPCs mentioned in input
         input_lower = current_input.lower()
         for key, npc in npcs.items():
             if npc.get("status") != "active" and npc['name'].lower() in input_lower:
-                npc_list.append(f"> 🧠 **{npc['name']}** (Recalled): {npc['details']}")
+                npc_list.append(f"> 🧠 **{npc['name']}** (Recalled Memory): {npc['details']}")
         
-        npc_text = "**👥 CHARACTERS:**\n" + "\n".join(npc_list) if npc_list else "**👥 CHARACTERS:** None in scene."
+        npc_text = "**👥 NPC REGISTRY (CONTEXT):**\n" + "\n".join(npc_list) if npc_list else "**👥 NPC REGISTRY:** None in scene."
 
         # 4. EVENTS
         events = data.get("events", {})
@@ -209,7 +210,6 @@ class RPGContextManager:
         player_context = self._format_player_profiles(session_data)
         world_sheet = self._format_world_sheet(thread_id, current_user_input)
         
-        # Logic: Use the live discord history if available (Primary), else fallback to DB (Secondary)
         recent_history = ""
         if recent_history_text:
              recent_history = recent_history_text
@@ -231,8 +231,9 @@ class RPGContextManager:
             f"**LORE:** {lore}\n\n"
             f"=== 🎭 PROTAGONISTS ===\n"
             f"{player_context}\n\n"
-            f"=== 🌍 WORLD STATE (STRUCTURED MEMORY) ===\n"
-            f"{world_sheet}\n\n"
+            f"=== 🌍 WORLD STATE (ACTIVE REGISTRY) ===\n"
+            f"{world_sheet}\n"
+            f"**MANDATORY:** You MUST act consistent with the **RELATIONSHIPS** defined above. If an NPC is 'Hostile', they cannot be friendly without cause.\n\n"
             f"=== 💬 RECENT DIALOGUE (LIVE TRANSCRIPT) ===\n{recent_history}\n\n"
             f"=== 📚 ANCIENT ARCHIVES (FALLBACK MEMORY) ===\n"
             f"Use this information ONLY if the specific details are missing from the World State or Dialogue above.\n"
@@ -240,7 +241,7 @@ class RPGContextManager:
             f"=== END CONTEXT ==="
         )
         return context
-
+    
     async def get_token_count_and_footer(self, chat_session, turn_id=None):
         try:
             if not chat_session.history: return "🧠 Mem: 0%"
@@ -271,9 +272,6 @@ class RPGContextManager:
         last_kept_turn = new_history[-1] if new_history else None
         rewind_timestamp = last_kept_turn["timestamp"] if last_kept_turn else datetime.min
         
-        # Note: If history was archived, 'target_index' here refers to the index in the truncated array.
-        # This is a limitation of rewinding on archived sessions, but we accept it for now.
-        # We assume the user sees the 'rpg history' command output which shows valid indices.
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id)}, 
             {"$set": {"turn_history": new_history}}

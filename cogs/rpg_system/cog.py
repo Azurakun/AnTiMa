@@ -152,8 +152,9 @@ class RPGAdventureCog(commands.Cog):
         try:
             scribe_session = self.model.start_chat(history=[])
             analysis_prompt = (
-                f"SYSTEM: You are the WORLD SCRIBE. Extract structured data from the narrative below.\n"
-                f"Identify any **NPCs** (People), **LOCATIONS**, or **QUESTS**.\n"
+                f"SYSTEM: You are the WORLD SCRIBE. PERFOMING A FULL AUDIT.\n"
+                f"**MANDATORY INSTRUCTION:** You must read the narrative provided below and extract **EVERY SINGLE** World Entity mentioned.\n"
+                f"**PRIORITY:** Do not skip any NPC, Location, or Quest, no matter how minor. If it has a name or description, it MUST be registered.\n\n"
                 f"**IMPORTANT DATA STRUCTURE:**\n"
                 f"1. **`details`**: **MANDATORY FOR ALIASES**. Store Titles, Aliases, and a short summary here. (e.g. 'Known as Strider. A ranger from the north.').\n"
                 f"2. **`attributes`** (NPCs): Populate with 'race', 'gender', 'age', 'appearance', 'personality', 'relationships', 'bio', 'state', 'condition'.\n"
@@ -360,7 +361,8 @@ class RPGAdventureCog(commands.Cog):
                     f"   - **ALIASES:** If they have known aliases, pass them as a list in `attributes['aliases']`.\n"
                     f"   - Keep the `details` parameter short (1 sentence summary).\n"
                     f"   - **Make note of any RELATIONSHIP changes** in the narrative so the Scribe detects them.\n"
-                    f"3. **TOOLS:** Use `update_world_entity` to track everything.\n"
+                    f"3. **CONSISTENCY CHECK:** BEFORE generating, consult the **NPC REGISTRY**. You MUST adhere to the **RELATIONSHIPS** defined there. Do not make a hostile NPC suddenly friendly.\n"
+                    f"4. **TOOLS:** Use `update_world_entity` to track everything.\n"
                     f"{'Reroll requested.' if is_reroll else ''}"
                 )
                 
@@ -618,21 +620,26 @@ class RPGAdventureCog(commands.Cog):
             await self.memory_manager.clear_thread_vectors(interaction.channel.id)
             chunks = await self.memory_manager.batch_ingest_history(interaction.channel.id, cleaned_history)
             
-            # 3. WIPE EXISTING QUESTS (For strict rebuild)
+            # 3. WIPE ALL WORLD STATE (Strict Rebuild)
             rpg_world_state_collection.update_one(
                 {"thread_id": interaction.channel.id}, 
-                {"$set": {"quests": {}}}
+                {"$set": {
+                    "quests": {},
+                    "npcs": {},
+                    "locations": {},
+                    "events": {}
+                }}
             )
 
             # 4. Retroactive Entity Extraction (Full History)
-            # Passing 200k chars to ensure we catch early quests
-            asyncio.create_task(self._scan_narrative_for_entities(interaction.channel.id, full_text_log[-200000:]))
+            # Pass full_text_log without limit to ensure absolute completeness
+            asyncio.create_task(self._scan_narrative_for_entities(interaction.channel.id, full_text_log))
             
             view = discord.ui.View()
             url = f"{WEB_DASHBOARD_URL}/rpg/inspect/{interaction.channel.id}"
             view.add_item(discord.ui.Button(label="🧠 Check Inspector", url=url, style=discord.ButtonStyle.link))
 
-            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **Quest Log Rebuilt** (Strict Mode).\n- 🧠 Retroactive Scan Queued.", view=view)
+            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **World State Wiped & Rebuilding...**\n- 🧠 Retroactive Full Audit Queued.", view=view)
             
         except Exception as e: await interaction.followup.send(f"❌ Error: {e}")
 
