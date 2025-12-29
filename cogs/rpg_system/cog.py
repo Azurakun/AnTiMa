@@ -122,12 +122,13 @@ class RPGAdventureCog(commands.Cog):
                     web_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "error", "error": str(e)}})
         except Exception as e: print(f"Poller Error: {e}")
 
-    async def _initialize_session(self, channel_id, session_db, initial_prompt="Resume", discord_history=None):
+    async def _initialize_session(self, channel_id, session_db, initial_prompt="Resume"):
+        """Initializes the Gemini Chat Session with pure DB context."""
         if not self.model or not self.memory_manager: return False
         
         chat_session = self.model.start_chat(history=[])
-        # Pass the fetched discord_history to the memory manager
-        memory_block, debug_data = await self.memory_manager.build_context_block(session_db, initial_prompt, recent_history_text=discord_history)
+        # Use DB history only
+        memory_block, debug_data = await self.memory_manager.build_context_block(session_db, initial_prompt)
         
         self._log_debug(channel_id, "system", "Initializing Session Context", details={"debug_data": debug_data})
         
@@ -370,31 +371,15 @@ class RPGAdventureCog(commands.Cog):
         try:
             self._log_debug(channel.id, "info", f"Processing Turn: {prompt[:50]}...")
 
-            # --- 1. REAL-TIME CONTEXT FETCHING ---
-            discord_context_str = ""
-            try:
-                raw_msgs = [m async for m in channel.history(limit=6)]
-                raw_msgs.reverse()
-                
-                context_lines = []
-                for msg in raw_msgs:
-                    if msg.content == "🧠 **The Dungeon Master is thinking...**": continue
-                    speaker = "The Dungeon Master" if msg.author.id == self.bot.user.id else msg.author.display_name
-                    content = msg.clean_content
-                    if not content and msg.embeds and msg.author.id == self.bot.user.id:
-                        content = msg.embeds[0].description
-                    if content:
-                        context_lines.append(f"[{speaker}]: {content}")
-                
-                discord_context_str = "\n".join(context_lines)
-            except Exception as e:
-                print(f"Context Fetch Error: {e}")
-                discord_context_str = None
+            # --- UPDATED: USE DB HISTORY ONLY ---
+            # We no longer scrape Discord history directly to avoid fragmentation.
+            # We rely on the internal 'turn_history' maintained in the DB.
+            # The 'prompt' (User Action) is passed dynamically to the current context window.
 
             await self.memory_manager.archive_old_turns(channel.id, session_db)
             
-            # Re-init session to inject fresh context
-            await self._initialize_session(channel.id, session_db, prompt, discord_history=discord_context_str)
+            # Re-init session to inject fresh context from DB
+            await self._initialize_session(channel.id, session_db, prompt)
             
             data = self.active_sessions[channel.id]
             chat_session = data['session']

@@ -104,7 +104,7 @@ class RPGContextManager:
 
     async def archive_old_turns(self, thread_id, session_data):
         history = session_data.get("turn_history", [])
-        if len(history) > 20:
+        if len(history) > 40: # Increased archival threshold slightly
             to_archive = history[:5]
             remaining = history[5:]
             archive_text = ""
@@ -189,7 +189,7 @@ class RPGContextManager:
 
         return f"{quest_text}\n{loc_text}\n{npc_text}\n{event_text}", debug_snapshot
 
-    async def build_context_block(self, session_data, current_user_input, recent_history_text=None):
+    async def build_context_block(self, session_data, current_user_input):
         thread_id = session_data['thread_id']
         owner_id = session_data.get('owner_id')
         local_time_str = get_local_time(owner_id, fmt="%Y-%m-%d %H:%M %Z") if owner_id else "Unknown Date"
@@ -198,16 +198,15 @@ class RPGContextManager:
         player_context = self._format_player_profiles(session_data)
         world_sheet, world_debug = self._format_world_sheet(thread_id, current_user_input)
         
-        recent_history = ""
-        if recent_history_text:
-             recent_history = recent_history_text
-        else:
-            history = session_data.get("turn_history", [])
-            text_log = []
-            for turn in history[-8:]: 
-                text_log.append(f"[{turn['user_name']}]: {turn['input']}")
-                text_log.append(f"[DM]: {turn['output']}")
-            recent_history = "\n\n".join(text_log)
+        # --- ENHANCED HISTORY FETCHING ---
+        # Fetch the last 30 turns (inputs and outputs) from the database.
+        # This provides deep context on the recent timeline, conversations, and events.
+        history = session_data.get("turn_history", [])
+        text_log = []
+        for turn in history[-30:]: 
+            text_log.append(f"[{turn['user_name']}]: {turn['input']}")
+            text_log.append(f"[DM]: {turn['output']}")
+        recent_history = "\n\n".join(text_log)
 
         rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
         memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No deep archives found."
@@ -222,7 +221,7 @@ class RPGContextManager:
             f"=== 🌍 WORLD STATE (ACTIVE REGISTRY) ===\n"
             f"{world_sheet}\n"
             f"**MANDATORY:** You MUST act consistent with the **RELATIONSHIPS** defined above.\n\n"
-            f"=== 💬 RECENT DIALOGUE (LIVE TRANSCRIPT) ===\n{recent_history}\n\n"
+            f"=== 💬 RECENT DIALOGUE (LIVE TRANSCRIPT - LAST 30 TURNS) ===\n{recent_history}\n\n"
             f"=== 📚 ANCIENT ARCHIVES (FALLBACK MEMORY) ===\n"
             f"Use this information ONLY if the specific details are missing from the World State or Dialogue above.\n"
             f"{memory_text}\n"
