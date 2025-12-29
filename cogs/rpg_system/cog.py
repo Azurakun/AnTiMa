@@ -169,9 +169,11 @@ class RPGAdventureCog(commands.Cog):
             f"   - **`relationships`**: **DETAILED & RECIPROCAL**. (e.g. 'Mother of Elara', 'Sworn Enemy of the User'). **Output as STRING.**\n"
             f"   - **`age`**: Number/Range only.\n\n"
             f"**IDENTITY RESOLUTION (CRITICAL - NO DUPLICATES):**\n"
-            f"- **TITLES ARE NOT NAMES:** If a character is referred to by a title or role (e.g. 'The Shopkeeper', 'Baron Theron\'s Wife'), **DO NOT** create a new NPC for the title.\n"
-            f"- **MERGE:** Identify the **TRUE NAME** (e.g. 'Lady Seraphina'). Update HER record. Add the title (e.g. 'Baron Theron\'s Wife') to her **`aliases`** list if needed, or just describe it in **`relationships`**.\n"
-            f"- **EXAMPLE:** Narrative says 'Baron Theron's wife entered.' You know her name is Seraphina. **ACTION:** Update NPC 'Lady Seraphina'. Set `relationships`='Wife of Baron Theron'. **DO NOT** create NPC 'Baron Theron's Wife'.\n"
+            f"1. **TITLES ARE NOT NAMES:** If text says 'Baron Theron's Wife', check if she is named later (e.g. 'Seraphina'). Use 'Lady Seraphina' as the name. Put 'Wife of Baron Theron' in `relationships`. **DO NOT** make a 'Baron Theron's Wife' NPC.\n"
+            f"2. **PARTIAL NAME MERGING:** 'Elara' and 'Elara Silverwood' are the SAME person.\n"
+            f"   - **RULE:** Always use the **LONGEST / MOST SPECIFIC** name found as the primary Key.\n"
+            f"   - If 'Elara' exists, and 'Elara Silverwood' appears, UPDATE 'Elara' to 'Elara Silverwood'.\n"
+            f"   - Do NOT create two entries for the same person.\n"
             f"**NARRATIVE:**\n{narrative_text}"
         )
 
