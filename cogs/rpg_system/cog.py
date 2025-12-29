@@ -108,11 +108,12 @@ class RPGAdventureCog(commands.Cog):
                     web_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "error", "error": str(e)}})
         except Exception as e: print(f"Poller Error: {e}")
 
-    async def _initialize_session(self, channel_id, session_db, initial_prompt="Resume"):
+    async def _initialize_session(self, channel_id, session_db, initial_prompt="Resume", discord_history=None):
         if not self.model or not self.memory_manager: return False
         
         chat_session = self.model.start_chat(history=[])
-        memory_block = await self.memory_manager.build_context_block(session_db, initial_prompt)
+        # Pass the fetched discord_history to the memory manager
+        memory_block = await self.memory_manager.build_context_block(session_db, initial_prompt, recent_history_text=discord_history)
         
         system_prime = (
             f"SYSTEM: BOOTING DUNGEON MASTER CORE.\n"
@@ -157,7 +158,11 @@ class RPGAdventureCog(commands.Cog):
                 f"1. **`details`**: **MANDATORY FOR ALIASES**. Store Titles, Aliases, and a short summary here. (e.g. 'Known as Strider. A ranger from the north.').\n"
                 f"2. **`attributes`** (NPCs): Populate with 'race', 'gender', 'age', 'appearance', 'personality', 'relationships', 'bio', 'state', 'condition'.\n"
                 f"   - **`aliases`**: Extract a LIST of short names/titles. (e.g. ['Strider', 'Elessar', 'The King']).\n"
-                f"3. **`attributes`** (QUESTS): 'issuer', 'trigger', 'rewards', 'status' (active/completed/failed).\n\n"
+                f"   - **`age`**: **STRICTLY NUMERIC**. Use a single number (e.g. '25') or a range (e.g. '40-50') if visually estimated. **NEVER** use words like 'Adult', 'Child', or 'Elder'.\n"
+                f"   - **`relationships`**: A concise text description of their dynamic with the User (e.g. 'Wary Ally', 'Bitter Enemy'). **Output as a String only. DO NOT use objects.**\n"
+                f"3. **`attributes`** (QUESTS): 'issuer', 'trigger', 'rewards', 'status' (active/completed/failed).\n"
+                f"   - **DEFINITION**: A Quest is a concrete objective assigned to the player (e.g. 'Retrieve the Amulet', 'Defeat the Goblin King').\n"
+                f"   - **IGNORE**: General motivations (e.g. 'Wants to survive') or simple interactions.\n\n"
                 f"**IDENTITY RESOLUTION PROTOCOL (CRITICAL):**\n"
                 f"1. **NO DUPLICATES:** Always use the **TRUE FULL NAME** as the `name` field.\n"
                 f"2. **HANDLE ALIASES:** If an NPC is revealed to be someone else (e.g., 'The Stranger is Aragorn'), DO NOT create a new entry for the Alias.\n"
@@ -245,13 +250,14 @@ class RPGAdventureCog(commands.Cog):
         sys_prompt = (
             f"You are the DM. **SCENARIO:** {scenario_name}. **LORE:** {lore}. {mechanics}\n"
             f"**INSTRUCTION:** Start the adventure now. \n"
-            f"1. **Set the Scene:** Write a detailed, immersive opening. Paint the environment with sensory details (sight, sound, smell). Write like a novelist.\n"
+            f"1. **Set the Scene:** Write a detailed, immersive opening. Paint the environment with sensory details (sight, sound, smell). Write like a novel. Do not be brief.\n"
             f"2. **Hook:** Present the immediate situation or threat based on the Backstory.\n"
             f"3. **Style:** Narrative prose. Not a list.\n"
             f"4. **Perspective:** 2nd Person ('You...').\n"
             f"5. **Constraint:** Do NOT act for the player. Stop and wait for their input."
         )
         
+        # Initial turn - no history yet
         await self._initialize_session(thread.id, session_data, "Start")
         await self.process_game_turn(thread, sys_prompt)
 
@@ -299,13 +305,48 @@ class RPGAdventureCog(commands.Cog):
         except: pass
 
         try:
+            # --- 1. REAL-TIME CONTEXT FETCHING ---
+            # Fetch last 5 messages from Discord to ensure accurate state
+            discord_context_str = ""
+            try:
+                # Limit 6 to capture potentially the trigger message + 5 context
+                raw_msgs = [m async for m in channel.history(limit=6)]
+                raw_msgs.reverse()
+                
+                context_lines = []
+                for msg in raw_msgs:
+                    # Ignore the "Thinking" message itself
+                    if msg.content == "🧠 **The Dungeon Master is thinking...**": continue
+                    
+                    # Identify Speaker
+                    speaker = "The Dungeon Master" if msg.author.id == self.bot.user.id else msg.author.display_name
+                    
+                    # Extract Content (Handle Embeds for DM)
+                    content = msg.clean_content
+                    if not content and msg.embeds and msg.author.id == self.bot.user.id:
+                        content = msg.embeds[0].description
+                    
+                    if content:
+                        context_lines.append(f"[{speaker}]: {content}")
+                
+                discord_context_str = "\n".join(context_lines)
+            except Exception as e:
+                print(f"Context Fetch Error: {e}")
+                discord_context_str = None # Fallback to DB history if fetch fails
+
             await self.memory_manager.archive_old_turns(channel.id, session_db)
-            await self._initialize_session(channel.id, session_db, prompt)
+            
+            # Pass the live discord context to initialization
+            await self._initialize_session(channel.id, session_db, prompt, discord_history=discord_context_str)
             
             data = self.active_sessions[channel.id]
             chat_session = data['session']
             rpg_sessions_collection.update_one({"thread_id": channel.id}, {"$set": {"last_active": datetime.utcnow()}})
             
+            # --- STATIC TURN CALCULATION ---
+            history_len = len(session_db.get("turn_history", []))
+            current_turn_id = history_len + 1
+
             if not is_reroll: data['last_prompt'] = prompt; data['last_roll_result'] = None
             
             async with channel.typing():
@@ -328,7 +369,26 @@ class RPGAdventureCog(commands.Cog):
                     f"{'Reroll requested.' if is_reroll else ''}"
                 )
                 
-                response = await chat_session.send_message_async(full_prompt)
+                # --- ROBUST API CALL LOOP WITH MALFORMED RECOVERY ---
+                response = None
+                max_retries = 2
+                attempt = 0
+                
+                while attempt <= max_retries:
+                    try:
+                        if attempt == 0:
+                            response = await chat_session.send_message_async(full_prompt)
+                        else:
+                            response = await chat_session.send_message_async("SYSTEM: The previous function call was MALFORMED. Please try again with valid arguments.")
+                        break 
+                    except Exception as e:
+                        if "MALFORMED_FUNCTION_CALL" in str(e) or "finish_reason: MALFORMED_FUNCTION_CALL" in str(e):
+                            attempt += 1
+                            print(f"Malformed call detected. Retrying ({attempt}/{max_retries})...")
+                            if attempt > max_retries: raise e 
+                        else:
+                            raise e 
+
                 turns = 0
                 text_content = ""
                 
@@ -336,34 +396,47 @@ class RPGAdventureCog(commands.Cog):
                     turns += 1
                     fn = response.parts[0].function_call
                     res_txt = "Error"
-                    if fn.name == "roll_d20":
-                        if story_mode: res_txt = "Dice disabled."
-                        elif is_reroll and data.get('last_roll_result'): res_txt = f"LOCKED: {data['last_roll_result']}"
-                        else:
-                            diff, mod = int(fn.args.get("difficulty", 10)), int(fn.args.get("modifier", 0))
-                            roll = random.randint(1, 20); total = roll + mod; success = total >= diff
-                            desc = f"🎲 **{roll}** (d20) {f'+ {mod}' if mod >= 0 else f'- {abs(mod)}'} = **{total}** vs DC {diff}"
-                            color = discord.Color.green() if success else discord.Color.red()
-                            if roll == 20: color = discord.Color.gold(); desc += " **(CRIT!)**"
-                            await channel.send(embed=discord.Embed(title=f"🎲 {fn.args.get('check_type', 'Check')}", description=desc, color=color))
-                            res_txt = f"Roll: {roll}, Total: {total}, DC: {diff}, Success: {success}"
-                            if not is_reroll: data['last_roll_result'] = res_txt
-                    elif fn.name == "update_world_entity": 
-                        # Handle the new attributes argument
-                        attrs = {}
-                        if "attributes" in fn.args:
-                            attrs = dict(fn.args["attributes"])
-                        res_txt = tools.update_world_entity(
-                            str(channel.id), fn.args["category"], fn.args["name"], 
-                            fn.args["details"], fn.args.get("status", "active"), attributes=attrs
-                        )
-                    elif fn.name == "grant_item_to_player": res_txt = tools.grant_item_to_player(fn.args["user_id"], fn.args["item_name"], fn.args["description"])
-                    elif fn.name == "apply_damage": res_txt = "Story Mode." if story_mode else tools.apply_damage(str(channel.id), fn.args["user_id"], fn.args["damage_amount"])
-                    elif fn.name == "apply_healing": res_txt = "Story Mode." if story_mode else tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
-                    elif fn.name == "deduct_mana": res_txt = "Story Mode." if story_mode else tools.deduct_mana(str(channel.id), fn.args["user_id"], fn.args["mana_cost"])
-                    elif fn.name == "update_journal": res_txt = tools.update_journal(str(channel.id), fn.args.get("log_entry"))
                     
-                    response = await chat_session.send_message_async(genai.protos.Content(parts=[genai.protos.Part(function_response=genai.protos.FunctionResponse(name=fn.name, response={'result': res_txt}))]))
+                    try:
+                        if fn.name == "roll_d20":
+                            if story_mode: res_txt = "Dice disabled."
+                            elif is_reroll and data.get('last_roll_result'): res_txt = f"LOCKED: {data['last_roll_result']}"
+                            else:
+                                diff, mod = int(fn.args.get("difficulty", 10)), int(fn.args.get("modifier", 0))
+                                roll = random.randint(1, 20); total = roll + mod; success = total >= diff
+                                desc = f"🎲 **{roll}** (d20) {f'+ {mod}' if mod >= 0 else f'- {abs(mod)}'} = **{total}** vs DC {diff}"
+                                color = discord.Color.green() if success else discord.Color.red()
+                                if roll == 20: color = discord.Color.gold(); desc += " **(CRIT!)**"
+                                await channel.send(embed=discord.Embed(title=f"🎲 {fn.args.get('check_type', 'Check')}", description=desc, color=color))
+                                res_txt = f"Roll: {roll}, Total: {total}, DC: {diff}, Success: {success}"
+                                if not is_reroll: data['last_roll_result'] = res_txt
+                        elif fn.name == "update_world_entity": 
+                            attrs = {}
+                            if "attributes" in fn.args:
+                                attrs = dict(fn.args["attributes"])
+                            res_txt = tools.update_world_entity(
+                                str(channel.id), fn.args["category"], fn.args["name"], 
+                                fn.args["details"], fn.args.get("status", "active"), attributes=attrs
+                            )
+                        elif fn.name == "grant_item_to_player": res_txt = tools.grant_item_to_player(fn.args["user_id"], fn.args["item_name"], fn.args["description"])
+                        elif fn.name == "apply_damage": res_txt = "Story Mode." if story_mode else tools.apply_damage(str(channel.id), fn.args["user_id"], fn.args["damage_amount"])
+                        elif fn.name == "apply_healing": res_txt = "Story Mode." if story_mode else tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
+                        elif fn.name == "deduct_mana": res_txt = "Story Mode." if story_mode else tools.deduct_mana(str(channel.id), fn.args["user_id"], fn.args["mana_cost"])
+                        elif fn.name == "update_journal": res_txt = tools.update_journal(str(channel.id), fn.args.get("log_entry"))
+                    except Exception as tool_err:
+                        res_txt = f"Tool Error: {tool_err}"
+
+                    try:
+                        response = await chat_session.send_message_async(genai.protos.Content(parts=[genai.protos.Part(function_response=genai.protos.FunctionResponse(name=fn.name, response={'result': res_txt}))]))
+                    except Exception as e:
+                        if "MALFORMED_FUNCTION_CALL" in str(e) or "finish_reason: MALFORMED_FUNCTION_CALL" in str(e):
+                             try:
+                                response = await chat_session.send_message_async("SYSTEM: Previous output malformed. Please output the narrative text now.")
+                             except:
+                                text_content = "**[System]** Critical Error in Narrative Generation."
+                                break
+                        else:
+                             raise e
 
                 try: text_content = response.text
                 except ValueError: text_content = "" 
@@ -374,7 +447,6 @@ class RPGAdventureCog(commands.Cog):
                         text_content = force_resp.text
                     except: text_content = "**[System Notice]** Narrative generation failed."
 
-                current_turn_id = len(session_db.get("turn_history", [])) + 1
                 footer_text = await self.memory_manager.get_token_count_and_footer(chat_session, turn_id=current_turn_id)
                 
                 if processing_msg:
@@ -400,7 +472,6 @@ class RPGAdventureCog(commands.Cog):
                 self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content, user_message_id=message_id, bot_message_id=bot_message_ids)
                 
                 # --- AUTO-DETECT ENTITIES (SCRIBE) ---
-                # This runs in background to catch any missed updates in the text
                 asyncio.create_task(self._scan_narrative_for_entities(channel.id, text_content))
                 
                 if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")

@@ -165,7 +165,13 @@ class RPGContextManager:
             extra_info = []
             if alias_str: extra_info.append(f"AKA: {alias_str}")
             if attrs.get('appearance'): extra_info.append(f"App: {attrs['appearance']}")
-            if attrs.get('relationship'): extra_info.append(f"Rel: {attrs['relationship']}")
+            
+            # Relationship Handler (Robust string conversion)
+            rel = attrs.get("relationships") or attrs.get("relationship")
+            if rel:
+                if isinstance(rel, list): rel = ", ".join(rel)
+                elif isinstance(rel, dict): rel = str(rel) # Safety fallback
+                extra_info.append(f"Rel: {rel}")
             
             # Format: Name [Alive | Healthy]: Details...
             # New Line for clean reading if aliases exist
@@ -186,7 +192,7 @@ class RPGContextManager:
 
         return f"{quest_text}\n{loc_text}\n{npc_text}\n{event_text}"
 
-    async def build_context_block(self, session_data, current_user_input):
+    async def build_context_block(self, session_data, current_user_input, recent_history_text=None):
         thread_id = session_data['thread_id']
         owner_id = session_data.get('owner_id')
         local_time_str = get_local_time(owner_id, fmt="%Y-%m-%d %H:%M %Z") if owner_id else "Unknown Date"
@@ -195,12 +201,17 @@ class RPGContextManager:
         player_context = self._format_player_profiles(session_data)
         world_sheet = self._format_world_sheet(thread_id, current_user_input)
         
-        history = session_data.get("turn_history", [])
-        text_log = []
-        for turn in history[-8:]: 
-            text_log.append(f"[{turn['user_name']}]: {turn['input']}")
-            text_log.append(f"[DM]: {turn['output']}")
-        recent_history = "\n\n".join(text_log)
+        # Logic: Use the live discord history if available (Primary), else fallback to DB (Secondary)
+        recent_history = ""
+        if recent_history_text:
+             recent_history = recent_history_text
+        else:
+            history = session_data.get("turn_history", [])
+            text_log = []
+            for turn in history[-8:]: 
+                text_log.append(f"[{turn['user_name']}]: {turn['input']}")
+                text_log.append(f"[DM]: {turn['output']}")
+            recent_history = "\n\n".join(text_log)
 
         rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
         memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No deep archives found."
@@ -214,7 +225,7 @@ class RPGContextManager:
             f"{player_context}\n\n"
             f"=== 🌍 WORLD STATE (STRUCTURED MEMORY) ===\n"
             f"{world_sheet}\n\n"
-            f"=== 💬 RECENT DIALOGUE ===\n{recent_history}\n\n"
+            f"=== 💬 RECENT DIALOGUE (LIVE TRANSCRIPT) ===\n{recent_history}\n\n"
             f"=== 📚 ANCIENT ARCHIVES (FALLBACK MEMORY) ===\n"
             f"Use this information ONLY if the specific details are missing from the World State or Dialogue above.\n"
             f"{memory_text}\n"
