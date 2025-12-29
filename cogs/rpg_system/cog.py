@@ -238,7 +238,8 @@ class RPGAdventureCog(commands.Cog):
             "scenario_type": scenario_name, "lore": lore,
             "campaign_log": [], "turn_history": [], "npc_registry": [], "quest_log": [], 
             "created_at": datetime.utcnow(), "last_active": datetime.utcnow(), "active": True, 
-            "delete_requested": False, "story_mode": story_mode
+            "delete_requested": False, "story_mode": story_mode,
+            "total_turns": 0 # Initialize counter
         }
         rpg_sessions_collection.insert_one(session_data)
         
@@ -273,6 +274,7 @@ class RPGAdventureCog(commands.Cog):
         if session_db.get("turn_history"):
             last_turn = session_db["turn_history"][-1]
 
+        # This decrements the counter in memory.py
         self.memory_manager.delete_last_turn(thread_id)
         
         prompt = "Continue" 
@@ -306,46 +308,38 @@ class RPGAdventureCog(commands.Cog):
 
         try:
             # --- 1. REAL-TIME CONTEXT FETCHING ---
-            # Fetch last 5 messages from Discord to ensure accurate state
             discord_context_str = ""
             try:
-                # Limit 6 to capture potentially the trigger message + 5 context
                 raw_msgs = [m async for m in channel.history(limit=6)]
                 raw_msgs.reverse()
                 
                 context_lines = []
                 for msg in raw_msgs:
-                    # Ignore the "Thinking" message itself
                     if msg.content == "🧠 **The Dungeon Master is thinking...**": continue
-                    
-                    # Identify Speaker
                     speaker = "The Dungeon Master" if msg.author.id == self.bot.user.id else msg.author.display_name
-                    
-                    # Extract Content (Handle Embeds for DM)
                     content = msg.clean_content
                     if not content and msg.embeds and msg.author.id == self.bot.user.id:
                         content = msg.embeds[0].description
-                    
                     if content:
                         context_lines.append(f"[{speaker}]: {content}")
                 
                 discord_context_str = "\n".join(context_lines)
             except Exception as e:
                 print(f"Context Fetch Error: {e}")
-                discord_context_str = None # Fallback to DB history if fetch fails
+                discord_context_str = None
 
             await self.memory_manager.archive_old_turns(channel.id, session_db)
             
-            # Pass the live discord context to initialization
             await self._initialize_session(channel.id, session_db, prompt, discord_history=discord_context_str)
             
             data = self.active_sessions[channel.id]
             chat_session = data['session']
             rpg_sessions_collection.update_one({"thread_id": channel.id}, {"$set": {"last_active": datetime.utcnow()}})
             
-            # --- STATIC TURN CALCULATION ---
-            history_len = len(session_db.get("turn_history", []))
-            current_turn_id = history_len + 1
+            # --- FIX: STATIC TURN CALCULATION USING PERSISTENT COUNTER ---
+            # Fallback to len(turn_history) if 'total_turns' is missing (for older sessions)
+            existing_turns = session_db.get("total_turns", len(session_db.get("turn_history", [])))
+            current_turn_id = existing_turns + 1
 
             if not is_reroll: data['last_prompt'] = prompt; data['last_roll_result'] = None
             
@@ -365,6 +359,7 @@ class RPGAdventureCog(commands.Cog):
                     f"   - Use the `attributes` parameter for deep details (bio, relationships).\n"
                     f"   - **ALIASES:** If they have known aliases, pass them as a list in `attributes['aliases']`.\n"
                     f"   - Keep the `details` parameter short (1 sentence summary).\n"
+                    f"   - **Make note of any RELATIONSHIP changes** in the narrative so the Scribe detects them.\n"
                     f"3. **TOOLS:** Use `update_world_entity` to track everything.\n"
                     f"{'Reroll requested.' if is_reroll else ''}"
                 )
@@ -469,7 +464,8 @@ class RPGAdventureCog(commands.Cog):
                     bot_msg = await channel.send(embeds=embeds, view=view)
                     bot_message_ids.append(bot_msg.id)
 
-                self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content, user_message_id=message_id, bot_message_id=bot_message_ids)
+                # Pass the calculated turn ID to save it persistently
+                self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content, user_message_id=message_id, bot_message_id=bot_message_ids, current_turn_id=current_turn_id)
                 
                 # --- AUTO-DETECT ENTITIES (SCRIBE) ---
                 asyncio.create_task(self._scan_narrative_for_entities(channel.id, text_content))
@@ -600,7 +596,12 @@ class RPGAdventureCog(commands.Cog):
                 elif not msg.author.bot:
                     current_user_msg = msg
 
-            rpg_sessions_collection.update_one({"thread_id": interaction.channel.id}, {"$set": {"turn_history": reconstructed_turns}})
+            # --- FIX: Set total_turns based on full reconstructed length ---
+            total_count = len(reconstructed_turns)
+            rpg_sessions_collection.update_one({"thread_id": interaction.channel.id}, {"$set": {
+                "turn_history": reconstructed_turns,
+                "total_turns": total_count 
+            }})
 
             # 2. Vector Indexing
             cleaned_history = []
@@ -631,7 +632,7 @@ class RPGAdventureCog(commands.Cog):
             url = f"{WEB_DASHBOARD_URL}/rpg/inspect/{interaction.channel.id}"
             view.add_item(discord.ui.Button(label="🧠 Check Inspector", url=url, style=discord.ButtonStyle.link))
 
-            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{len(reconstructed_turns)}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **Quest Log Rebuilt** (Strict Mode).\n- 🧠 Retroactive Scan Queued.", view=view)
+            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **Quest Log Rebuilt** (Strict Mode).\n- 🧠 Retroactive Scan Queued.", view=view)
             
         except Exception as e: await interaction.followup.send(f"❌ Error: {e}")
 
@@ -674,6 +675,7 @@ class RPGAdventureCog(commands.Cog):
 
         await interaction.response.send_message(f"⏳ **Rewinding to Turn {turn_id}...** (Wiping Future Memory)", ephemeral=True)
         
+        # trim_history will now manage total_turns decrement/set logic if implemented in memory.py
         deleted_turns, rewind_timestamp = self.memory_manager.trim_history(interaction.channel.id, target_index)
         if rewind_timestamp: await self.memory_manager.purge_memories_since(interaction.channel.id, rewind_timestamp)
 

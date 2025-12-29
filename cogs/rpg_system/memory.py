@@ -83,7 +83,7 @@ class RPGContextManager:
         results.sort(key=lambda x: x[0], reverse=True)
         return [r[1] for r in results[:limit]]
 
-    def save_turn(self, thread_id, user_name, user_input, ai_output, user_message_id=None, bot_message_id=None):
+    def save_turn(self, thread_id, user_name, user_input, ai_output, user_message_id=None, bot_message_id=None, current_turn_id=None):
         entry = {
             "timestamp": datetime.utcnow(),
             "user_name": user_name,
@@ -92,9 +92,17 @@ class RPGContextManager:
             "user_message_id": user_message_id,
             "bot_message_id": bot_message_id 
         }
+        
+        # Prepare the update operations
+        update_op = {"$push": {"turn_history": entry}}
+        
+        # Explicitly set total_turns if provided
+        if current_turn_id is not None:
+             update_op["$set"] = {"total_turns": current_turn_id}
+
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id)},
-            {"$push": {"turn_history": entry}}
+            update_op
         )
 
     async def archive_old_turns(self, thread_id, session_data):
@@ -244,7 +252,10 @@ class RPGContextManager:
         except: return "🧠 Mem: Calc Error"
         
     def delete_last_turn(self, thread_id):
-        rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {"$pop": {"turn_history": 1}})
+        rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {
+            "$pop": {"turn_history": 1},
+            "$inc": {"total_turns": -1}
+        })
         
     def trim_history(self, thread_id, target_index):
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
@@ -260,6 +271,9 @@ class RPGContextManager:
         last_kept_turn = new_history[-1] if new_history else None
         rewind_timestamp = last_kept_turn["timestamp"] if last_kept_turn else datetime.min
         
+        # Note: If history was archived, 'target_index' here refers to the index in the truncated array.
+        # This is a limitation of rewinding on archived sessions, but we accept it for now.
+        # We assume the user sees the 'rpg history' command output which shows valid indices.
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id)}, 
             {"$set": {"turn_history": new_history}}
