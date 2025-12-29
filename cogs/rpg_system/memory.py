@@ -138,19 +138,23 @@ class RPGContextManager:
 
     def _format_world_sheet(self, thread_id, current_input=""):
         data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)})
-        if not data: return "**System:** No world data established."
+        if not data: return "**System:** No world data established.", {}
         
+        debug_snapshot = {"active_quests": [], "active_locs": [], "active_npcs": [], "recalled_npcs": []}
+
         # 1. OBJECTIVES
         quests = data.get("quests", {})
         active_quests = [v for v in quests.values() if v.get("status") == "active"]
         quest_text = "**🛡️ ACTIVE OBJECTIVES:**\n" + "".join([f"> 🔸 **{q['name']}**: {q['details']}\n" for q in active_quests]) if active_quests else "**🛡️ OBJECTIVES:** None active.\n"
+        debug_snapshot["active_quests"] = [q['name'] for q in active_quests]
 
         # 2. LOCATIONS
         locations = data.get("locations", {})
         active_locs = [v for v in locations.values() if v.get("status") == "active"]
         loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_locs]) if active_locs else ""
+        debug_snapshot["active_locs"] = [l['name'] for l in active_locs]
 
-        # 3. NPC REGISTRY (Strict State & Relationship Display)
+        # 3. NPC REGISTRY
         npcs = data.get("npcs", {})
         active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
         
@@ -158,42 +162,23 @@ class RPGContextManager:
         for npc in active_npcs:
             details = npc['details']
             attrs = npc.get("attributes", {})
-            
-            # Use specific fields requested
-            condition = attrs.get("condition", "Alive") # The Alive/Dead flag
-            state = attrs.get("state", "Healthy")       # The physical detail
-            race = attrs.get("race", "Unknown")
-            gender = attrs.get("gender", "Unknown")
-            
-            # Aliases
-            aliases = attrs.get("aliases", [])
-            alias_str = " ".join([f"`{a}`" for a in aliases]) if aliases else ""
-            
-            # Relationship (Bold)
-            rel = attrs.get("relationships") or attrs.get("relationship") or "Neutral/Unknown"
+            alias_str = " ".join([f"`{a}`" for a in attrs.get("aliases", [])]) if attrs.get("aliases") else ""
+            rel = attrs.get("relationships") or "Neutral"
             if isinstance(rel, list): rel = ", ".join(rel)
-            elif isinstance(rel, dict): rel = str(rel)
-            
-            # Format: 
-            # 👤 Name [Race | Gender]
-            #    ├─ CONDITION: Alive | Lightly Wounded
-            #    ├─ REL: Mother of Elara
-            #    └─ INFO: ...
-            
-            header_info = f"[{race} | {gender}]"
-            status_line = f"{condition} | {state}"
             
             npc_list.append(
-                f"> 👤 **{npc['name']}** {header_info} {f'({alias_str})' if alias_str else ''}\n"
-                f">    ├─ **STATUS:** {status_line}\n"
+                f"> 👤 **{npc['name']}** [{attrs.get('race','?')} | {attrs.get('gender','?')}] {alias_str}\n"
+                f">    ├─ **STATUS:** {attrs.get('condition','Alive')} | {attrs.get('state','Healthy')}\n"
                 f">    ├─ **RELATIONSHIP:** {rel}\n"
                 f">    └─ **INFO:** {details}"
             )
+            debug_snapshot["active_npcs"].append(npc['name'])
         
         input_lower = current_input.lower()
         for key, npc in npcs.items():
             if npc.get("status") != "active" and npc['name'].lower() in input_lower:
                 npc_list.append(f"> 🧠 **{npc['name']}** (Recalled Memory): {npc['details']}")
+                debug_snapshot["recalled_npcs"].append(npc['name'])
         
         npc_text = "**👥 NPC REGISTRY (CONTEXT):**\n" + "\n".join(npc_list) if npc_list else "**👥 NPC REGISTRY:** None in scene."
 
@@ -202,7 +187,7 @@ class RPGContextManager:
         event_list = list(events.values())[-5:] 
         event_text = "**📅 KEY EVENTS (MEMORY):**\n" + "".join([f"> 🔹 {e['name']}: {e['details']}\n" for e in event_list]) if event_list else ""
 
-        return f"{quest_text}\n{loc_text}\n{npc_text}\n{event_text}"
+        return f"{quest_text}\n{loc_text}\n{npc_text}\n{event_text}", debug_snapshot
 
     async def build_context_block(self, session_data, current_user_input, recent_history_text=None):
         thread_id = session_data['thread_id']
@@ -211,7 +196,7 @@ class RPGContextManager:
         
         lore = session_data.get("lore", "Standard Fantasy Setting")
         player_context = self._format_player_profiles(session_data)
-        world_sheet = self._format_world_sheet(thread_id, current_user_input)
+        world_sheet, world_debug = self._format_world_sheet(thread_id, current_user_input)
         
         recent_history = ""
         if recent_history_text:
@@ -236,14 +221,22 @@ class RPGContextManager:
             f"{player_context}\n\n"
             f"=== 🌍 WORLD STATE (ACTIVE REGISTRY) ===\n"
             f"{world_sheet}\n"
-            f"**MANDATORY:** You MUST act consistent with the **RELATIONSHIPS** defined above. If an NPC is 'Hostile', they cannot be friendly without cause.\n\n"
+            f"**MANDATORY:** You MUST act consistent with the **RELATIONSHIPS** defined above.\n\n"
             f"=== 💬 RECENT DIALOGUE (LIVE TRANSCRIPT) ===\n{recent_history}\n\n"
             f"=== 📚 ANCIENT ARCHIVES (FALLBACK MEMORY) ===\n"
             f"Use this information ONLY if the specific details are missing from the World State or Dialogue above.\n"
             f"{memory_text}\n"
             f"=== END CONTEXT ==="
         )
-        return context
+        
+        # Combine debug data
+        debug_data = {
+            "world_entities": world_debug,
+            "rag_hits_count": len(rag_memories),
+            "rag_previews": [m[:50]+"..." for m in rag_memories]
+        }
+        
+        return context, debug_data
     
     async def get_token_count_and_footer(self, chat_session, turn_id=None):
         try:

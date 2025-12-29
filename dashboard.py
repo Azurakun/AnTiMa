@@ -83,20 +83,23 @@ def serialize_persona(persona):
     return persona
 
 def serialize_world_entity(entity):
-    """
-    Ensures datetime objects in the entity (and its attributes) are stringified for JSON.
-    """
     if not entity: return entity
-    
-    # Handle top-level last_updated
     if "last_updated" in entity and isinstance(entity["last_updated"], datetime):
         entity["last_updated"] = entity["last_updated"].isoformat()
-        
-    # Ensure attributes dict exists
-    if "attributes" not in entity:
-        entity["attributes"] = {}
-        
+    if "attributes" not in entity: entity["attributes"] = {}
     return entity
+
+def fetch_rpg_debug_logs(thread_id: str):
+    """Fetches specific debug logs for the command prompt UI."""
+    logs = list(db.rpg_debug_terminal.find({"thread_id": str(thread_id)}).sort("timestamp", -1).limit(50))
+    # Reverse to show chronological order in terminal
+    logs.reverse()
+    return [{
+        "time": l["timestamp"].strftime("%H:%M:%S"),
+        "level": l.get("level", "info"),
+        "message": l.get("message", ""),
+        "details": l.get("details", {})
+    } for l in logs]
 
 def fetch_rpg_full_memory(thread_id: str):
     tid = int(thread_id)
@@ -257,9 +260,17 @@ async def get_rpg_memory(thread_id: str):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
+@app.get("/api/rpg/debug/{thread_id}")
+async def get_rpg_debug(thread_id: str):
+    """API Endpoint for the Command Prompt Interface."""
+    try:
+        data = await run_sync_db(fetch_rpg_debug_logs, thread_id)
+        return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
 @app.get("/rpg/inspect/{thread_id}", response_class=HTMLResponse)
 async def inspect_rpg_page(request: Request, thread_id: str):
-    """Dedicated page for inspecting RPG memory."""
     return templates.TemplateResponse("memory_inspector.html", {"request": request, "thread_id": thread_id})
 
 # --- RPG SETUP & PERSONAS ---
@@ -394,7 +405,5 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception: pass
 
 if __name__ == "__main__":
-    # Get the PORT from environment variables, default to 8000 if not found
     port = int(os.environ.get("PORT", 8000))
-    # Run uvicorn on "0.0.0.0" and the assigned port
     uvicorn.run(app, host="0.0.0.0", port=port)
