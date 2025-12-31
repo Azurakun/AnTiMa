@@ -164,12 +164,13 @@ class RPGAdventureCog(commands.Cog):
     async def _scan_narrative_for_entities(self, thread_id, narrative_text):
         """
         Background Scribe: Analyzes DM output to auto-detect and update World Entities.
-        Strictly enforces IDENTITY RESOLUTION to prevent duplicates.
+        Includes Logic to dismiss old NPCs when Location changes.
         """
         chunk_preview = narrative_text[:30].replace('\n', ' ')
         self._log_debug(thread_id, "system", "SCRIBE: Analyzing narrative chunk", details={"preview": chunk_preview})
 
         scribe_session = self.model.start_chat(history=[])
+        # [MODIFIED] Sanitized prompts to remove "Elara" and other specific names.
         analysis_prompt = (
             f"SYSTEM: You are the WORLD SCRIBE. Extract structured data.\n"
             f"**INSTRUCTION:** Extract **EVERY** Entity (NPC, Location, Quest). Do not be lazy. If it exists, index it.\n\n"
@@ -183,75 +184,85 @@ class RPGAdventureCog(commands.Cog):
             f"   - **`appearance`**: **DETAILED**. Describe Hair (style/color), Face, Eyes, Clothing/Armor, Weapons, Height.\n"
             f"   - **`personality`**: **DETAILED**. Describe their demeanor, tone, and how they act towards the User.\n"
             f"   - **`backstory`**: **DETAILED**. Their history, origin, and role in the world.\n"
-            f"   - **`relationships`**: **DETAILED & RECIPROCAL**. (e.g. 'Mother of Elara', 'Sworn Enemy of the User'). **Output as STRING.**\n"
+            f"   - **`relationships`**: **DETAILED & RECIPROCAL**. (e.g. 'Mother of NPC_A', 'Sworn Enemy of the User'). **Output as STRING.**\n"
             f"   - **`age`**: Number/Range only.\n\n"
             f"**IDENTITY RESOLUTION (CRITICAL - NO DUPLICATES):**\n"
-            f"1. **TITLES ARE NOT NAMES:** If text says 'Baron Theron's Wife', check if she is named later (e.g. 'Seraphina'). Use 'Lady Seraphina' as the name. Put 'Wife of Baron Theron' in `relationships`. **DO NOT** make a 'Baron Theron's Wife' NPC.\n"
-            f"2. **PARTIAL NAME MERGING:** 'Elara' and 'Elara Silverwood' are the SAME person.\n"
+            f"1. **TITLES ARE NOT NAMES:** If text says 'The Baron's Wife', check if she is named later (e.g. 'Jane'). Use 'Lady Jane' as the name. Put 'Wife of The Baron' in `relationships`. **DO NOT** make a 'The Baron's Wife' NPC.\n"
+            f"2. **PARTIAL NAME MERGING:** 'John' and 'John Smith' are the SAME person.\n"
             f"   - **RULE:** Always use the **LONGEST / MOST SPECIFIC** name found as the primary Key.\n"
-            f"   - If 'Elara' exists, and 'Elara Silverwood' appears, UPDATE 'Elara' to 'Elara Silverwood'.\n"
+            f"   - If 'John' exists, and 'John Smith' appears, UPDATE 'John' to 'John Smith'.\n"
             f"   - Do NOT create two entries for the same person.\n"
             f"**NARRATIVE:**\n{narrative_text}"
         )
 
-        # --- RETRY LOOP FOR MALFORMED CALLS ---
         max_retries = 2
         attempt = 0
         response = None
 
         while attempt <= max_retries:
             try:
-                if attempt == 0:
-                    response = await scribe_session.send_message_async(analysis_prompt)
-                else:
-                    response = await scribe_session.send_message_async("SYSTEM: Previous call MALFORMED. Retry with valid arguments.")
+                if attempt == 0: response = await scribe_session.send_message_async(analysis_prompt)
+                else: response = await scribe_session.send_message_async("SYSTEM: Previous call MALFORMED. Retry with valid arguments.")
                 break
             except Exception as e:
                 if "MALFORMED_FUNCTION_CALL" in str(e) or "finish_reason: MALFORMED_FUNCTION_CALL" in str(e):
                     attempt += 1
-                    self._log_debug(thread_id, "warn", f"SCRIBE: Malformed Call. Retrying ({attempt}/{max_retries})...")
-                    if attempt > max_retries:
-                        self._log_debug(thread_id, "error", "SCRIBE: Failed after retries.")
-                        return 
-                else:
-                    self._log_debug(thread_id, "error", f"SCRIBE ERROR: {e}")
-                    return
+                    if attempt > max_retries: return 
+                else: return
 
-        # --- PROCESS RESPONSE ---
+        # --- PROCESS RESPONSE & SCENE CLEARING LOGIC ---
         try:
             entities_found = 0
+            new_location_detected = False
+            npcs_in_this_scene = []
+
             if response.parts:
+                # First Pass: Detect if Location Changed
+                for part in response.parts:
+                    if part.function_call and part.function_call.name == "update_world_entity":
+                        if part.function_call.args["category"] == "Location":
+                            new_location_detected = True
+                        if part.function_call.args["category"] == "NPC":
+                            npcs_in_this_scene.append(part.function_call.args["name"])
+
+                # Logic: If Location changed, set ALL other active NPCs to 'standby' (background)
+                if new_location_detected:
+                    self._log_debug(thread_id, "system", "SCRIBE: 🌍 Scene Change Detected. Dismissing absent NPCs.")
+                    
+                    # Fetch current world state
+                    world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}) or {}
+                    all_npcs = world_data.get("npcs", {})
+                    
+                    for npc_key, npc_data in all_npcs.items():
+                        # If NPC is currently active, BUT not mentioned in this new scene
+                        if npc_data.get("status") == "active" and npc_data["name"] not in npcs_in_this_scene:
+                            # Set them to 'background' so they don't pollute the prompt
+                            rpg_world_state_collection.update_one(
+                                {"thread_id": int(thread_id)},
+                                {"$set": {f"npcs.{npc_key}.status": "background"}}
+                            )
+                            self._log_debug(thread_id, "info", f"SCRIBE: Auto-dismissed NPC '{npc_data['name']}' to background.")
+
+                # Second Pass: Actually Update Entities
                 for part in response.parts:
                     if part.function_call:
                         fn = part.function_call
                         if fn.name == "update_world_entity":
                             entities_found += 1
-                            # Convert protobuf Struct to dict for attributes
                             attrs = {}
-                            if "attributes" in fn.args:
-                                attrs = dict(fn.args["attributes"])
+                            if "attributes" in fn.args: attrs = dict(fn.args["attributes"])
                             
-                            # SAFETY: Explicitly sanitize relationships
                             rel = attrs.get("relationships") or attrs.get("relationship")
-                            if rel:
-                                if isinstance(rel, list): attrs["relationships"] = ", ".join(rel)
-                                elif isinstance(rel, dict): attrs["relationships"] = str(rel)
-                                else: attrs["relationships"] = str(rel)
+                            if rel: attrs["relationships"] = str(rel) if not isinstance(rel, list) else ", ".join(rel)
 
-                            # Extract explicit status from attributes if Scribe put it there
                             status = fn.args.get("status", "active")
-                            if "status" in attrs:
-                                status = attrs["status"]
+                            if "status" in attrs: status = attrs["status"]
                             
-                            self._log_debug(thread_id, "system", f"SCRIBE: Indexed {fn.args.get('category')} -> {fn.args.get('name')}", details=attrs)
+                            self._log_debug(thread_id, "system", f"SCRIBE: Indexed {fn.args.get('category')} -> {fn.args.get('name')}")
 
                             tools.update_world_entity(
-                                str(thread_id), 
-                                fn.args["category"], 
-                                fn.args["name"], 
-                                fn.args["details"], 
-                                status, 
-                                attributes=attrs
+                                str(thread_id), fn.args["category"], fn.args["name"], 
+                                fn.args["details"], status, attributes=attrs
                             )
             self._log_debug(thread_id, "info", f"SCRIBE: Finished. Entities Found: {entities_found}")
 
@@ -520,8 +531,10 @@ class RPGAdventureCog(commands.Cog):
 
                 self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content, user_message_id=message_id, bot_message_id=bot_message_ids, current_turn_id=current_turn_id)
                 
-                # --- AUTO-DETECT ENTITIES (SCRIBE) ---
-                asyncio.create_task(self._scan_narrative_for_entities(channel.id, text_content))
+                # --- [MODIFIED] AUTO-DETECT ENTITIES (SCRIBE) ---
+                # FIX: Use 'await' instead of 'create_task' to fix the Race Condition.
+                # This ensures the world state is actually updated BEFORE the user can type their next command.
+                await self._scan_narrative_for_entities(channel.id, text_content)
                 
                 if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
         except Exception as e:
