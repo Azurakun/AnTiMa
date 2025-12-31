@@ -6,6 +6,7 @@ import re
 from utils.db import rpg_sessions_collection, rpg_vector_memory_collection, rpg_world_state_collection
 from utils.timezone_manager import get_local_time
 import google.generativeai as genai
+from . import prompts
 
 class RPGContextManager:
     def __init__(self, model):
@@ -199,8 +200,6 @@ class RPGContextManager:
         world_sheet, world_debug = self._format_world_sheet(thread_id, current_user_input)
         
         # --- ENHANCED HISTORY FETCHING ---
-        # Fetch the last 30 turns (inputs and outputs) from the database.
-        # This provides deep context on the recent timeline, conversations, and events.
         history = session_data.get("turn_history", [])
         text_log = []
         for turn in history[-30:]: 
@@ -211,22 +210,15 @@ class RPGContextManager:
         rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
         memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No deep archives found."
 
-        context = (
-            f"=== 🧠 SYSTEM CONTEXT ===\n"
-            f"**REAL TIME:** {local_time_str}\n"
-            f"**SCENARIO:** {session_data.get('scenario_type', 'Unknown')}\n"
-            f"**LORE:** {lore}\n\n"
-            f"=== 🎭 PROTAGONISTS ===\n"
-            f"{player_context}\n\n"
-            f"=== 🌍 WORLD STATE (ACTIVE REGISTRY) ===\n"
-            f"{world_sheet}\n"
-            f"**MANDATORY:** You MUST act consistent with the **RELATIONSHIPS** defined above.\n"
-            f"**CONFLICT RESOLUTION:** If the 'RECENT DIALOGUE' below contradicts the 'WORLD STATE' (e.g., User moved to a new room not yet listed), prioritize the **RECENT DIALOGUE** as the truth.\n\n"
-            f"=== 💬 RECENT DIALOGUE (LIVE TRANSCRIPT - LAST 30 TURNS) ===\n{recent_history}\n\n"
-            f"=== 📚 ANCIENT ARCHIVES (FALLBACK MEMORY) ===\n"
-            f"Use this information ONLY if the specific details are missing from the World State or Dialogue above.\n"
-            f"{memory_text}\n"
-            f"=== END CONTEXT ==="
+        # [MODIFIED] Using Imported Prompt Template
+        context = prompts.CONTEXT_BLOCK.format(
+            time=local_time_str,
+            scenario=session_data.get('scenario_type', 'Unknown'),
+            lore=lore,
+            player_context=player_context,
+            world_sheet=world_sheet,
+            recent_history=recent_history,
+            memory_text=memory_text
         )
         
         # Combine debug data
