@@ -23,7 +23,7 @@ from .config import RPG_CLASSES
 from . import tools
 from .ui import RPGGameView, AdventureSetupView, CloseVoteView
 from .memory import RPGContextManager
-from . import prompts # <--- IMPORTED PROMPTS
+from . import prompts 
 
 # BASE URL for the Web Dashboard
 WEB_DASHBOARD_URL = "https://antima-production.up.railway.app"
@@ -73,7 +73,6 @@ class RPGAdventureCog(commands.Cog):
             })
         except Exception as e: print(f"Log Error: {e}")
 
-    # --- AGE SANITIZATION HELPER ---
     def _sanitize_age(self, age_input):
         if not age_input: return "Unknown"
         s = str(age_input).strip().lower()
@@ -143,7 +142,6 @@ class RPGAdventureCog(commands.Cog):
         
         self._log_debug(channel_id, "system", "Initializing Session Context", details={"debug_data": debug_data})
         
-        # [MODIFIED] Using Imported Prompt
         system_prime = prompts.SYSTEM_PRIME.format(memory_block=memory_block)
 
         try: await chat_session.send_message_async(system_prime)
@@ -160,7 +158,6 @@ class RPGAdventureCog(commands.Cog):
 
         scribe_session = self.model.start_chat(history=[])
         
-        # [MODIFIED] Using Imported Prompt
         analysis_prompt = prompts.SCRIBE_ANALYSIS.format(narrative_text=narrative_text)
 
         max_retries = 2
@@ -254,7 +251,6 @@ class RPGAdventureCog(commands.Cog):
         if custom_title: title = custom_title
         else:
             try:
-                # [MODIFIED] Using Imported Prompt
                 prompt = prompts.TITLE_GENERATION.format(scenario=scenario_name, lore=lore[:100])
                 resp = await self.model.generate_content_async(prompt)
                 title = resp.text.strip().replace('"', '')[:50]
@@ -283,7 +279,6 @@ class RPGAdventureCog(commands.Cog):
 
         mechanics = "2. **Story Mode Active:** NO DICE." if story_mode else "2. **Standard Mode:** Use `roll_d20` for risks."
         
-        # [MODIFIED] Using Imported Prompt
         sys_prompt = prompts.ADVENTURE_START.format(scenario_name=scenario_name, lore=lore, mechanics=mechanics)
         
         await self._initialize_session(thread.id, session_data, "Start")
@@ -300,8 +295,9 @@ class RPGAdventureCog(commands.Cog):
         if session_db.get("turn_history"):
             last_turn = session_db["turn_history"][-1]
 
+        # [MODIFIED] Using updated method that rewinds history AND restores state
         self.memory_manager.delete_last_turn(thread_id)
-        self._log_debug(thread_id, "info", "Turn Rerolled by User.")
+        self._log_debug(thread_id, "info", "Turn Rerolled by User (State Rewound).")
         
         prompt = "Continue" 
         msg_id = None
@@ -347,7 +343,6 @@ class RPGAdventureCog(commands.Cog):
                 mechanics_instr = "**MODE: STORY**" if story_mode else "**MODE: STANDARD**"
                 reroll_instr = "Reroll requested." if is_reroll else ""
                 
-                # [MODIFIED] Using Imported Prompt
                 full_prompt = prompts.GAME_TURN.format(
                     user_action=prompt,
                     mechanics_instruction=mechanics_instr,
@@ -447,7 +442,14 @@ class RPGAdventureCog(commands.Cog):
                     bot_message_ids.append(bot_msg.id)
 
                 self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content, user_message_id=message_id, bot_message_id=bot_message_ids, current_turn_id=current_turn_id)
+                
+                # --- AUTO-DETECT ENTITIES (SCRIBE) ---
                 await self._scan_narrative_for_entities(channel.id, text_content)
+                
+                # --- [ADDED] SNAPSHOT WORLD STATE ---
+                # Save the new state so we can roll back to it later if needed.
+                await self.memory_manager.snapshot_world_state(channel.id, current_turn_id)
+                
                 if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
         except Exception as e:
             if processing_msg:
@@ -457,7 +459,7 @@ class RPGAdventureCog(commands.Cog):
             await channel.send(f"⚠️ Game Error: {e}")
             print(f"RPG Error: {e}")
 
-    # --- COMMANDS (Identical to previous, excluded for brevity as they are unchanged) ---
+    # --- COMMANDS (Included full list to ensure file is complete) ---
     async def close_session(self, thread_id, channel):
         rpg_sessions_collection.update_one({"thread_id": thread_id}, {"$set": {"active": False, "ended_at": datetime.utcnow()}})
         if thread_id in self.active_sessions: del self.active_sessions[thread_id]
