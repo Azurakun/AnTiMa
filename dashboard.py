@@ -1,5 +1,5 @@
 # dashboard.py
-from fastapi import FastAPI, WebSocket, Request, HTTPException
+from fastapi import FastAPI, WebSocket, Request, HTTPException, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -140,6 +140,137 @@ def fetch_rpg_full_memory(thread_id: str):
         "memories": clean_vectors
     }
 
+def generate_campaign_document(thread_id: str):
+    tid = int(thread_id)
+    session = rpg_sessions_collection.find_one({"thread_id": tid})
+    if not session: return None
+
+    world = rpg_world_state_collection.find_one({"thread_id": tid}) or {}
+
+    doc = []
+    separator = "=" * 60
+    sub_separator = "-" * 40
+
+    # --- HEADER ---
+    doc.append(separator)
+    doc.append(f"CAMPAIGN CHRONICLE: {session.get('title', 'Untitled Adventure')}")
+    doc.append(separator)
+    doc.append(f"Host/Owner: {session.get('owner_name', 'Unknown')}")
+    doc.append(f"Scenario: {session.get('scenario_type', 'Custom')}")
+    doc.append(f"Export Date: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    doc.append(f"Status: {'Active' if session.get('active') else 'Concluded'}")
+    doc.append("")
+    
+    # --- LORE ---
+    doc.append(separator)
+    doc.append("SETTING & LORE")
+    doc.append(separator)
+    doc.append(session.get("lore", "No specific lore recorded."))
+    doc.append("")
+
+    # --- PLAYERS ---
+    doc.append(separator)
+    doc.append("PARTY ROSTER")
+    doc.append(separator)
+    player_stats = session.get("player_stats", {})
+    if not player_stats:
+        doc.append("No players recorded.")
+    else:
+        for uid, p in player_stats.items():
+            doc.append(f"Name: {p.get('name', 'Unknown')}")
+            doc.append(f"Class: {p.get('class', 'Freelancer')}")
+            doc.append(f"Race: {p.get('race', 'Unknown')}")
+            doc.append(f"Description: {p.get('appearance', 'N/A')}")
+            doc.append(f"Background: {p.get('backstory', 'N/A')}")
+            doc.append(sub_separator)
+    doc.append("")
+
+    # --- WORLD STATE: QUESTS ---
+    doc.append(separator)
+    doc.append("QUEST LOG")
+    doc.append(separator)
+    quests = world.get("quests", {})
+    if not quests:
+        doc.append("No quests recorded.")
+    else:
+        for qid, q in quests.items():
+            status = q.get("status", "unknown").upper()
+            doc.append(f"[{status}] {q.get('name')}")
+            doc.append(f"Details: {q.get('details')}")
+            attrs = q.get("attributes", {})
+            if attrs.get("rewards"): doc.append(f"Rewards: {attrs.get('rewards')}")
+            if attrs.get("issuer"): doc.append(f"Issuer: {attrs.get('issuer')}")
+            doc.append("")
+
+    # --- WORLD STATE: NPCS ---
+    doc.append(separator)
+    doc.append("NPC REGISTRY")
+    doc.append(separator)
+    npcs = world.get("npcs", {})
+    if not npcs:
+        doc.append("No NPCs recorded.")
+    else:
+        for nid, n in npcs.items():
+            doc.append(f"Name: {n.get('name')}")
+            attrs = n.get("attributes", {})
+            doc.append(f"Role: {attrs.get('role', 'Character')} | State: {attrs.get('state', 'Unknown')}")
+            doc.append(f"Gender: {attrs.get('gender', '?')} | Age: {attrs.get('age', '?')} | Race: {attrs.get('race', '?')}")
+            doc.append(f"Appearance: {attrs.get('appearance', 'N/A')}")
+            doc.append(f"Personality: {attrs.get('personality', 'N/A')}")
+            doc.append(f"Relationships: {attrs.get('relationships', attrs.get('relationship', 'None'))}")
+            doc.append(f"Summary: {n.get('details')}")
+            doc.append(sub_separator)
+
+    # --- WORLD STATE: LOCATIONS & EVENTS ---
+    doc.append(separator)
+    doc.append("LOCATIONS & EVENTS")
+    doc.append(separator)
+    locations = world.get("locations", {})
+    if locations:
+        doc.append("--- Locations ---")
+        for l in locations.values():
+            doc.append(f"• {l.get('name')} ({l.get('status')}): {l.get('details')}")
+    
+    events = world.get("events", {})
+    if events:
+        doc.append("\n--- Timeline ---")
+        for e in events.values():
+            doc.append(f"• {e.get('name')}: {e.get('details')}")
+    doc.append("")
+
+    # --- STORY CHRONICLE ---
+    doc.append(separator)
+    doc.append("THE CHRONICLE (FULL NARRATIVE)")
+    doc.append(separator)
+    doc.append("Note: Reconstructed from active turns and archived memory banks.\n")
+
+    # 1. Fetch Archived History (Stored in Vectors)
+    archives = list(rpg_vector_memory_collection.find({
+        "thread_id": tid, 
+        "metadata.type": {"$in": ["archived_history", "historical_sync"]}
+    }).sort("timestamp", 1))
+
+    for arc in archives:
+        text = arc.get("text", "")
+        # Basic cleanup if stored with metadata headers inside text
+        doc.append(text)
+        doc.append("\n" + sub_separator + "\n")
+
+    # 2. Fetch Active Turn History
+    active_history = session.get("turn_history", [])
+    for turn in active_history:
+        timestamp = turn.get("timestamp")
+        if isinstance(timestamp, datetime): timestamp = timestamp.strftime("%H:%M")
+        
+        doc.append(f"[{timestamp}] {turn.get('user_name', 'Player')}:")
+        doc.append(f"{turn.get('input')}\n")
+        
+        doc.append(f"[DM]:")
+        doc.append(f"{turn.get('output')}\n")
+        doc.append(sub_separator + "\n")
+
+    return "\n".join(doc)
+
 # --- FETCH FUNCTIONS ---
 
 def fetch_overview():
@@ -248,6 +379,17 @@ async def delete_rpg_session(thread_id: str):
     try:
         rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {"$set": {"delete_requested": True}})
         return JSONResponse({"status": "Marked for deletion"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/rpg/export/{thread_id}")
+async def export_rpg_session(thread_id: str):
+    try:
+        content = await run_sync_db(generate_campaign_document, thread_id)
+        if not content: return JSONResponse({"error": "Session not found"}, status_code=404)
+        
+        filename = f"Campaign_Export_{thread_id}.txt"
+        return Response(content=content, media_type="text/plain", headers={"Content-Disposition": f"attachment; filename={filename}"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

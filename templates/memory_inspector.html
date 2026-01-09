@@ -91,7 +91,11 @@
                 </nav>
             </div>
             
-            <div class="mt-auto p-6">
+            <div class="mt-auto p-6 space-y-4">
+                 <a id="export-btn" href="#" target="_blank" class="w-full text-center block px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold text-sm border border-gray-600 transition shadow-lg">
+                    💾 Export Story
+                 </a>
+
                  <div class="bg-black/40 p-4 rounded-xl border border-gray-800 backdrop-blur-sm">
                     <h3 class="text-[10px] font-bold text-gray-500 uppercase mb-3">Live Session Metadata</h3>
                     <div id="sidebar-meta" class="text-xs space-y-2 text-gray-400 font-mono">
@@ -397,6 +401,9 @@
                 }
 
                 document.getElementById('connection-status').innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span> <span class="text-green-400">Online</span>`;
+                
+                // Set Export Link
+                document.getElementById('export-btn').href = `/api/rpg/export/${threadId}`;
 
                 // Meta
                 document.getElementById('meta-title').innerText = data.meta.title || "Untitled Adventure";
