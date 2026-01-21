@@ -8,6 +8,7 @@ import asyncio
 import random
 import uuid
 import re 
+import traceback 
 from datetime import datetime
 from utils.db import (
     ai_config_collection, 
@@ -26,7 +27,7 @@ from .memory import RPGContextManager
 from . import prompts 
 
 # BASE URL for the Web Dashboard
-WEB_DASHBOARD_URL = "https://antima-production.up.railway.app"
+WEB_DASHBOARD_URL = "https://barbra-inexpugnable-stuporously.ngrok-free.dev"
 
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -46,7 +47,7 @@ class RPGAdventureCog(commands.Cog):
                     tools.grant_item_to_player, tools.apply_damage, 
                     tools.apply_healing, tools.deduct_mana, 
                     tools.roll_d20, tools.update_journal,
-                    tools.update_world_entity
+                    tools.update_world_entity, tools.update_environment
                 ],
                 safety_settings=self.safety_settings
             )
@@ -85,6 +86,27 @@ class RPGAdventureCog(commands.Cog):
         if "middle" in s: return "45"
         if "old" in s or "elder" in s or "ancient" in s: return "70"
         return "Unknown" 
+
+    # [NEW] Dynamic Thinking Animation Task
+    async def _animate_thinking(self, message):
+        phases = [
+            "🧠 **Consulting the Archives...**",
+            "🌍 **Analyzing World State...**",
+            "🎲 **Calculating Probabilities...**",
+            "⚡ **Determining Consequences...**",
+            "📝 **Drafting Narrative...**",
+            "✨ **Polishing Scene...**"
+        ]
+        i = 0
+        try:
+            while True:
+                await asyncio.sleep(4) 
+                i = (i + 1) % len(phases)
+                await message.edit(content=phases[i])
+        except asyncio.CancelledError:
+            pass # Task cancelled, stop animating
+        except Exception:
+            pass # Message likely deleted
 
     @tasks.loop(seconds=10)
     async def cleanup_deleted_sessions(self):
@@ -138,14 +160,23 @@ class RPGAdventureCog(commands.Cog):
         if not self.model or not self.memory_manager: return False
         
         chat_session = self.model.start_chat(history=[])
-        memory_block, debug_data = await self.memory_manager.build_context_block(session_db, initial_prompt)
         
-        self._log_debug(channel_id, "system", "Initializing Session Context", details={"debug_data": debug_data})
+        # [MODIFIED] Pass logger to memory manager
+        memory_block, debug_data = await self.memory_manager.build_context_block(
+            session_db, initial_prompt, logger=self._log_debug
+        )
+        
+        self._log_debug(channel_id, "system", "Context Built. Priming System...", details={"context_len": len(memory_block)})
         
         system_prime = prompts.SYSTEM_PRIME.format(memory_block=memory_block)
 
-        try: await chat_session.send_message_async(system_prime)
-        except Exception as e: print(f"Failed to prime memory: {e}")
+        try: 
+            # [FIXED] No timeout, let it take its time
+            await chat_session.send_message_async(system_prime)
+            self._log_debug(channel_id, "system", "System Prime Accepted.")
+        except Exception as e: 
+            self._log_debug(channel_id, "error", f"System Prime Failed: {e}")
+            return False
 
         self.active_sessions[channel_id] = {
             'session': chat_session, 'owner_id': session_db['owner_id'], 'last_prompt': initial_prompt
@@ -157,7 +188,6 @@ class RPGAdventureCog(commands.Cog):
         self._log_debug(thread_id, "system", "SCRIBE: Analyzing narrative chunk", details={"preview": chunk_preview})
 
         scribe_session = self.model.start_chat(history=[])
-        
         analysis_prompt = prompts.SCRIBE_ANALYSIS.format(narrative_text=narrative_text)
 
         max_retries = 2
@@ -166,14 +196,13 @@ class RPGAdventureCog(commands.Cog):
 
         while attempt <= max_retries:
             try:
+                # [FIXED] No Timeout
                 if attempt == 0: response = await scribe_session.send_message_async(analysis_prompt)
-                else: response = await scribe_session.send_message_async("SYSTEM: Previous call MALFORMED. Retry with valid arguments.")
+                else: response = await scribe_session.send_message_async("SYSTEM: Previous call MALFORMED. Retry.")
                 break
-            except Exception as e:
-                if "MALFORMED_FUNCTION_CALL" in str(e) or "finish_reason: MALFORMED_FUNCTION_CALL" in str(e):
-                    attempt += 1
-                    if attempt > max_retries: return 
-                else: return
+            except Exception:
+                attempt += 1
+                if attempt > max_retries: return 
 
         try:
             entities_found = 0
@@ -183,50 +212,42 @@ class RPGAdventureCog(commands.Cog):
             if response.parts:
                 for part in response.parts:
                     if part.function_call and part.function_call.name == "update_world_entity":
-                        if part.function_call.args["category"] == "Location":
-                            new_location_detected = True
-                        if part.function_call.args["category"] == "NPC":
-                            npcs_in_this_scene.append(part.function_call.args["name"])
+                        cat = part.function_call.args.get("category")
+                        name = part.function_call.args.get("name")
+                        if cat == "Location": new_location_detected = True
+                        if cat == "NPC" and name: npcs_in_this_scene.append(name)
 
                 if new_location_detected:
                     self._log_debug(thread_id, "system", "SCRIBE: 🌍 Scene Change Detected. Dismissing absent NPCs.")
                     world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}) or {}
                     all_npcs = world_data.get("npcs", {})
-                    
                     for npc_key, npc_data in all_npcs.items():
                         if npc_data.get("status") == "active" and npc_data["name"] not in npcs_in_this_scene:
                             rpg_world_state_collection.update_one(
                                 {"thread_id": int(thread_id)},
                                 {"$set": {f"npcs.{npc_key}.status": "background"}}
                             )
-                            self._log_debug(thread_id, "info", f"SCRIBE: Auto-dismissed NPC '{npc_data['name']}' to background.")
 
                 for part in response.parts:
                     if part.function_call:
                         fn = part.function_call
                         if fn.name == "update_world_entity":
+                            if "category" not in fn.args or "name" not in fn.args: continue
                             entities_found += 1
-                            attrs = {}
-                            if "attributes" in fn.args: attrs = dict(fn.args["attributes"])
-                            
+                            attrs = dict(fn.args.get("attributes", {}))
                             rel = attrs.get("relationships") or attrs.get("relationship")
                             if rel: attrs["relationships"] = str(rel) if not isinstance(rel, list) else ", ".join(rel)
-
-                            status = fn.args.get("status", "active")
-                            if "status" in attrs: status = attrs["status"]
-
                             if "age" in attrs: attrs["age"] = self._sanitize_age(attrs["age"])
-                            
-                            self._log_debug(thread_id, "system", f"SCRIBE: Indexed {fn.args.get('category')} -> {fn.args.get('name')}")
-
                             tools.update_world_entity(
                                 str(thread_id), fn.args["category"], fn.args["name"], 
-                                fn.args["details"], status, attributes=attrs
+                                fn.args["details"], fn.args.get("status", "active"), attributes=attrs
                             )
-            self._log_debug(thread_id, "info", f"SCRIBE: Finished. Entities Found: {entities_found}")
+                        elif fn.name == "update_environment":
+                            tools.update_environment(str(thread_id), fn.args["time_of_day"], fn.args["weather"])
 
+            self._log_debug(thread_id, "info", f"SCRIBE: Finished. Entities Found: {entities_found}")
         except Exception as e:
-            self._log_debug(thread_id, "error", f"SCRIBE PROCESS ERROR: {e}")
+            self._log_debug(thread_id, "error", f"SCRIBE ERROR: {e}")
 
     async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name, story_mode=False, custom_title=None, manual_guild_id=None, manual_user=None):
         if interaction:
@@ -278,7 +299,6 @@ class RPGAdventureCog(commands.Cog):
         self._log_debug(thread.id, "system", f"ADVENTURE CREATED: {title}", details={"scenario": scenario_name, "mode": "story" if story_mode else "standard"})
 
         mechanics = "2. **Story Mode Active:** NO DICE." if story_mode else "2. **Standard Mode:** Use `roll_d20` for risks."
-        
         sys_prompt = prompts.ADVENTURE_START.format(scenario_name=scenario_name, lore=lore, mechanics=mechanics)
         
         await self._initialize_session(thread.id, session_data, "Start")
@@ -292,16 +312,17 @@ class RPGAdventureCog(commands.Cog):
         except: pass 
         
         last_turn = None
-        if session_db.get("turn_history"):
-            last_turn = session_db["turn_history"][-1]
+        history = session_db.get("turn_history", [])
+        if history and len(history) > 0:
+            last_turn = history[-1]
 
-        # [MODIFIED] Using updated method that rewinds history AND restores state
         self.memory_manager.delete_last_turn(thread_id)
         self._log_debug(thread_id, "info", "Turn Rerolled by User (State Rewound).")
         
         prompt = "Continue" 
         msg_id = None
-        if last_turn:
+        
+        if last_turn and isinstance(last_turn, dict):
             prompt = last_turn.get("input", "Continue")
             msg_id = last_turn.get("user_message_id")
             if msg_id:
@@ -320,23 +341,38 @@ class RPGAdventureCog(commands.Cog):
         session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
         if not session_db: return
         
+        # [NEW] Initial Status Message
         processing_msg = None
         try: processing_msg = await channel.send("🧠 **The Dungeon Master is thinking...**")
         except: pass
 
+        # [NEW] Start the dynamic animation task
+        anim_task = None
+        if processing_msg:
+            anim_task = asyncio.create_task(self._animate_thinking(processing_msg))
+
         try:
             self._log_debug(channel.id, "info", f"Processing Turn: {prompt[:50]}...")
             await self.memory_manager.archive_old_turns(channel.id, session_db)
-            await self._initialize_session(channel.id, session_db, prompt)
             
-            data = self.active_sessions[channel.id]
+            init_success = await self._initialize_session(channel.id, session_db, prompt)
+            if not init_success:
+                await channel.send("⚠️ **Session Init Failed.** Check Inspector.")
+                if processing_msg: await processing_msg.delete()
+                return
+
+            data = self.active_sessions.get(channel.id) 
+            if not data: return 
+            
             chat_session = data['session']
             rpg_sessions_collection.update_one({"thread_id": channel.id}, {"$set": {"last_active": datetime.utcnow()}})
             
             existing_turns = session_db.get("total_turns", len(session_db.get("turn_history", [])))
             current_turn_id = existing_turns + 1
 
-            if not is_reroll: data['last_prompt'] = prompt; data['last_roll_result'] = None
+            if not is_reroll: 
+                data['last_prompt'] = prompt
+                data['last_roll_result'] = None
             
             async with channel.typing():
                 story_mode = session_db.get("story_mode", False)
@@ -356,8 +392,11 @@ class RPGAdventureCog(commands.Cog):
                 attempt = 0
                 while attempt <= max_retries:
                     try:
-                        if attempt == 0: response = await chat_session.send_message_async(full_prompt)
-                        else: response = await chat_session.send_message_async("SYSTEM: The previous function call was MALFORMED. Please try again with valid arguments.")
+                        # [FIXED] No Timeout
+                        if attempt == 0: 
+                            response = await chat_session.send_message_async(full_prompt)
+                        else: 
+                            response = await chat_session.send_message_async("SYSTEM: The previous function call was MALFORMED. Please try again with valid arguments.")
                         break 
                     except Exception as e:
                         if "MALFORMED_FUNCTION_CALL" in str(e) or "finish_reason: MALFORMED_FUNCTION_CALL" in str(e):
@@ -387,8 +426,7 @@ class RPGAdventureCog(commands.Cog):
                                 res_txt = f"Roll: {roll}, Total: {total}, DC: {diff}, Success: {success}"
                                 if not is_reroll: data['last_roll_result'] = res_txt
                         elif fn.name == "update_world_entity": 
-                            attrs = {}
-                            if "attributes" in fn.args: attrs = dict(fn.args["attributes"])
+                            attrs = dict(fn.args.get("attributes", {}))
                             if "age" in attrs: attrs["age"] = self._sanitize_age(attrs["age"])
                             res_txt = tools.update_world_entity(
                                 str(channel.id), fn.args["category"], fn.args["name"], 
@@ -399,9 +437,11 @@ class RPGAdventureCog(commands.Cog):
                         elif fn.name == "apply_healing": res_txt = "Story Mode." if story_mode else tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
                         elif fn.name == "deduct_mana": res_txt = "Story Mode." if story_mode else tools.deduct_mana(str(channel.id), fn.args["user_id"], fn.args["mana_cost"])
                         elif fn.name == "update_journal": res_txt = tools.update_journal(str(channel.id), fn.args.get("log_entry"))
+                        elif fn.name == "update_environment": res_txt = tools.update_environment(str(channel.id), fn.args["time_of_day"], fn.args["weather"])
                     except Exception as tool_err: res_txt = f"Tool Error: {tool_err}"
 
                     try:
+                        # [FIXED] No Timeout
                         response = await chat_session.send_message_async(genai.protos.Content(parts=[genai.protos.Part(function_response=genai.protos.FunctionResponse(name=fn.name, response={'result': res_txt}))]))
                     except Exception as e:
                         if "MALFORMED_FUNCTION_CALL" in str(e) or "finish_reason: MALFORMED_FUNCTION_CALL" in str(e):
@@ -421,6 +461,9 @@ class RPGAdventureCog(commands.Cog):
                 self._log_debug(channel.id, "ai", "Generated Narrative", details={"length": len(text_content)})
 
                 footer_text = await self.memory_manager.get_token_count_and_footer(chat_session, turn_id=current_turn_id)
+                
+                # [NEW] Clean up status message
+                if anim_task: anim_task.cancel()
                 if processing_msg:
                     try: await processing_msg.delete()
                     except: pass
@@ -443,23 +486,23 @@ class RPGAdventureCog(commands.Cog):
 
                 self.memory_manager.save_turn(channel.id, user.name if user else "System", prompt, text_content, user_message_id=message_id, bot_message_id=bot_message_ids, current_turn_id=current_turn_id)
                 
-                # --- AUTO-DETECT ENTITIES (SCRIBE) ---
                 await self._scan_narrative_for_entities(channel.id, text_content)
-                
-                # --- [ADDED] SNAPSHOT WORLD STATE ---
-                # Save the new state so we can roll back to it later if needed.
                 await self.memory_manager.snapshot_world_state(channel.id, current_turn_id)
                 
                 if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
         except Exception as e:
+            if anim_task: anim_task.cancel()
             if processing_msg:
                 try: await processing_msg.delete()
                 except: pass
-            self._log_debug(channel.id, "error", f"CRITICAL TURN ERROR: {e}")
-            await channel.send(f"⚠️ Game Error: {e}")
+            
+            err_details = traceback.format_exc()
+            self._log_debug(channel.id, "error", f"CRITICAL TURN ERROR: {e}", details={"trace": err_details})
+            await channel.send(f"⚠️ Game Error: {e}. Check Inspector Logs.")
             print(f"RPG Error: {e}")
 
-    # --- COMMANDS (Included full list to ensure file is complete) ---
+    # --- COMMANDS ---
+
     async def close_session(self, thread_id, channel):
         rpg_sessions_collection.update_one({"thread_id": thread_id}, {"$set": {"active": False, "ended_at": datetime.utcnow()}})
         if thread_id in self.active_sessions: del self.active_sessions[thread_id]
@@ -488,10 +531,19 @@ class RPGAdventureCog(commands.Cog):
         world_data = rpg_world_state_collection.find_one({"thread_id": interaction.channel.id})
         quests = world_data.get("quests", {}) if world_data else {}
         npcs = world_data.get("npcs", {}) if world_data else {}
+        env = world_data.get("environment", {})
 
         await interaction.response.defer(ephemeral=True)
 
         embeds = []
+        
+        env_time = env.get("time", "Day")
+        env_weather = env.get("weather", "Clear")
+        emb_env = discord.Embed(title=f"🕰️ World Clock", color=discord.Color.light_grey())
+        emb_env.add_field(name="Time", value=env_time, inline=True)
+        emb_env.add_field(name="Weather", value=env_weather, inline=True)
+        embeds.append(emb_env)
+
         active_qs = [q for q in quests.values() if q.get("status") == "active"]
         if active_qs:
             emb = discord.Embed(title="🛡️ Active Objectives", color=discord.Color.gold())
@@ -536,7 +588,6 @@ class RPGAdventureCog(commands.Cog):
         view.add_item(discord.ui.Button(label="🧠 Open Memory Inspector", url=url, style=discord.ButtonStyle.link, emoji="🔗"))
 
         msg_content = "🌍 **World State Summary**"
-        if not embeds: msg_content += "\n*(No major discoveries yet. Check the web inspector for details)*"
         
         await interaction.followup.send(content=msg_content, embeds=embeds, view=view)
 
@@ -552,22 +603,49 @@ class RPGAdventureCog(commands.Cog):
         try:
             self._log_debug(interaction.channel.id, "info", "SYNC: Fetching Message History...")
             raw_messages = [m async for m in interaction.channel.history(limit=None, oldest_first=True)]
-            self._log_debug(interaction.channel.id, "info", f"SYNC: Fetched {len(raw_messages)} messages.")
-
+            
             reconstructed_turns = []
-            current_user_msg = None
+            current_turn = None 
+
             for msg in raw_messages:
-                if msg.author.id == self.bot.user.id:
-                    if msg.embeds and current_user_msg:
-                        turn_data = {
-                            "timestamp": msg.created_at, "user_name": current_user_msg.author.name,
-                            "input": current_user_msg.content or "Action", "output": msg.embeds[0].description,
-                            "user_message_id": current_user_msg.id, "bot_message_id": msg.id
-                        }
-                        reconstructed_turns.append(turn_data)
-                        current_user_msg = None
+                if msg.author.bot and msg.author.id == self.bot.user.id:
+                    if current_turn:
+                        content = msg.content or (msg.embeds[0].description if msg.embeds else "")
+                        if content: current_turn['bot_parts'].append(content)
+                        current_turn['bot_msg_ids'].append(msg.id)
                 elif not msg.author.bot:
-                    current_user_msg = msg
+                    if current_turn and current_turn['bot_parts']:
+                        full_output = "\n".join(current_turn['bot_parts'])
+                        reconstructed_turns.append({
+                            "timestamp": current_turn['timestamp'],
+                            "user_name": current_turn['user_name'],
+                            "input": current_turn['input'],
+                            "output": full_output,
+                            "user_message_id": current_turn['user_id'],
+                            "bot_message_id": current_turn['bot_msg_ids'],
+                            "turn_id": len(reconstructed_turns) + 1
+                        })
+                    
+                    current_turn = {
+                        'user_name': msg.author.name,
+                        'input': msg.content,
+                        'user_id': msg.id,
+                        'timestamp': msg.created_at,
+                        'bot_parts': [],
+                        'bot_msg_ids': []
+                    }
+
+            if current_turn and current_turn['bot_parts']:
+                full_output = "\n".join(current_turn['bot_parts'])
+                reconstructed_turns.append({
+                    "timestamp": current_turn['timestamp'],
+                    "user_name": current_turn['user_name'],
+                    "input": current_turn['input'],
+                    "output": full_output,
+                    "user_message_id": current_turn['user_id'],
+                    "bot_message_id": current_turn['bot_msg_ids'],
+                    "turn_id": len(reconstructed_turns) + 1
+                })
 
             total_count = len(reconstructed_turns)
             self._log_debug(interaction.channel.id, "info", f"SYNC: Reconstructed {total_count} turns.")
@@ -578,55 +656,45 @@ class RPGAdventureCog(commands.Cog):
 
             self._log_debug(interaction.channel.id, "info", "SYNC: Building Vector Index...")
             cleaned_history = []
-            for msg in raw_messages:
-                if msg.author.bot and msg.author.id != self.bot.user.id: continue 
-                content = msg.content or (msg.embeds[0].description if msg.embeds else "")
-                if content: 
-                    cleaned_history.append({"author": msg.author.name, "content": content, "timestamp": msg.created_at})
-
-            if not cleaned_history: return await interaction.followup.send("⚠️ No history.")
+            for t in reconstructed_turns:
+                cleaned_history.append({"author": t['user_name'], "content": t['input'], "timestamp": t['timestamp']})
+                cleaned_history.append({"author": "DM", "content": t['output'], "timestamp": t['timestamp']})
 
             await self.memory_manager.clear_thread_vectors(interaction.channel.id)
             chunks = await self.memory_manager.batch_ingest_history(interaction.channel.id, cleaned_history)
-            self._log_debug(interaction.channel.id, "info", f"SYNC: Indexed {chunks} memory chunks.")
             
             self._log_debug(interaction.channel.id, "warn", "SYNC: Wiping World State for clean rebuild.")
             rpg_world_state_collection.update_one(
                 {"thread_id": interaction.channel.id}, 
-                {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}}}
+                {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}, "environment": {}}}
             )
 
             self._log_debug(interaction.channel.id, "info", "SYNC: Starting Batch Entity Extraction...")
+            scan_tasks = []
             chunk_size = 15000 
             current_chunk = ""
-            scan_tasks = []
-            chunk_count = 0
-
-            for msg in raw_messages:
-                author = msg.author.name
-                content = msg.content or (msg.embeds[0].description if msg.embeds else "")
-                if content:
-                    line = f"[{author}]: {content}\n"
-                    if len(current_chunk) + len(line) > chunk_size:
-                        chunk_count += 1
-                        self._log_debug(interaction.channel.id, "info", f"SYNC: Dispatching Audit Task #{chunk_count} ({len(current_chunk)} chars)")
-                        scan_tasks.append(self._scan_narrative_for_entities(interaction.channel.id, current_chunk))
-                        current_chunk = ""
-                    current_chunk += line
+            total_chunks = 0
             
-            if current_chunk:
-                chunk_count += 1
-                self._log_debug(interaction.channel.id, "info", f"SYNC: Dispatching Final Audit Task #{chunk_count} ({len(current_chunk)} chars)")
-                scan_tasks.append(self._scan_narrative_for_entities(interaction.channel.id, current_chunk))
+            for item in cleaned_history:
+                line = f"[{item['author']}]: {item['content']}\n"
+                if len(current_chunk) + len(line) > chunk_size:
+                    scan_tasks.append(current_chunk)
+                    current_chunk = ""
+                current_chunk += line
+            if current_chunk: scan_tasks.append(current_chunk)
+            
+            total_chunks = len(scan_tasks)
+            await interaction.edit_original_response(content=f"🔄 **Syncing...** Rebuilding World State ({total_chunks} segments). This ensures accurate Time & Weather.")
 
-            self._log_debug(interaction.channel.id, "system", f"SYNC: Complete. Running {len(scan_tasks)} background audits.")
-            for t in scan_tasks: asyncio.create_task(t)
+            for i, text_chunk in enumerate(scan_tasks):
+                self._log_debug(interaction.channel.id, "info", f"SYNC: analyzing segment {i+1}/{total_chunks}...")
+                await self._scan_narrative_for_entities(interaction.channel.id, text_chunk)
             
             view = discord.ui.View()
             url = f"{WEB_DASHBOARD_URL}/rpg/inspect/{interaction.channel.id}"
             view.add_item(discord.ui.Button(label="🧠 Check Inspector", url=url, style=discord.ButtonStyle.link))
 
-            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Fixed **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **World State Wiped.**\n- 🧠 **{len(scan_tasks)} Batch Audits** queued (Background).", view=view)
+            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Rebuilt **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **World State Wiped & Rebuilt.**\n- 🕰️ **Timeline Restored.**", view=view)
             
         except Exception as e: 
             self._log_debug(interaction.channel.id, "error", f"SYNC CRITICAL ERROR: {e}")
@@ -655,8 +723,12 @@ class RPGAdventureCog(commands.Cog):
         if not session or "turn_history" not in session: return await interaction.response.send_message("No history.", ephemeral=True)
         history = session["turn_history"]
         desc = ""
-        for i in range(max(0, len(history) - 10), len(history)):
-            desc += f"**Turn {i+1}**: {history[i]['input'][:50]}...\n"
+        # Show last 10
+        start = max(0, len(history) - 10)
+        for i in range(start, len(history)):
+            t = history[i]
+            tid = t.get("turn_id", i+1)
+            desc += f"**Turn {tid}**: {t['input'][:50]}...\n"
         await interaction.response.send_message(embed=discord.Embed(title="📜 History", description=desc, color=discord.Color.blue()), ephemeral=True)
 
     @rpg_group.command(name="rewind", description="Rewind the story to a specific turn (Deletes messages & Memory).")
@@ -665,14 +737,21 @@ class RPGAdventureCog(commands.Cog):
         session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
         if not session or interaction.user.id != session.get('owner_id'): return await interaction.response.send_message("Host only.", ephemeral=True)
         
-        target_index = turn_id - 1
-        history = session.get("turn_history", [])
-        if target_index < 0 or target_index >= len(history): return await interaction.response.send_message("Invalid Turn ID.", ephemeral=True)
-
-        await interaction.response.send_message(f"⏳ **Rewinding to Turn {turn_id}...** (Wiping Future Memory)", ephemeral=True)
-        self._log_debug(interaction.channel.id, "warn", f"Rewind to turn {turn_id} requested.")
+        target_id = turn_id
         
-        deleted_turns, rewind_timestamp = self.memory_manager.trim_history(interaction.channel.id, target_index)
+        history = session.get("turn_history", [])
+        if not history: return await interaction.response.send_message("History empty. Try `/rpg sync` first.", ephemeral=True)
+        
+        exists = any(t.get("turn_id") == target_id for t in history)
+        if not exists:
+             min_id = history[0].get("turn_id", "?")
+             max_id = history[-1].get("turn_id", "?")
+             return await interaction.response.send_message(f"Invalid Turn ID. Available range: {min_id} - {max_id}. (Use `/rpg history` to check)", ephemeral=True)
+
+        await interaction.response.send_message(f"⏳ **Rewinding to Turn {target_id}...** (Wiping Future Memory)", ephemeral=True)
+        self._log_debug(interaction.channel.id, "warn", f"Rewind to turn {target_id} requested.")
+        
+        deleted_turns, rewind_timestamp = self.memory_manager.trim_history(interaction.channel.id, target_id)
         if rewind_timestamp: await self.memory_manager.purge_memories_since(interaction.channel.id, rewind_timestamp)
 
         if deleted_turns:

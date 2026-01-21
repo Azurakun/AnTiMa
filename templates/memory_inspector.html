@@ -179,9 +179,14 @@
             </div>
 
             <div id="view-npcs" class="tab-view hidden fade-in max-w-7xl mx-auto">
-                <h2 class="text-2xl font-bold text-blue-400 mb-6 flex items-center gap-3">
-                     <span class="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20">👥</span> NPC Registry
-                </h2>
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-blue-400 flex items-center gap-3">
+                         <span class="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20">👥</span> NPC Registry
+                    </h2>
+                    <button onclick="openEditNPCModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg transition">
+                        + Add NPC
+                    </button>
+                </div>
                 <div id="container-npcs" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"></div>
             </div>
 
@@ -250,7 +255,7 @@
                 <div><h3 class="text-gray-500 font-bold uppercase text-[10px] mb-2">Description</h3><p id="modal-quest-desc" class="text-gray-300 leading-relaxed text-sm"></p></div>
                 <div class="grid grid-cols-2 gap-4">
                     <div class="bg-card p-3 rounded border border-gray-700"><h3 class="text-blue-400 font-bold uppercase text-[10px] mb-1">Issuer</h3><div id="modal-quest-issuer" class="text-white text-sm"></div></div>
-                    <div class="bg-card p-3 rounded border border-gray-700"><h3 class="text-green-400 font-bold uppercase text-[10px] mb-1">Trigger</h3><div id="modal-quest-trigger" class="text-white text-sm"></div></div>
+                    <div class="bg-card p-3 rounded border border-gray-700"><h3 class="text-green-400 font-bold uppercase text-[10px] mb-1">Completion Condition</h3><div id="modal-quest-trigger" class="text-white text-sm font-mono text-xs"></div></div>
                 </div>
                 <div><h3 class="text-yellow-500 font-bold uppercase text-[10px] mb-2">Rewards</h3><div id="modal-quest-rewards" class="text-yellow-100/80 italic text-sm"></div></div>
             </div>
@@ -264,7 +269,11 @@
                     <h2 id="modal-npc-name" class="text-3xl font-bold text-white">NPC Name</h2>
                     <div id="modal-npc-role" class="text-gray-500 text-xs font-bold uppercase tracking-wider mt-1">Role / Class</div>
                 </div>
-                <button onclick="closeModal('npc-modal')" class="bg-gray-700 hover:bg-gray-600 rounded-full p-2 transition text-gray-300 hover:text-white">✕</button>
+                <div class="flex gap-2">
+                    <button onclick="openEditNPCModal(true)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold">Edit</button>
+                    <button onclick="deleteNPC()" class="bg-red-900/50 hover:bg-red-700 text-red-200 px-3 py-1 rounded text-xs font-bold border border-red-800">Delete</button>
+                    <button onclick="closeModal('npc-modal')" class="bg-gray-700 hover:bg-gray-600 rounded-full p-2 transition text-gray-300 hover:text-white ml-2">✕</button>
+                </div>
             </div>
             
             <div class="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-darkbg">
@@ -294,18 +303,48 @@
         </div>
     </div>
 
+    <div id="npc-form-modal" class="fixed inset-0 bg-black/90 hidden z-[110] flex justify-center items-center backdrop-blur-sm p-4 fade-in" onclick="closeModal('npc-form-modal')">
+        <div class="bg-sidebar w-full max-w-xl rounded-2xl shadow-2xl border border-gray-600 flex flex-col max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
+            <div class="p-4 border-b border-gray-700 bg-gray-800 flex justify-between items-center">
+                <h2 id="npc-form-title" class="text-xl font-bold text-white">Add New NPC</h2>
+                <button onclick="closeModal('npc-form-modal')" class="text-gray-400 hover:text-white">✕</button>
+            </div>
+            <div class="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-4">
+                <input type="hidden" id="edit-original-name">
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Name</label>
+                    <input id="in-name" type="text" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white focus:border-blue-500 outline-none">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div><label class="text-xs font-bold text-gray-500 uppercase block mb-1">Race</label><input id="in-race" type="text" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm"></div>
+                    <div><label class="text-xs font-bold text-gray-500 uppercase block mb-1">Gender</label><input id="in-gender" type="text" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm"></div>
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Summary (Details)</label>
+                    <textarea id="in-details" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-20"></textarea>
+                </div>
+                <div>
+                     <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Appearance</label>
+                     <textarea id="in-app" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-16"></textarea>
+                </div>
+                <div>
+                     <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Personality</label>
+                     <textarea id="in-pers" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-16"></textarea>
+                </div>
+                <button onclick="submitNPCForm()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded font-bold shadow-lg transition mt-4">Save Entity</button>
+            </div>
+        </div>
+    </div>
+
     <script>
         const threadId = "{{ thread_id }}";
         
         // --- CORE NAVIGATION ---
         function switchTab(tabId) {
-            // Update Sidebar UI
             document.querySelectorAll('.nav-item').forEach(el => {
                 if(el.id === 'nav-logs') {
-                    // Logs tab has special green styling
                     el.className = "nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-green-400 hover:bg-green-900/20 text-sm font-mono font-bold border border-transparent hover:border-green-800 transition-all";
                 } else {
-                    // Standard styling
                     el.className = "nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all";
                 }
             });
@@ -316,15 +355,11 @@
             } else {
                  btn.className = "nav-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 bg-discord text-white text-sm font-bold shadow-md transition-all";
             }
-
-            // Show View
             document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
             document.getElementById(`view-${tabId}`).classList.remove('hidden');
         }
 
-        function closeModal(id) {
-            document.getElementById(id).classList.add('hidden');
-        }
+        function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
         // --- DATA CONTAINERS ---
         let npcDatabase = {};
@@ -333,11 +368,9 @@
         // --- TERMINAL LOGIC ---
         function renderTerminalLine(log) {
             const div = document.createElement('div');
-            // Log colors based on level
             let levelColor = "text-gray-500";
             let msgColor = "text-gray-300";
             let prefix = "INFO";
-
             if (log.level === 'warn') { levelColor = "text-yellow-500"; msgColor = "text-yellow-100"; prefix = "WARN"; }
             if (log.level === 'error') { levelColor = "text-red-500 font-bold"; msgColor = "text-red-300"; prefix = "ERR "; }
             if (log.level === 'system') { levelColor = "text-blue-400"; msgColor = "text-blue-200"; prefix = "SYS "; }
@@ -349,18 +382,11 @@
                 <span class="${levelColor} shrink-0 font-mono font-bold">${prefix}</span>
                 <span class="${msgColor} font-mono truncate">${log.message}</span>
             `;
-            
-            // Interaction
             div.onclick = () => {
-                const viewer = document.getElementById('json-viewer');
-                // Highlight syntax roughly
-                const jsonStr = JSON.stringify(log.details || {}, null, 2);
-                viewer.innerText = jsonStr;
-                // Add border highlight to active line
+                document.getElementById('json-viewer').innerText = JSON.stringify(log.details || {}, null, 2);
                 document.querySelectorAll('.log-entry').forEach(e => e.classList.remove('bg-white/5', 'border-gray-500'));
                 div.classList.add('bg-white/5', 'border-gray-500');
             };
-            
             return div;
         }
 
@@ -369,23 +395,11 @@
                 const res = await fetch(`/api/rpg/debug/${threadId}`);
                 if(!res.ok) return;
                 const logs = await res.json();
-                
                 const container = document.getElementById('terminal-output');
                 container.innerHTML = ""; 
-                
-                logs.forEach(log => {
-                    container.appendChild(renderTerminalLine(log));
-                });
-                
-                // Keep scrolled to bottom if close
-                const termWrap = document.getElementById('terminal-container');
-                // termWrap.scrollTop = termWrap.scrollHeight; 
-
-            } catch (e) { console.error("Terminal Fetch Error", e); }
-            
-            // Update clock
-            const now = new Date();
-            document.getElementById('terminal-clock').innerText = now.toLocaleTimeString('en-US', {hour12: false});
+                logs.forEach(log => container.appendChild(renderTerminalLine(log)));
+            } catch (e) { console.error(e); }
+            document.getElementById('terminal-clock').innerText = new Date().toLocaleTimeString('en-US', {hour12: false});
         }
 
         // --- MAIN DATA SYNC ---
@@ -393,32 +407,27 @@
             try {
                 const res = await fetch(`/api/rpg/memory/${threadId}`);
                 const data = await res.json();
-                
                 if (data.error) {
-                    console.error("Session Error:", data.error);
                     document.getElementById('connection-status').innerHTML = `<span class="text-red-400">Disconnected</span>`;
                     return;
                 }
-
                 document.getElementById('connection-status').innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span> <span class="text-green-400">Online</span>`;
-                
-                // Set Export Link
                 document.getElementById('export-btn').href = `/api/rpg/export/${threadId}`;
-
-                // Meta
                 document.getElementById('meta-title').innerText = data.meta.title || "Untitled Adventure";
                 document.getElementById('stat-turns').innerText = data.meta.turn_count;
                 document.getElementById('stat-npcs').innerText = data.npcs.length;
                 document.getElementById('stat-quests').innerText = data.quests.filter(q => q.status === 'active').length;
                 document.getElementById('stat-locs').innerText = data.locations.length;
                 
+                const env = data.environment || {};
                 document.getElementById('sidebar-meta').innerHTML = `
                     <div class="flex justify-between"><span>Host</span> <span class="text-white">${data.meta.owner}</span></div>
                     <div class="flex justify-between"><span>Scenario</span> <span class="text-white truncate w-24 text-right">${data.meta.scenario}</span></div>
-                    <div class="flex justify-between"><span>Clock</span> <span class="text-green-400">${new Date().toLocaleTimeString()}</span></div>
+                    <div class="border-t border-gray-700 my-2"></div>
+                    <div class="flex justify-between text-yellow-500 font-bold"><span>Story Time</span> <span>${env.time || 'Day'}</span></div>
+                    <div class="flex justify-between text-blue-400"><span>Weather</span> <span>${env.weather || 'Clear'}</span></div>
                 `;
 
-                // Overview Party
                 document.getElementById('overview-party').innerHTML = Object.values(data.players).map(p => `
                     <div class="flex items-center justify-between bg-black/30 p-3 rounded-lg border border-gray-700">
                         <div class="flex items-center gap-3">
@@ -435,7 +444,6 @@
                     </div>
                 `).join('');
 
-                // Overview Quests
                 const topQuests = data.quests.filter(q => q.status === 'active').slice(0, 3);
                 document.getElementById('overview-quests').innerHTML = topQuests.map(q => `
                     <div class="group flex items-center gap-3 cursor-pointer hover:bg-white/5 p-2 rounded-lg transition" onclick="switchTab('quests')">
@@ -447,7 +455,6 @@
                     </div>
                 `).join('') || '<div class="text-gray-600 text-sm italic py-2">No active quests.</div>';
 
-                // --- TAB RENDERING ---
                 data.quests.forEach(q => questDatabase[q.name] = q);
                 renderQuestList('container-quests-active', data.quests.filter(q => q.status === 'active'), 'orange');
                 renderQuestList('container-quests-completed', data.quests.filter(q => q.status !== 'active'), 'green');
@@ -458,12 +465,10 @@
                 renderGrid('container-locations', data.locations, 'emerald');
                 renderEventList('container-events', data.events);
 
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
 
-        // --- RENDER HELPERS ---
+        // --- RENDERERS ---
         function renderQuestList(id, items, color) {
             const el = document.getElementById(id);
             if (!items.length) { el.innerHTML = `<div class="p-6 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600 text-sm">Nothing to report.</div>`; return; }
@@ -477,7 +482,6 @@
                 </div>
             `).join('');
         }
-
         function renderEventList(id, items) {
              const el = document.getElementById(id);
              if (!items.length) { el.innerHTML = `<div class="p-6 text-center text-gray-600 text-sm italic">Timeline empty.</div>`; return; }
@@ -491,7 +495,6 @@
                 </div>
              `).join('');
         }
-
         function renderNPCGrid(id, items, color) {
             const el = document.getElementById(id);
             if (!items.length) { el.innerHTML = `<div class="col-span-full p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">No data found.</div>`; return; }
@@ -514,7 +517,6 @@
                 </div>
             `}).join('');
         }
-
         function renderGrid(id, items, color) {
              const el = document.getElementById(id);
              if (!items.length) { el.innerHTML = `<div class="col-span-full p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">No data.</div>`; return; }
@@ -526,7 +528,73 @@
              `).join('');
         }
 
-        // --- MODAL POPULATION HELPERS ---
+        // --- NPC MANAGEMENT ---
+        function openEditNPCModal(isEdit=false) {
+            document.getElementById('npc-modal').classList.add('hidden');
+            document.getElementById('npc-form-modal').classList.remove('hidden');
+            
+            if(isEdit) {
+                const name = document.getElementById('modal-npc-name').innerText;
+                const npc = npcDatabase[name];
+                document.getElementById('npc-form-title').innerText = "Edit NPC: " + name;
+                document.getElementById('edit-original-name').value = name;
+                document.getElementById('in-name').value = npc.name;
+                document.getElementById('in-race').value = npc.attributes.race || "";
+                document.getElementById('in-gender').value = npc.attributes.gender || "";
+                document.getElementById('in-details').value = npc.details || "";
+                document.getElementById('in-app').value = npc.attributes.appearance || "";
+                document.getElementById('in-pers').value = npc.attributes.personality || "";
+            } else {
+                document.getElementById('npc-form-title').innerText = "Add New NPC";
+                document.getElementById('edit-original-name').value = "";
+                // Clear fields
+                ['in-name','in-race','in-gender','in-details','in-app','in-pers'].forEach(id => document.getElementById(id).value = "");
+            }
+        }
+
+        async function submitNPCForm() {
+            const originalName = document.getElementById('edit-original-name').value;
+            const action = originalName ? 'edit' : 'add';
+            
+            const payload = {
+                thread_id: threadId,
+                action: action,
+                original_name: originalName || null,
+                data: {
+                    name: document.getElementById('in-name').value,
+                    details: document.getElementById('in-details').value,
+                    status: "active",
+                    attributes: {
+                        race: document.getElementById('in-race').value,
+                        gender: document.getElementById('in-gender').value,
+                        appearance: document.getElementById('in-app').value,
+                        personality: document.getElementById('in-pers').value
+                    }
+                }
+            };
+
+            await fetch('/api/rpg/manage/npc', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            
+            closeModal('npc-form-modal');
+            loadData();
+        }
+
+        async function deleteNPC() {
+            const name = document.getElementById('modal-npc-name').innerText;
+            if(!confirm(`Delete ${name} permanently?`)) return;
+            
+            await fetch('/api/rpg/manage/npc', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({thread_id: threadId, action: 'delete', original_name: name})
+            });
+            closeModal('npc-modal');
+            loadData();
+        }
+
+        // --- DETAILS POPULATION ---
         function openQuestModal(name) {
             const q = questDatabase[name];
             if(!q) return;
@@ -536,7 +604,8 @@
             document.getElementById('modal-quest-status').innerText = q.status;
             document.getElementById('modal-quest-status').className = q.status === 'active' ? "text-xs font-bold uppercase tracking-wider mt-1 text-green-400" : "text-xs font-bold uppercase tracking-wider mt-1 text-gray-500";
             document.getElementById('modal-quest-issuer').innerText = attrs.issuer || "Unknown";
-            document.getElementById('modal-quest-trigger').innerText = attrs.completion_condition || attrs.trigger || "Unknown";
+            // [UPDATED] Show Trigger
+            document.getElementById('modal-quest-trigger').innerText = attrs.completion_condition || attrs.trigger || "Check Quest Log";
             document.getElementById('modal-quest-rewards').innerText = attrs.rewards || "None";
             document.getElementById('quest-modal').classList.remove('hidden');
         }
@@ -550,18 +619,15 @@
             document.getElementById('modal-npc-age').innerText = attrs.age || "?";
             document.getElementById('modal-npc-gender').innerText = attrs.gender || "?";
             document.getElementById('modal-npc-race').innerText = attrs.race || "?";
-            
             const stateEl = document.getElementById('modal-npc-state');
             stateEl.innerText = attrs.state || "Alive";
             stateEl.className = attrs.state?.toLowerCase() === 'dead' ? "font-bold text-red-500" : "font-bold text-green-400";
             document.getElementById('modal-npc-condition').innerText = attrs.condition || "Healthy";
-
             document.getElementById('modal-npc-app').innerText = attrs.appearance || "No description.";
             document.getElementById('modal-npc-personality').innerText = attrs.personality || "No personality data.";
             document.getElementById('modal-npc-rel').innerText = attrs.relationships || attrs.relationship || "Neutral";
             document.getElementById('modal-npc-backstory').innerText = attrs.bio || attrs.backstory || "No history.";
-
-            // Aliases
+            
             const aliasCont = document.getElementById('modal-npc-aliases-container');
             const aliasList = document.getElementById('modal-npc-aliases');
             aliasList.innerHTML = "";
@@ -571,16 +637,13 @@
                     aliasList.innerHTML += `<span class="bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded text-xs border border-indigo-700/50">${a}</span>`;
                 });
             } else { aliasCont.classList.add('hidden'); }
-
             document.getElementById('npc-modal').classList.remove('hidden');
         }
 
-        // --- INIT ---
         loadData();
         updateTerminal();
         setInterval(loadData, 5000);
-        setInterval(updateTerminal, 2500); // Polling logs every 2.5s
-
+        setInterval(updateTerminal, 2500); 
     </script>
 </body>
 </html>

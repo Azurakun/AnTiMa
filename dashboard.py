@@ -73,6 +73,13 @@ class ActionRequest(BaseModel):
     reason: str | None = "Action requested via Dashboard"
     setting_value: int | str | None = None 
 
+# [NEW] NPC Management Models
+class ManageNPCRequest(BaseModel):
+    thread_id: str
+    action: str  # 'add', 'edit', 'delete'
+    original_name: str | None = None # For identifying which NPC to edit/delete
+    data: dict | None = None # For new/updated data
+
 # --- HELPER FUNCTIONS ---
 
 def serialize_persona(persona):
@@ -123,6 +130,10 @@ def fetch_rpg_full_memory(thread_id: str):
                 items.append(serialize_world_entity(val))
         return items
 
+    env = world_state.get("environment", {})
+    if "last_updated" in env and isinstance(env["last_updated"], datetime):
+        env["last_updated"] = env["last_updated"].isoformat()
+
     return {
         "meta": {
             "title": session.get("title"),
@@ -131,6 +142,7 @@ def fetch_rpg_full_memory(thread_id: str):
             "turn_count": len(session.get("turn_history", [])),
             "owner": session.get("owner_name", "Unknown")
         },
+        "environment": env, 
         "players": session.get("player_stats", {}),
         "quests": process_category("quests"),
         "npcs": process_category("npcs"),
@@ -408,6 +420,59 @@ async def get_rpg_debug(thread_id: str):
     try:
         data = await run_sync_db(fetch_rpg_debug_logs, thread_id)
         return JSONResponse(data)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# [NEW] NPC MANAGEMENT API
+@app.post("/api/rpg/manage/npc")
+async def manage_npc(req: ManageNPCRequest):
+    """
+    Directly modifies the World State to Add, Edit, or Delete NPCs.
+    This simulates the tool 'update_world_entity' but from the dashboard.
+    """
+    try:
+        tid = int(req.thread_id)
+        if req.action == "delete":
+            if not req.original_name: return JSONResponse({"error": "Missing original_name"}, status_code=400)
+            key_name = req.original_name.strip().replace('.', '_').replace('$', '')
+            
+            # Using $unset to remove the key entirely
+            await run_sync_db(lambda: rpg_world_state_collection.update_one(
+                {"thread_id": tid},
+                {"$unset": {f"npcs.{key_name}": ""}}
+            ))
+            return JSONResponse({"status": "deleted", "name": req.original_name})
+
+        elif req.action in ["add", "edit"]:
+            if not req.data or "name" not in req.data: return JSONResponse({"error": "Missing data or name"}, status_code=400)
+            
+            name = req.data["name"].strip()
+            safe_name = name.replace('.', '_').replace('$', '')
+            key = f"npcs.{safe_name}"
+
+            # If renaming (Edit mode where name changed), delete old key first
+            if req.action == "edit" and req.original_name and req.original_name != name:
+                old_key = req.original_name.strip().replace('.', '_').replace('$', '')
+                await run_sync_db(lambda: rpg_world_state_collection.update_one(
+                    {"thread_id": tid}, {"$unset": {f"npcs.{old_key}": ""}}
+                ))
+
+            # Construct the payload similar to tools.py
+            update_payload = {
+                "name": name,
+                "details": req.data.get("details", ""),
+                "status": req.data.get("status", "active"),
+                "last_updated": datetime.utcnow(),
+                "attributes": req.data.get("attributes", {})
+            }
+
+            await run_sync_db(lambda: rpg_world_state_collection.update_one(
+                {"thread_id": tid},
+                {"$set": {key: update_payload}},
+                upsert=True
+            ))
+            return JSONResponse({"status": "updated", "name": name})
+            
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

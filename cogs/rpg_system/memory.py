@@ -2,6 +2,7 @@
 import discord
 from datetime import datetime
 import math
+import asyncio
 import re
 from utils.db import (
     rpg_sessions_collection, 
@@ -27,16 +28,28 @@ class RPGContextManager:
         return dot_product / (magnitude1 * magnitude2)
 
     async def _get_embedding(self, text):
-        try:
-            result = await genai.embed_content_async(
-                model=self.embed_model,
-                content=text,
-                task_type="retrieval_document"
-            )
-            return result['embedding']
-        except Exception as e:
-            print(f"Embedding Error: {e}")
-            return None
+        # [FIXED] Retry Logic for 504/Deadline Errors
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Ensure text isn't too huge for a single embedding vector
+                clean_text = str(text)[:9000] 
+                
+                result = await genai.embed_content_async(
+                    model=self.embed_model,
+                    content=clean_text,
+                    task_type="retrieval_document"
+                )
+                return result['embedding']
+            except Exception as e:
+                err_str = str(e)
+                if "504" in err_str or "Deadline" in err_str or "503" in err_str:
+                    print(f"⚠️ Embedding Timeout (Attempt {attempt+1}/{max_retries}). Retrying...")
+                    await asyncio.sleep(2 * (attempt + 1)) # Wait 2s, then 4s, etc.
+                else:
+                    print(f"❌ Embedding Fatal Error: {e}")
+                    return None
+        return None
 
     async def store_memory(self, thread_id, text, metadata=None):
         vector = await self._get_embedding(text)
@@ -54,7 +67,6 @@ class RPGContextManager:
         rpg_vector_memory_collection.delete_many({"thread_id": int(thread_id)})
 
     async def purge_memories_since(self, thread_id, cutoff_timestamp):
-        """Deletes vector memories created AFTER the rewind point."""
         rpg_vector_memory_collection.delete_many({
             "thread_id": int(thread_id),
             "timestamp": {"$gt": cutoff_timestamp}
@@ -111,31 +123,17 @@ class RPGContextManager:
         )
 
     async def snapshot_world_state(self, thread_id, turn_id):
-        """
-        Captures the current World State (Hard Memory) and saves it into the Turn History.
-        This allows for perfect rewinds/rerolls.
-        """
-        # 1. Fetch World State (NPCs, Locations, Quests)
         world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)})
         if not world_data: return
-
-        # Clean _id for storage
         snapshot = {k: v for k, v in world_data.items() if k != "_id"}
-        
-        # 2. Update the specific turn in history with this snapshot
-        # We target the last element, assuming this runs right after save_turn
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id), "turn_history.turn_id": turn_id},
             {"$set": {"turn_history.$.world_snapshot": snapshot}}
         )
 
     def restore_world_state(self, thread_id, snapshot):
-        """Overwrites the active World State with a historical snapshot."""
         if not snapshot: return
-        # Ensure thread_id is preserved/set correctly
         snapshot["thread_id"] = int(thread_id)
-        
-        # Upsert (Replace entire document)
         rpg_world_state_collection.replace_one(
             {"thread_id": int(thread_id)},
             snapshot,
@@ -182,19 +180,33 @@ class RPGContextManager:
         
         debug_snapshot = {"active_quests": [], "active_locs": [], "active_npcs": [], "recalled_npcs": []}
 
-        # 1. OBJECTIVES
+        # 0. ENVIRONMENT (NUMERIC TIME)
+        env = data.get("environment", {})
+        time_str = env.get("time", "08:00") # Default to 8 AM
+        weather_str = env.get("weather", "Clear")
+        env_text = f"**🕰️ TIME:** {time_str} | **Weather:** {weather_str}\n"
+
+        # 1. PENDING ACTIONS / STORY LOG (NEW)
+        # Filters for 'pending' status to keep context clean
+        logs = data.get("story_log", [])
+        active_logs = [l for l in logs if l.get("status") == "pending"]
+        log_text = ""
+        if active_logs:
+            log_text = "**📝 PENDING ACTIONS / ORDERS:**\n" + "".join([f"> 📌 {l['note']}\n" for l in active_logs]) + "\n"
+
+        # 2. OBJECTIVES
         quests = data.get("quests", {})
         active_quests = [v for v in quests.values() if v.get("status") == "active"]
-        quest_text = "**🛡️ ACTIVE OBJECTIVES:**\n" + "".join([f"> 🔸 **{q['name']}**: {q['details']}\n" for q in active_quests]) if active_quests else "**🛡️ OBJECTIVES:** None active.\n"
+        quest_text = "**🛡️ ACTIVE QUESTS:**\n" + "".join([f"> 🔸 **{q['name']}**: {q['details']}\n" for q in active_quests]) if active_quests else ""
         debug_snapshot["active_quests"] = [q['name'] for q in active_quests]
 
-        # 2. LOCATIONS
+        # 3. LOCATIONS
         locations = data.get("locations", {})
         active_locs = [v for v in locations.values() if v.get("status") == "active"]
         loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_locs]) if active_locs else ""
         debug_snapshot["active_locs"] = [l['name'] for l in active_locs]
 
-        # 3. NPC REGISTRY
+        # 4. NPC REGISTRY
         npcs = data.get("npcs", {})
         active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
         
@@ -222,40 +234,55 @@ class RPGContextManager:
         
         npc_text = "**👥 NPC REGISTRY (CONTEXT):**\n" + "\n".join(npc_list) if npc_list else "**👥 NPC REGISTRY:** None in scene."
 
-        # 4. EVENTS
+        # 5. EVENTS
         events = data.get("events", {})
         event_list = list(events.values())[-5:] 
         event_text = "**📅 KEY EVENTS (MEMORY):**\n" + "".join([f"> 🔹 {e['name']}: {e['details']}\n" for e in event_list]) if event_list else ""
 
-        return f"{quest_text}\n{loc_text}\n{npc_text}\n{event_text}", debug_snapshot
+        return f"{env_text}{log_text}{quest_text}\n{loc_text}\n{npc_text}\n{event_text}", debug_snapshot
 
-    async def build_context_block(self, session_data, current_user_input):
+    async def build_context_block(self, session_data, current_user_input, logger=None):
         thread_id = session_data['thread_id']
         owner_id = session_data.get('owner_id')
         local_time_str = get_local_time(owner_id, fmt="%Y-%m-%d %H:%M %Z") if owner_id else "Unknown Date"
         
+        if logger: logger(thread_id, "system", "Building Memory Context...")
+
         lore = session_data.get("lore", "Standard Fantasy Setting")
         player_context = self._format_player_profiles(session_data)
         world_sheet, world_debug = self._format_world_sheet(thread_id, current_user_input)
         
         history = session_data.get("turn_history", [])
         text_log = []
-        for turn in history[-30:]: 
+        last_idx = len(history) - 1
+        start_idx = max(0, last_idx - 30)
+        
+        for i in range(start_idx, len(history)):
+            turn = history[i]
+            is_latest = (i == last_idx)
+            tag = " <--- [CURRENT MOMENT]" if is_latest else ""
             text_log.append(f"[{turn['user_name']}]: {turn['input']}")
-            text_log.append(f"[DM]: {turn['output']}")
+            text_log.append(f"[DM]: {turn['output']}{tag}")
+            
         recent_history = "\n\n".join(text_log)
 
+        if logger: logger(thread_id, "system", "Retrieving Vector Memories...")
         rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
         memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No deep archives found."
+        
+        if logger and rag_memories: logger(thread_id, "system", f"Found {len(rag_memories)} relevant memories.")
+
+        def escape(s):
+            return str(s).replace("{", "{{").replace("}", "}}")
 
         context = prompts.CONTEXT_BLOCK.format(
-            time=local_time_str,
-            scenario=session_data.get('scenario_type', 'Unknown'),
-            lore=lore,
-            player_context=player_context,
-            world_sheet=world_sheet,
-            recent_history=recent_history,
-            memory_text=memory_text
+            time=escape(local_time_str),
+            scenario=escape(session_data.get('scenario_type', 'Unknown')),
+            lore=escape(lore),
+            player_context=escape(player_context),
+            world_sheet=escape(world_sheet),
+            recent_history=escape(recent_history),
+            memory_text=escape(memory_text)
         )
         
         debug_data = {
@@ -277,61 +304,52 @@ class RPGContextManager:
         except: return "🧠 Mem: Calc Error"
         
     def delete_last_turn(self, thread_id):
-        """Used for Reroll. Deletes last turn AND restores state to the previous one."""
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
         if not session or "turn_history" not in session: return
-        
         history = session["turn_history"]
         if not history: return
-
-        # 1. Pop the last turn
         rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {
             "$pop": {"turn_history": 1},
             "$inc": {"total_turns": -1}
         })
-        
-        # 2. Get the NEW last turn (the one before the deleted one)
         new_last_turn = history[-2] if len(history) >= 2 else None
-        
-        # 3. Restore State
         if new_last_turn and "world_snapshot" in new_last_turn:
             self.restore_world_state(thread_id, new_last_turn["world_snapshot"])
         elif not new_last_turn:
-             # Reset if no turns left
              rpg_world_state_collection.update_one(
                  {"thread_id": int(thread_id)},
-                 {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}}}
+                 {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}, "environment": {}}}
              )
 
-    def trim_history(self, thread_id, target_index):
-        """Rewinds history to a specific index AND restores state."""
+    def trim_history(self, thread_id, target_turn_id):
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
         if not session or "turn_history" not in session: return [], None
-        
         full_history = session["turn_history"]
-        if target_index < 0: target_index = 0
-        if target_index >= len(full_history): return [], None
         
-        new_history = full_history[:target_index+1] 
-        deleted_turns = full_history[target_index+1:]
+        split_index = -1
+        for idx, turn in enumerate(full_history):
+            if turn.get("turn_id") == target_turn_id:
+                split_index = idx
+                break
         
+        if split_index == -1: return [], None
+
+        new_history = full_history[:split_index+1] 
+        deleted_turns = full_history[split_index+1:]
         last_kept_turn = new_history[-1] if new_history else None
         rewind_timestamp = last_kept_turn["timestamp"] if last_kept_turn else datetime.min
         
-        # 1. Update DB history
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id)}, 
-            {"$set": {"turn_history": new_history}}
+            {"$set": {"turn_history": new_history, "total_turns": target_turn_id}}
         )
 
-        # 2. Restore State from Snapshot
         if last_kept_turn and "world_snapshot" in last_kept_turn:
             self.restore_world_state(thread_id, last_kept_turn["world_snapshot"])
         elif not last_kept_turn:
-            # Full wipe
             rpg_world_state_collection.update_one(
                  {"thread_id": int(thread_id)},
-                 {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}}}
+                 {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}, "environment": {}}}
              )
         
         return deleted_turns, rewind_timestamp

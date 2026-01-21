@@ -1,6 +1,6 @@
 # cogs/rpg_system/tools.py
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 from utils.db import rpg_sessions_collection, rpg_inventory_collection, rpg_world_state_collection
 
 def grant_item_to_player(user_id: str, item_name: str, description: str):
@@ -15,7 +15,6 @@ def grant_item_to_player(user_id: str, item_name: str, description: str):
     except Exception as e: return f"System Error: {e}"
 
 def update_player_stats(thread_id: str, user_id: str, hp_change: int, mp_change: int):
-    """Updates HP/MP in the active session."""
     try:
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
         if not session: return "Error: Session not found."
@@ -44,51 +43,109 @@ def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: st
     total = roll + modifier
     return f"Rolled {roll} + {modifier} ({stat_label}) = {total} vs DC {difficulty}"
 
-def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None):
+def update_environment(thread_id: str, time_str: str, weather: str, minutes_passed: int = 0):
     """
-    Updates the World Sheet.
-    Merges attributes and handles Alias accumulation properly.
+    Updates the in-game Time (HH:MM) and Weather.
+    'minutes_passed': Optional auto-advance. If provided, calculates new time based on old time.
+    'time_str': Specific time string (e.g. "14:30"). If "Auto", relies on minutes_passed.
     """
     try:
-        # Standardize key generation to prevent "Arthur " vs "Arthur"
+        data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}) or {}
+        env = data.get("environment", {})
+        current_time_str = env.get("time", "08:00")
+
+        final_time = time_str
+        
+        # Auto-calculate time advancement
+        if minutes_passed > 0:
+            try:
+                # Parse current time (handle HH:MM)
+                if ":" in current_time_str:
+                    curr_h, curr_m = map(int, current_time_str.split(":"))
+                else:
+                    curr_h, curr_m = 8, 0 # Default fallback
+                
+                # Add minutes
+                total_minutes = (curr_h * 60) + curr_m + minutes_passed
+                new_h = (total_minutes // 60) % 24
+                new_m = total_minutes % 60
+                final_time = f"{new_h:02d}:{new_m:02d}"
+            except:
+                pass # Fallback to provided time_str if parse fails
+
+        if final_time == "Auto" or not final_time:
+            final_time = current_time_str
+
+        rpg_world_state_collection.update_one(
+            {"thread_id": int(thread_id)},
+            {"$set": {
+                "environment.time": final_time,
+                "environment.weather": weather,
+                "environment.last_updated": datetime.utcnow()
+            }},
+            upsert=True
+        )
+        return f"System: Clock updated to {final_time}, Weather: {weather}."
+    except Exception as e: return f"System Error: {e}"
+
+def manage_story_log(thread_id: str, action: str, note: str, status: str = "pending"):
+    """
+    Records important details, orders given to NPCs, or promises.
+    action: 'add', 'resolve', 'update'
+    note: The detail (e.g., "Ordered Akiyama to protect Tanaka family")
+    """
+    try:
+        if action == "add":
+            log_entry = {
+                "id": str(random.randint(1000, 9999)),
+                "note": note,
+                "status": "pending",
+                "timestamp": datetime.utcnow()
+            }
+            rpg_world_state_collection.update_one(
+                {"thread_id": int(thread_id)},
+                {"$push": {"story_log": log_entry}},
+                upsert=True
+            )
+            return f"System: Note recorded: '{note}'"
+        
+        elif action == "resolve":
+            # Marks a note as completed/irrelevant based on partial match
+            rpg_world_state_collection.update_one(
+                {"thread_id": int(thread_id), "story_log.note": {"$regex": note, "$options": "i"}},
+                {"$set": {"story_log.$.status": "resolved"}}
+            )
+            return f"System: Resolved note matching '{note}'."
+            
+        return "System: Invalid Action"
+    except Exception as e: return f"System Error: {e}"
+
+def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None):
+    try:
         safe_name = name.strip().replace('.', '_').replace('$', '')
         key = f"{category.lower()}s.{safe_name}" 
         
-        # 1. Fetch existing data to merge attributes safely
-        existing_doc = rpg_world_state_collection.find_one(
-            {"thread_id": int(thread_id)}, 
-            {key: 1}
-        )
-        
+        existing_doc = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}, {key: 1})
         existing_attrs = {}
         
         if existing_doc and category.lower() + "s" in existing_doc:
             cat_dict = existing_doc[category.lower() + "s"]
             if safe_name in cat_dict:
-                entity_data = cat_dict[safe_name]
-                existing_attrs = entity_data.get("attributes", {})
+                existing_attrs = cat_dict[safe_name].get("attributes", {})
 
-        # 2. Merge Attributes with Special Logic for Aliases
         new_attributes = existing_attrs.copy()
         if attributes:
-            # If aliases are present, we want to UNION them, not overwrite
             if "aliases" in attributes:
                 new_aliases = attributes.get("aliases", [])
-                if isinstance(new_aliases, str): new_aliases = [new_aliases] # Safety check
-                
+                if isinstance(new_aliases, str): new_aliases = [new_aliases]
                 current_aliases = existing_attrs.get("aliases", [])
-                # Combine and remove duplicates (Set logic), then sort for consistency
                 combined_aliases = sorted(list(set(current_aliases + new_aliases)))
                 attributes["aliases"] = combined_aliases
-
             new_attributes.update(attributes)
 
         update_payload = {
-            "name": name.strip(), 
-            "details": details,
-            "status": status,
-            "last_updated": datetime.utcnow(),
-            "attributes": new_attributes 
+            "name": name.strip(), "details": details, "status": status,
+            "last_updated": datetime.utcnow(), "attributes": new_attributes 
         }
 
         rpg_world_state_collection.update_one(
@@ -103,8 +160,7 @@ def update_journal(thread_id: str, log_entry: str):
     try:
         entry = f"[{datetime.utcnow().strftime('%H:%M')}] {log_entry}"
         rpg_sessions_collection.update_one(
-            {"thread_id": int(thread_id)}, 
-            {"$push": {"campaign_log": entry}}
+            {"thread_id": int(thread_id)}, {"$push": {"campaign_log": entry}}
         )
         return "System: Journal updated."
     except Exception as e: return f"System Error: {e}"
