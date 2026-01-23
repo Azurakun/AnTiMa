@@ -47,6 +47,9 @@
         /* Terminal Specifics */
         .terminal-text { font-family: 'Fira Code', monospace; }
         .log-entry:hover { background-color: rgba(255, 255, 255, 0.05); }
+
+        .edit-btn { @apply opacity-0 group-hover:opacity-100 transition px-2 py-1 text-[10px] bg-blue-600 rounded hover:bg-blue-500 text-white font-bold ml-2; }
+        .delete-btn { @apply opacity-0 group-hover:opacity-100 transition px-2 py-1 text-[10px] bg-red-600 rounded hover:bg-red-500 text-white font-bold ml-1; }
     </style>
 </head>
 <body class="bg-darkbg text-gray-100 font-sans h-screen flex flex-col overflow-hidden selection:bg-discord selection:text-white">
@@ -74,6 +77,9 @@
                     </button>
                     <button onclick="switchTab('quests')" id="nav-quests" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all">
                         <span>🛡️</span> Quests
+                    </button>
+                    <button onclick="switchTab('story-log')" id="nav-story-log" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all">
+                        <span>📝</span> Story Log
                     </button>
                     <button onclick="switchTab('events')" id="nav-events" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all">
                         <span>📅</span> Events
@@ -157,17 +163,36 @@
             </div>
 
             <div id="view-quests" class="tab-view hidden fade-in max-w-6xl mx-auto space-y-8">
-                <div>
-                    <h2 class="text-2xl font-bold text-orange-400 mb-4 flex items-center gap-3">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-2xl font-bold text-orange-400 flex items-center gap-3">
                         <span class="bg-orange-500/10 p-2 rounded-lg border border-orange-500/20 text-xl">🛡️</span> Active Objectives
                     </h2>
-                    <div id="container-quests-active" class="grid gap-4"></div>
+                    <button onclick="openEntityForm('quest')" class="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1.5 rounded text-sm font-bold shadow">+ Add Quest</button>
                 </div>
+                <div id="container-quests-active" class="grid gap-4"></div>
                 <div class="opacity-70 hover:opacity-100 transition-opacity">
                     <h2 class="text-xl font-bold text-green-400 mb-4 flex items-center gap-3">
                         <span class="bg-green-500/10 p-2 rounded-lg border border-green-500/20 text-lg">✅</span> Completed Log
                     </h2>
                     <div id="container-quests-completed" class="grid gap-4"></div>
+                </div>
+            </div>
+
+            <div id="view-story-log" class="tab-view hidden fade-in max-w-6xl mx-auto space-y-8">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-2xl font-bold text-yellow-400 flex items-center gap-3">
+                        <span class="bg-yellow-500/10 p-2 rounded-lg border border-yellow-500/20 text-xl">📌</span> Pending Directives
+                    </h2>
+                    <button onclick="openLogForm()" class="bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded text-sm font-bold shadow">+ Add Note</button>
+                </div>
+                <p class="text-gray-400 text-sm mb-4">Active orders, promises, or tasks the AI is currently tracking.</p>
+                <div id="container-story-pending" class="grid gap-4"></div>
+                <div class="opacity-70 hover:opacity-100 transition-opacity mt-8">
+                    <h2 class="text-xl font-bold text-blue-400 mb-4 flex items-center gap-3">
+                        <span class="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20 text-lg">🗃️</span> Resolved History
+                    </h2>
+                    <p class="text-gray-500 text-xs mb-4">Completed or fulfilled directives.</p>
+                    <div id="container-story-resolved" class="space-y-3"></div>
                 </div>
             </div>
 
@@ -183,7 +208,7 @@
                     <h2 class="text-2xl font-bold text-blue-400 flex items-center gap-3">
                          <span class="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20">👥</span> NPC Registry
                     </h2>
-                    <button onclick="openEditNPCModal()" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg transition">
+                    <button onclick="openEntityForm('npc')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg transition">
                         + Add NPC
                     </button>
                 </div>
@@ -191,9 +216,12 @@
             </div>
 
             <div id="view-locations" class="tab-view hidden fade-in max-w-6xl mx-auto">
-                <h2 class="text-2xl font-bold text-emerald-400 mb-6 flex items-center gap-3">
-                    <span class="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">📍</span> World Map
-                </h2>
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-2xl font-bold text-emerald-400 flex items-center gap-3">
+                        <span class="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">📍</span> World Map
+                    </h2>
+                    <button onclick="openEntityForm('location')" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded text-sm font-bold shadow">+ Add Location</button>
+                </div>
                 <div id="container-locations" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
             </div>
 
@@ -270,8 +298,8 @@
                     <div id="modal-npc-role" class="text-gray-500 text-xs font-bold uppercase tracking-wider mt-1">Role / Class</div>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="openEditNPCModal(true)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold">Edit</button>
-                    <button onclick="deleteNPC()" class="bg-red-900/50 hover:bg-red-700 text-red-200 px-3 py-1 rounded text-xs font-bold border border-red-800">Delete</button>
+                    <button onclick="openEntityForm('npc', document.getElementById('modal-npc-name').innerText)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold">Edit</button>
+                    <button onclick="deleteEntity('npc', document.getElementById('modal-npc-name').innerText)" class="bg-red-900/50 hover:bg-red-700 text-red-200 px-3 py-1 rounded text-xs font-bold border border-red-800">Delete</button>
                     <button onclick="closeModal('npc-modal')" class="bg-gray-700 hover:bg-gray-600 rounded-full p-2 transition text-gray-300 hover:text-white ml-2">✕</button>
                 </div>
             </div>
@@ -303,43 +331,69 @@
         </div>
     </div>
 
-    <div id="npc-form-modal" class="fixed inset-0 bg-black/90 hidden z-[110] flex justify-center items-center backdrop-blur-sm p-4 fade-in" onclick="closeModal('npc-form-modal')">
+    <div id="entity-form-modal" class="fixed inset-0 bg-black/90 hidden z-[110] flex justify-center items-center backdrop-blur-sm p-4 fade-in" onclick="closeModal('entity-form-modal')">
         <div class="bg-sidebar w-full max-w-xl rounded-2xl shadow-2xl border border-gray-600 flex flex-col max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
             <div class="p-4 border-b border-gray-700 bg-gray-800 flex justify-between items-center">
-                <h2 id="npc-form-title" class="text-xl font-bold text-white">Add New NPC</h2>
-                <button onclick="closeModal('npc-form-modal')" class="text-gray-400 hover:text-white">✕</button>
+                <h2 id="entity-form-title" class="text-xl font-bold text-white">Manage Entity</h2>
+                <button onclick="closeModal('entity-form-modal')" class="text-gray-400 hover:text-white">✕</button>
             </div>
             <div class="p-6 overflow-y-auto custom-scrollbar flex-1 space-y-4">
-                <input type="hidden" id="edit-original-name">
+                <input type="hidden" id="ent-original-name">
+                <input type="hidden" id="ent-category">
                 <div>
                     <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Name</label>
-                    <input id="in-name" type="text" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white focus:border-blue-500 outline-none">
-                </div>
-                <div class="grid grid-cols-2 gap-4">
-                    <div><label class="text-xs font-bold text-gray-500 uppercase block mb-1">Race</label><input id="in-race" type="text" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm"></div>
-                    <div><label class="text-xs font-bold text-gray-500 uppercase block mb-1">Gender</label><input id="in-gender" type="text" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm"></div>
+                    <input id="ent-name" type="text" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white focus:border-blue-500 outline-none">
                 </div>
                 <div>
-                    <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Summary (Details)</label>
-                    <textarea id="in-details" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-20"></textarea>
+                    <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Status</label>
+                    <select id="ent-status" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm">
+                        <option value="active">Active</option>
+                        <option value="completed">Completed (Quest)</option>
+                        <option value="background">Background</option>
+                    </select>
                 </div>
                 <div>
-                     <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Appearance</label>
-                     <textarea id="in-app" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-16"></textarea>
+                    <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Details / Description</label>
+                    <textarea id="ent-details" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-32"></textarea>
+                </div>
+                
+                <div id="ent-attrs-container" class="space-y-4 pt-2 border-t border-gray-700"></div>
+
+                <button onclick="submitEntityForm()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded font-bold shadow-lg transition mt-4">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="log-form-modal" class="fixed inset-0 bg-black/90 hidden z-[110] flex justify-center items-center backdrop-blur-sm p-4 fade-in" onclick="closeModal('log-form-modal')">
+        <div class="bg-sidebar w-full max-w-md rounded-2xl shadow-2xl border border-gray-600 flex flex-col overflow-hidden" onclick="event.stopPropagation()">
+            <div class="p-4 border-b border-gray-700 bg-gray-800 flex justify-between items-center">
+                <h2 class="text-xl font-bold text-white">Story Log Entry</h2>
+                <button onclick="closeModal('log-form-modal')" class="text-gray-400 hover:text-white">✕</button>
+            </div>
+            <div class="p-6 space-y-4">
+                <input type="hidden" id="log-id">
+                <div>
+                    <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Note</label>
+                    <textarea id="log-note" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-24"></textarea>
                 </div>
                 <div>
-                     <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Personality</label>
-                     <textarea id="in-pers" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-16"></textarea>
+                    <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Status</label>
+                    <select id="log-status" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm">
+                        <option value="pending">Pending</option>
+                        <option value="resolved">Resolved</option>
+                    </select>
                 </div>
-                <button onclick="submitNPCForm()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded font-bold shadow-lg transition mt-4">Save Entity</button>
+                <button onclick="submitLogForm()" class="w-full bg-yellow-600 hover:bg-yellow-500 text-white py-2 rounded font-bold shadow-lg transition">Save Entry</button>
             </div>
         </div>
     </div>
 
     <script>
         const threadId = "{{ thread_id }}";
-        
-        // --- CORE NAVIGATION ---
+        let npcDatabase = {};
+        let questDatabase = {};
+        let locationDatabase = {};
+
         function switchTab(tabId) {
             document.querySelectorAll('.nav-item').forEach(el => {
                 if(el.id === 'nav-logs') {
@@ -361,11 +415,6 @@
 
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
-        // --- DATA CONTAINERS ---
-        let npcDatabase = {};
-        let questDatabase = {};
-
-        // --- TERMINAL LOGIC ---
         function renderTerminalLine(log) {
             const div = document.createElement('div');
             let levelColor = "text-gray-500";
@@ -428,6 +477,50 @@
                     <div class="flex justify-between text-blue-400"><span>Weather</span> <span>${env.weather || 'Clear'}</span></div>
                 `;
 
+                // Render Story Logs
+                const storyLog = data.story_log || [];
+                const pendingActions = storyLog.filter(l => l.status === 'pending');
+                const resolvedActions = storyLog.filter(l => l.status !== 'pending');
+                
+                const pendingContainer = document.getElementById('container-story-pending');
+                if (pendingActions.length > 0) {
+                    pendingContainer.innerHTML = pendingActions.map(item => `
+                        <div class="flex items-start gap-4 bg-card p-4 rounded-xl border border-gray-700 shadow-md group relative">
+                             <div class="absolute top-2 right-2 flex">
+                                <button onclick="openLogForm('${item.id}', '${item.note.replace(/'/g, "\\'")}', '${item.status}')" class="edit-btn">EDIT</button>
+                                <button onclick="deleteLog('${item.id}')" class="delete-btn">DEL</button>
+                             </div>
+                             <div class="mt-1 text-2xl animate-pulse">📌</div>
+                             <div class="flex-1">
+                                 <h4 class="font-bold text-yellow-400 text-sm uppercase tracking-wide">Action Required</h4>
+                                 <p class="text-gray-200 mt-1 leading-relaxed">${item.note}</p>
+                                 <div class="text-[10px] text-gray-500 font-mono mt-2 bg-black/20 inline-block px-2 py-0.5 rounded">ID: ${item.id} | ${item.timestamp ? item.timestamp.split('T')[0] + ' ' + item.timestamp.split('T')[1].substring(0,5) : 'Unknown Time'}</div>
+                             </div>
+                        </div>
+                    `).join('');
+                } else {
+                    pendingContainer.innerHTML = `<div class="p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">No pending directives.</div>`;
+                }
+
+                const resolvedContainer = document.getElementById('container-story-resolved');
+                if (resolvedActions.length > 0) {
+                    resolvedContainer.innerHTML = resolvedActions.map(item => `
+                        <div class="flex items-start gap-3 opacity-60 hover:opacity-100 transition p-3 rounded border border-transparent hover:border-gray-700 hover:bg-white/5 group relative">
+                             <div class="absolute top-2 right-2 flex">
+                                <button onclick="openLogForm('${item.id}', '${item.note.replace(/'/g, "\\'")}', '${item.status}')" class="edit-btn">EDIT</button>
+                                <button onclick="deleteLog('${item.id}')" class="delete-btn">DEL</button>
+                             </div>
+                             <div class="mt-0.5 text-green-500 text-sm">✅</div>
+                             <div>
+                                 <p class="text-gray-400 text-sm line-through decoration-gray-600 decoration-2">${item.note}</p>
+                                 <div class="text-[10px] text-gray-600 font-mono mt-0.5">${item.timestamp ? item.timestamp.split('T')[0] : ''}</div>
+                             </div>
+                        </div>
+                    `).join('');
+                } else {
+                    resolvedContainer.innerHTML = `<div class="text-center text-gray-600 text-xs italic py-4">History is clear.</div>`;
+                }
+
                 document.getElementById('overview-party').innerHTML = Object.values(data.players).map(p => `
                     <div class="flex items-center justify-between bg-black/30 p-3 rounded-lg border border-gray-700">
                         <div class="flex items-center gap-3">
@@ -455,14 +548,20 @@
                     </div>
                 `).join('') || '<div class="text-gray-600 text-sm italic py-2">No active quests.</div>';
 
+                // Populate Databases
+                questDatabase = {};
                 data.quests.forEach(q => questDatabase[q.name] = q);
                 renderQuestList('container-quests-active', data.quests.filter(q => q.status === 'active'), 'orange');
                 renderQuestList('container-quests-completed', data.quests.filter(q => q.status !== 'active'), 'green');
                 
+                npcDatabase = {};
                 data.npcs.forEach(n => npcDatabase[n.name] = n);
                 renderNPCGrid('container-npcs', data.npcs, 'blue');
                 
-                renderGrid('container-locations', data.locations, 'emerald');
+                locationDatabase = {};
+                data.locations.forEach(l => locationDatabase[l.name] = l);
+                renderGrid('container-locations', data.locations, 'emerald', 'location');
+                
                 renderEventList('container-events', data.events);
 
             } catch (e) { console.error(e); }
@@ -473,9 +572,13 @@
             const el = document.getElementById(id);
             if (!items.length) { el.innerHTML = `<div class="p-6 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600 text-sm">Nothing to report.</div>`; return; }
             el.innerHTML = items.map(item => `
-                <div onclick="openQuestModal('${item.name}')" class="bg-card p-5 rounded-xl border border-gray-700 hover:border-${color}-500/50 transition cursor-pointer group shadow-sm">
-                    <div class="flex justify-between items-start mb-2">
-                        <h4 class="font-bold text-gray-100 text-lg group-hover:text-${color}-400 transition">${item.name}</h4>
+                <div class="bg-card p-5 rounded-xl border border-gray-700 hover:border-${color}-500/50 transition group shadow-sm relative">
+                    <div class="absolute top-4 right-4 flex">
+                        <button onclick="openEntityForm('quest', '${item.name}')" class="edit-btn">EDIT</button>
+                        <button onclick="deleteEntity('quest', '${item.name}')" class="delete-btn">DEL</button>
+                    </div>
+                    <div class="flex justify-between items-start mb-2" onclick="openQuestModal('${item.name}')">
+                        <h4 class="font-bold text-gray-100 text-lg group-hover:text-${color}-400 transition cursor-pointer">${item.name}</h4>
                         <span class="text-xs font-mono text-gray-600">${item.last_updated ? item.last_updated.split('T')[0] : ''}</span>
                     </div>
                     <div class="text-gray-400 text-sm line-clamp-2">${item.details}</div>
@@ -488,7 +591,10 @@
              el.innerHTML = items.map(item => `
                 <div class="relative pl-6 pb-6 border-l-2 border-gray-700 last:border-0 last:pb-0">
                     <div class="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-gray-800 border-2 border-yellow-500"></div>
-                    <div class="bg-card p-4 rounded-lg border border-gray-700 shadow-sm">
+                    <div class="bg-card p-4 rounded-lg border border-gray-700 shadow-sm group relative">
+                        <div class="absolute top-2 right-2 flex">
+                            <button onclick="deleteEntity('event', '${item.name}')" class="delete-btn">DEL</button>
+                        </div>
                         <h4 class="font-bold text-yellow-400 text-sm mb-1">${item.name}</h4>
                         <p class="text-gray-400 text-xs leading-relaxed">${item.details}</p>
                     </div>
@@ -517,80 +623,162 @@
                 </div>
             `}).join('');
         }
-        function renderGrid(id, items, color) {
+        function renderGrid(id, items, color, type) {
              const el = document.getElementById(id);
              if (!items.length) { el.innerHTML = `<div class="col-span-full p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">No data.</div>`; return; }
              el.innerHTML = items.map(item => `
-                <div class="bg-card p-5 rounded-xl border border-gray-700 hover:border-${color}-500/50 transition">
+                <div class="bg-card p-5 rounded-xl border border-gray-700 hover:border-${color}-500/50 transition group relative">
+                    <div class="absolute top-4 right-4 flex">
+                        <button onclick="openEntityForm('${type}', '${item.name}')" class="edit-btn">EDIT</button>
+                        <button onclick="deleteEntity('${type}', '${item.name}')" class="delete-btn">DEL</button>
+                    </div>
                     <h4 class="font-bold text-white text-lg mb-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-${color}-500"></span> ${item.name}</h4>
                     <p class="text-gray-400 text-sm h-20 overflow-y-auto custom-scrollbar">${item.details}</p>
                 </div>
              `).join('');
         }
 
-        // --- NPC MANAGEMENT ---
-        function openEditNPCModal(isEdit=false) {
-            document.getElementById('npc-modal').classList.add('hidden');
-            document.getElementById('npc-form-modal').classList.remove('hidden');
+        // --- GENERIC ENTITY MANAGEMENT ---
+        function openEntityForm(category, name=null) {
+            document.getElementById('ent-category').value = category;
+            document.getElementById('ent-attrs-container').innerHTML = "";
+            const modal = document.getElementById('entity-form-modal');
             
-            if(isEdit) {
-                const name = document.getElementById('modal-npc-name').innerText;
-                const npc = npcDatabase[name];
-                document.getElementById('npc-form-title').innerText = "Edit NPC: " + name;
-                document.getElementById('edit-original-name').value = name;
-                document.getElementById('in-name').value = npc.name;
-                document.getElementById('in-race').value = npc.attributes.race || "";
-                document.getElementById('in-gender').value = npc.attributes.gender || "";
-                document.getElementById('in-details').value = npc.details || "";
-                document.getElementById('in-app').value = npc.attributes.appearance || "";
-                document.getElementById('in-pers').value = npc.attributes.personality || "";
+            if (name) {
+                let data = null;
+                if(category === 'quest') data = questDatabase[name];
+                else if(category === 'npc') data = npcDatabase[name];
+                else if(category === 'location') data = locationDatabase[name];
+                
+                document.getElementById('entity-form-title').innerText = `Edit ${category.toUpperCase()}`;
+                document.getElementById('ent-original-name').value = name;
+                document.getElementById('ent-name').value = data?.name || name;
+                document.getElementById('ent-details').value = data?.details || "";
+                document.getElementById('ent-status').value = data?.status || "active";
+
+                const attrs = data?.attributes || {};
+                
+                // Specific fields per category
+                if(category === 'quest') {
+                    addAttrField('Issuer', attrs.issuer);
+                    addAttrField('Rewards', attrs.rewards);
+                    addAttrField('Trigger', attrs.trigger || attrs.completion_condition);
+                } else if(category === 'location') {
+                    addAttrField('Region', attrs.region);
+                } else if(category === 'npc') {
+                    addAttrField('Race', attrs.race);
+                    addAttrField('Gender', attrs.gender);
+                    addAttrField('Age', attrs.age);
+                    addAttrField('Role', attrs.role);
+                    addAttrField('State', attrs.state);
+                    addAttrField('Condition', attrs.condition);
+                    addAttrField('Appearance', attrs.appearance);
+                    addAttrField('Personality', attrs.personality);
+                    addAttrField('Relationships', attrs.relationships);
+                    addAttrField('Backstory', attrs.backstory || attrs.bio);
+                }
             } else {
-                document.getElementById('npc-form-title').innerText = "Add New NPC";
-                document.getElementById('edit-original-name').value = "";
-                // Clear fields
-                ['in-name','in-race','in-gender','in-details','in-app','in-pers'].forEach(id => document.getElementById(id).value = "");
+                document.getElementById('entity-form-title').innerText = `Add New ${category.toUpperCase()}`;
+                document.getElementById('ent-original-name').value = "";
+                document.getElementById('ent-name').value = "";
+                document.getElementById('ent-details').value = "";
+                document.getElementById('ent-status').value = "active";
+                
+                // Default fields for new additions
+                if(category === 'npc') {
+                    ['Race', 'Gender', 'Age', 'Role', 'State', 'Condition', 'Appearance', 'Personality', 'Relationships', 'Backstory'].forEach(f => addAttrField(f, ''));
+                } else if (category === 'quest') {
+                    ['Issuer', 'Rewards', 'Trigger'].forEach(f => addAttrField(f, ''));
+                }
             }
+            
+            modal.classList.remove('hidden');
         }
 
-        async function submitNPCForm() {
-            const originalName = document.getElementById('edit-original-name').value;
+        function addAttrField(label, value) {
+            const div = document.createElement('div');
+            // If text is long, use textarea for better UX
+            let inputField = `<input type="text" data-key="${label.toLowerCase()}" class="ent-attr-input w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm" value="${value || ''}">`;
+            
+            if (['Appearance', 'Personality', 'Backstory', 'Relationships'].includes(label)) {
+                inputField = `<textarea data-key="${label.toLowerCase()}" class="ent-attr-input w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-16">${value || ''}</textarea>`;
+            }
+
+            div.innerHTML = `<label class="text-xs font-bold text-gray-500 uppercase block mb-1">${label}</label>${inputField}`;
+            document.getElementById('ent-attrs-container').appendChild(div);
+        }
+
+        async function submitEntityForm() {
+            const cat = document.getElementById('ent-category').value;
+            const originalName = document.getElementById('ent-original-name').value;
             const action = originalName ? 'edit' : 'add';
             
+            const attrs = {};
+            document.querySelectorAll('.ent-attr-input').forEach(el => {
+                if(el.value) attrs[el.dataset.key] = el.value;
+            });
+
             const payload = {
                 thread_id: threadId,
+                category: cat,
                 action: action,
                 original_name: originalName || null,
                 data: {
-                    name: document.getElementById('in-name').value,
-                    details: document.getElementById('in-details').value,
-                    status: "active",
-                    attributes: {
-                        race: document.getElementById('in-race').value,
-                        gender: document.getElementById('in-gender').value,
-                        appearance: document.getElementById('in-app').value,
-                        personality: document.getElementById('in-pers').value
-                    }
+                    name: document.getElementById('ent-name').value,
+                    details: document.getElementById('ent-details').value,
+                    status: document.getElementById('ent-status').value,
+                    attributes: attrs
                 }
             };
 
-            await fetch('/api/rpg/manage/npc', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload)
+            await fetch('/api/rpg/manage/entity', {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
             });
-            
-            closeModal('npc-form-modal');
+            closeModal('entity-form-modal');
             loadData();
         }
 
-        async function deleteNPC() {
-            const name = document.getElementById('modal-npc-name').innerText;
-            if(!confirm(`Delete ${name} permanently?`)) return;
-            
-            await fetch('/api/rpg/manage/npc', {
+        async function deleteEntity(category, name) {
+            if(!confirm(`Delete this ${category}?`)) return;
+            await fetch('/api/rpg/manage/entity', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({thread_id: threadId, action: 'delete', original_name: name})
+                body: JSON.stringify({thread_id: threadId, category: category, action: 'delete', original_name: name})
             });
-            closeModal('npc-modal');
+            loadData();
+        }
+
+        // --- STORY LOG MANAGEMENT ---
+        function openLogForm(id=null, note=null, status='pending') {
+            document.getElementById('log-id').value = id || "";
+            document.getElementById('log-note').value = note || "";
+            document.getElementById('log-status').value = status;
+            document.getElementById('log-form-modal').classList.remove('hidden');
+        }
+
+        async function submitLogForm() {
+            const id = document.getElementById('log-id').value;
+            const action = id ? 'edit' : 'add';
+            
+            await fetch('/api/rpg/manage/log', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    thread_id: threadId,
+                    action: action,
+                    log_id: id || null,
+                    note: document.getElementById('log-note').value,
+                    status: document.getElementById('log-status').value
+                })
+            });
+            closeModal('log-form-modal');
+            loadData();
+        }
+
+        async function deleteLog(id) {
+            if(!confirm("Delete log entry?")) return;
+            await fetch('/api/rpg/manage/log', {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({thread_id: threadId, action: 'delete', log_id: id})
+            });
             loadData();
         }
 
@@ -604,7 +792,6 @@
             document.getElementById('modal-quest-status').innerText = q.status;
             document.getElementById('modal-quest-status').className = q.status === 'active' ? "text-xs font-bold uppercase tracking-wider mt-1 text-green-400" : "text-xs font-bold uppercase tracking-wider mt-1 text-gray-500";
             document.getElementById('modal-quest-issuer').innerText = attrs.issuer || "Unknown";
-            // [UPDATED] Show Trigger
             document.getElementById('modal-quest-trigger').innerText = attrs.completion_condition || attrs.trigger || "Check Quest Log";
             document.getElementById('modal-quest-rewards').innerText = attrs.rewards || "None";
             document.getElementById('quest-modal').classList.remove('hidden');
@@ -639,6 +826,9 @@
             } else { aliasCont.classList.add('hidden'); }
             document.getElementById('npc-modal').classList.remove('hidden');
         }
+
+        // --- NPC MANAGEMENT (DEPRECATED - MERGED INTO GENERIC) ---
+        // The buttons now call openEntityForm('npc') instead.
 
         loadData();
         updateTerminal();

@@ -28,13 +28,10 @@ class RPGContextManager:
         return dot_product / (magnitude1 * magnitude2)
 
     async def _get_embedding(self, text):
-        # [FIXED] Retry Logic for 504/Deadline Errors
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # Ensure text isn't too huge for a single embedding vector
                 clean_text = str(text)[:9000] 
-                
                 result = await genai.embed_content_async(
                     model=self.embed_model,
                     content=clean_text,
@@ -44,10 +41,8 @@ class RPGContextManager:
             except Exception as e:
                 err_str = str(e)
                 if "504" in err_str or "Deadline" in err_str or "503" in err_str:
-                    print(f"⚠️ Embedding Timeout (Attempt {attempt+1}/{max_retries}). Retrying...")
-                    await asyncio.sleep(2 * (attempt + 1)) # Wait 2s, then 4s, etc.
+                    await asyncio.sleep(2 * (attempt + 1)) 
                 else:
-                    print(f"❌ Embedding Fatal Error: {e}")
                     return None
         return None
 
@@ -182,12 +177,11 @@ class RPGContextManager:
 
         # 0. ENVIRONMENT (NUMERIC TIME)
         env = data.get("environment", {})
-        time_str = env.get("time", "08:00") # Default to 8 AM
+        time_str = env.get("time", "08:00")
         weather_str = env.get("weather", "Clear")
         env_text = f"**🕰️ TIME:** {time_str} | **Weather:** {weather_str}\n"
 
         # 1. PENDING ACTIONS / STORY LOG (NEW)
-        # Filters for 'pending' status to keep context clean
         logs = data.get("story_log", [])
         active_logs = [l for l in logs if l.get("status") == "pending"]
         log_text = ""

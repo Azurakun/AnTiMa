@@ -91,7 +91,7 @@ def update_environment(thread_id: str, time_str: str, weather: str, minutes_pass
 def manage_story_log(thread_id: str, action: str, note: str, status: str = "pending"):
     """
     Records important details, orders given to NPCs, or promises.
-    action: 'add', 'resolve', 'update'
+    action: 'add', 'resolve'
     note: The detail (e.g., "Ordered Akiyama to protect Tanaka family")
     """
     try:
@@ -122,17 +122,52 @@ def manage_story_log(thread_id: str, action: str, note: str, status: str = "pend
 
 def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None):
     try:
+        # 1. Smart Deduplication Logic
         safe_name = name.strip().replace('.', '_').replace('$', '')
-        key = f"{category.lower()}s.{safe_name}" 
+        key_to_use = safe_name
+        final_name = name.strip()
         
-        existing_doc = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}, {key: 1})
-        existing_attrs = {}
+        # Only perform deep search for NPCs to avoid duplicates like "Akiyama" vs "Akiyama Hana"
+        if category.lower() == "npc":
+            existing_doc = rpg_world_state_collection.find_one({"thread_id": int(thread_id)})
+            if existing_doc and "npcs" in existing_doc:
+                for existing_key, existing_data in existing_doc["npcs"].items():
+                    # Exact key match
+                    if existing_key == safe_name:
+                        key_to_use = existing_key; break
+                    
+                    # Alias match
+                    existing_aliases = existing_data.get("attributes", {}).get("aliases", [])
+                    if name.strip() in existing_aliases:
+                        key_to_use = existing_key; final_name = existing_data["name"]; break
+                    
+                    # Substring match (if name length > 4 chars)
+                    existing_real_name = existing_data.get("name", "")
+                    if len(name) > 4 and (name in existing_real_name or existing_real_name in name):
+                         key_to_use = existing_key
+                         # Prefer the longer name generally
+                         if len(existing_real_name) > len(name): final_name = existing_real_name
+                         break
+
+        db_key = f"{category.lower()}s.{key_to_use}"
         
+        # 2. Detail Preservation & Attribute Merging
+        existing_doc = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}, {db_key: 1})
+        existing_data = {}
         if existing_doc and category.lower() + "s" in existing_doc:
             cat_dict = existing_doc[category.lower() + "s"]
-            if safe_name in cat_dict:
-                existing_attrs = cat_dict[safe_name].get("attributes", {})
+            if key_to_use in cat_dict:
+                existing_data = cat_dict[key_to_use]
 
+        # LOGIC: If existing details are "high quality" (long) and new details are "low quality" (short),
+        # keep the old details. But always update status and attributes.
+        existing_details = existing_data.get("details", "")
+        final_details = details
+        
+        if len(existing_details) > 50 and len(details) < 20:
+            final_details = existing_details # Preserve old, better description
+
+        existing_attrs = existing_data.get("attributes", {})
         new_attributes = existing_attrs.copy()
         if attributes:
             if "aliases" in attributes:
@@ -144,16 +179,19 @@ def update_world_entity(thread_id: str, category: str, name: str, details: str, 
             new_attributes.update(attributes)
 
         update_payload = {
-            "name": name.strip(), "details": details, "status": status,
-            "last_updated": datetime.utcnow(), "attributes": new_attributes 
+            "name": final_name, 
+            "details": final_details, 
+            "status": status,
+            "last_updated": datetime.utcnow(), 
+            "attributes": new_attributes 
         }
 
         rpg_world_state_collection.update_one(
             {"thread_id": int(thread_id)},
-            {"$set": {key: update_payload}},
+            {"$set": {db_key: update_payload}},
             upsert=True
         )
-        return f"System: Updated {category} '{name}'."
+        return f"System: Updated {category} '{final_name}' (Key: {key_to_use})."
     except Exception as e: return f"System Error: {e}"
 
 def update_journal(thread_id: str, log_entry: str):

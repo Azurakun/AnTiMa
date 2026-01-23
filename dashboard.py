@@ -10,6 +10,7 @@ import sys
 import os
 import functools
 import uuid
+import random
 from datetime import datetime
 from utils.db import (
     stats_collection, 
@@ -73,12 +74,19 @@ class ActionRequest(BaseModel):
     reason: str | None = "Action requested via Dashboard"
     setting_value: int | str | None = None 
 
-# [NEW] NPC Management Models
-class ManageNPCRequest(BaseModel):
+class ManageEntityRequest(BaseModel):
     thread_id: str
+    category: str # 'npc', 'quest', 'location', 'event'
     action: str  # 'add', 'edit', 'delete'
-    original_name: str | None = None # For identifying which NPC to edit/delete
-    data: dict | None = None # For new/updated data
+    original_name: str | None = None 
+    data: dict | None = None 
+
+class ManageLogRequest(BaseModel):
+    thread_id: str
+    action: str # 'add', 'edit', 'delete', 'resolve'
+    log_id: str | None = None
+    note: str | None = None
+    status: str | None = "pending"
 
 # --- HELPER FUNCTIONS ---
 
@@ -99,7 +107,6 @@ def serialize_world_entity(entity):
 def fetch_rpg_debug_logs(thread_id: str):
     """Fetches specific debug logs for the command prompt UI."""
     logs = list(db.rpg_debug_terminal.find({"thread_id": str(thread_id)}).sort("timestamp", -1).limit(50))
-    # Reverse to show chronological order in terminal
     logs.reverse()
     return [{
         "time": l["timestamp"].strftime("%H:%M:%S"),
@@ -134,6 +141,13 @@ def fetch_rpg_full_memory(thread_id: str):
     if "last_updated" in env and isinstance(env["last_updated"], datetime):
         env["last_updated"] = env["last_updated"].isoformat()
 
+    raw_logs = world_state.get("story_log", [])
+    for l in raw_logs:
+        if isinstance(l.get("timestamp"), datetime):
+            l["timestamp"] = l["timestamp"].isoformat()
+    
+    raw_logs.sort(key=lambda x: (x.get("status") != "pending", x.get("timestamp", "")), reverse=False)
+
     return {
         "meta": {
             "title": session.get("title"),
@@ -149,6 +163,7 @@ def fetch_rpg_full_memory(thread_id: str):
         "locations": process_category("locations"),
         "events": process_category("events"),
         "campaign_log": session.get("campaign_log", [])[-50:], 
+        "story_log": raw_logs,
         "memories": clean_vectors
     }
 
@@ -163,7 +178,6 @@ def generate_campaign_document(thread_id: str):
     separator = "=" * 60
     sub_separator = "-" * 40
 
-    # --- HEADER ---
     doc.append(separator)
     doc.append(f"CAMPAIGN CHRONICLE: {session.get('title', 'Untitled Adventure')}")
     doc.append(separator)
@@ -173,14 +187,12 @@ def generate_campaign_document(thread_id: str):
     doc.append(f"Status: {'Active' if session.get('active') else 'Concluded'}")
     doc.append("")
     
-    # --- LORE ---
     doc.append(separator)
     doc.append("SETTING & LORE")
     doc.append(separator)
     doc.append(session.get("lore", "No specific lore recorded."))
     doc.append("")
 
-    # --- PLAYERS ---
     doc.append(separator)
     doc.append("PARTY ROSTER")
     doc.append(separator)
@@ -197,7 +209,6 @@ def generate_campaign_document(thread_id: str):
             doc.append(sub_separator)
     doc.append("")
 
-    # --- WORLD STATE: QUESTS ---
     doc.append(separator)
     doc.append("QUEST LOG")
     doc.append(separator)
@@ -214,7 +225,6 @@ def generate_campaign_document(thread_id: str):
             if attrs.get("issuer"): doc.append(f"Issuer: {attrs.get('issuer')}")
             doc.append("")
 
-    # --- WORLD STATE: NPCS ---
     doc.append(separator)
     doc.append("NPC REGISTRY")
     doc.append(separator)
@@ -233,7 +243,6 @@ def generate_campaign_document(thread_id: str):
             doc.append(f"Summary: {n.get('details')}")
             doc.append(sub_separator)
 
-    # --- WORLD STATE: LOCATIONS & EVENTS ---
     doc.append(separator)
     doc.append("LOCATIONS & EVENTS")
     doc.append(separator)
@@ -250,13 +259,11 @@ def generate_campaign_document(thread_id: str):
             doc.append(f"• {e.get('name')}: {e.get('details')}")
     doc.append("")
 
-    # --- STORY CHRONICLE ---
     doc.append(separator)
     doc.append("THE CHRONICLE (FULL NARRATIVE)")
     doc.append(separator)
     doc.append("Note: Reconstructed from active turns and archived memory banks.\n")
 
-    # 1. Fetch Archived History (Stored in Vectors)
     archives = list(rpg_vector_memory_collection.find({
         "thread_id": tid, 
         "metadata.type": {"$in": ["archived_history", "historical_sync"]}
@@ -264,11 +271,9 @@ def generate_campaign_document(thread_id: str):
 
     for arc in archives:
         text = arc.get("text", "")
-        # Basic cleanup if stored with metadata headers inside text
         doc.append(text)
         doc.append("\n" + sub_separator + "\n")
 
-    # 2. Fetch Active Turn History
     active_history = session.get("turn_history", [])
     for turn in active_history:
         timestamp = turn.get("timestamp")
@@ -416,48 +421,52 @@ async def get_rpg_memory(thread_id: str):
 
 @app.get("/api/rpg/debug/{thread_id}")
 async def get_rpg_debug(thread_id: str):
-    """API Endpoint for the Command Prompt Interface."""
     try:
         data = await run_sync_db(fetch_rpg_debug_logs, thread_id)
         return JSONResponse(data)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
-# [NEW] NPC MANAGEMENT API
-@app.post("/api/rpg/manage/npc")
-async def manage_npc(req: ManageNPCRequest):
-    """
-    Directly modifies the World State to Add, Edit, or Delete NPCs.
-    This simulates the tool 'update_world_entity' but from the dashboard.
-    """
+# [NEW] GENERIC ENTITY MANAGEMENT API
+@app.post("/api/rpg/manage/entity")
+async def manage_entity(req: ManageEntityRequest):
     try:
         tid = int(req.thread_id)
-        if req.action == "delete":
-            if not req.original_name: return JSONResponse({"error": "Missing original_name"}, status_code=400)
-            key_name = req.original_name.strip().replace('.', '_').replace('$', '')
+        category_map = {
+            "npc": "npcs",
+            "quest": "quests",
+            "location": "locations",
+            "event": "events"
+        }
+        
+        if req.category not in category_map:
+            return JSONResponse({"error": "Invalid category"}, status_code=400)
             
-            # Using $unset to remove the key entirely
+        collection_key = category_map[req.category]
+
+        if req.action == "delete":
+            if not req.original_name: return JSONResponse({"error": "Missing name"}, status_code=400)
+            key_name = req.original_name.strip().replace('.', '_').replace('$', '')
             await run_sync_db(lambda: rpg_world_state_collection.update_one(
                 {"thread_id": tid},
-                {"$unset": {f"npcs.{key_name}": ""}}
+                {"$unset": {f"{collection_key}.{key_name}": ""}}
             ))
-            return JSONResponse({"status": "deleted", "name": req.original_name})
+            return JSONResponse({"status": "deleted"})
 
         elif req.action in ["add", "edit"]:
-            if not req.data or "name" not in req.data: return JSONResponse({"error": "Missing data or name"}, status_code=400)
+            if not req.data or "name" not in req.data: return JSONResponse({"error": "Missing data"}, status_code=400)
             
             name = req.data["name"].strip()
             safe_name = name.replace('.', '_').replace('$', '')
-            key = f"npcs.{safe_name}"
+            key = f"{collection_key}.{safe_name}"
 
-            # If renaming (Edit mode where name changed), delete old key first
             if req.action == "edit" and req.original_name and req.original_name != name:
                 old_key = req.original_name.strip().replace('.', '_').replace('$', '')
                 await run_sync_db(lambda: rpg_world_state_collection.update_one(
-                    {"thread_id": tid}, {"$unset": {f"npcs.{old_key}": ""}}
+                    {"thread_id": tid}, {"$unset": {f"{collection_key}.{old_key}": ""}}
                 ))
 
-            # Construct the payload similar to tools.py
+            # Default structure for any entity
             update_payload = {
                 "name": name,
                 "details": req.data.get("details", ""),
@@ -472,6 +481,43 @@ async def manage_npc(req: ManageNPCRequest):
                 upsert=True
             ))
             return JSONResponse({"status": "updated", "name": name})
+            
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+# [NEW] STORY LOG MANAGEMENT API
+@app.post("/api/rpg/manage/log")
+async def manage_log(req: ManageLogRequest):
+    try:
+        tid = int(req.thread_id)
+        if req.action == "add":
+            if not req.note: return JSONResponse({"error": "Missing note"}, status_code=400)
+            entry = {
+                "id": str(random.randint(10000, 99999)),
+                "note": req.note,
+                "status": req.status or "pending",
+                "timestamp": datetime.utcnow()
+            }
+            await run_sync_db(lambda: rpg_world_state_collection.update_one(
+                {"thread_id": tid}, {"$push": {"story_log": entry}}, upsert=True
+            ))
+            return JSONResponse({"status": "added"})
+
+        elif req.action == "edit":
+            if not req.log_id: return JSONResponse({"error": "Missing ID"}, status_code=400)
+            await run_sync_db(lambda: rpg_world_state_collection.update_one(
+                {"thread_id": tid, "story_log.id": req.log_id},
+                {"$set": {"story_log.$.note": req.note, "story_log.$.status": req.status}}
+            ))
+            return JSONResponse({"status": "updated"})
+
+        elif req.action == "delete":
+            if not req.log_id: return JSONResponse({"error": "Missing ID"}, status_code=400)
+            await run_sync_db(lambda: rpg_world_state_collection.update_one(
+                {"thread_id": tid},
+                {"$pull": {"story_log": {"id": req.log_id}}}
+            ))
+            return JSONResponse({"status": "deleted"})
             
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

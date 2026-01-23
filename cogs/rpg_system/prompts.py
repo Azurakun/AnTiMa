@@ -30,27 +30,53 @@ SYSTEM_PRIME = """SYSTEM: BOOTING DUNGEON MASTER CORE.
 
 # --- 2. SCRIBE (Background Entity Extraction) ---
 SCRIBE_ANALYSIS = """SYSTEM: You are the WORLD SCRIBE. Extract structured data.
-**INSTRUCTION:** Extract **EVERY** Entity (NPC, Location, Quest) and **Environmental Change**.
 
-**NEW: STORY LOGGING (CRITICAL)**
-If the user issues an **ORDER**, makes a **PROMISE**, or requests an **ITEM**:
-- Call `manage_story_log` with action='add'.
-- Example: "User told Akiyama to make credit cards" -> note="Akiyama: Make 4 discreet credit cards".
+**KNOWN REGISTRY (CHECK FOR MATCHES FIRST):**
+{known_entities}
 
-**TIME TRACKING:**
-- Determine how much time passed in the narrative (in minutes).
-- Call `update_environment` with `minutes_passed=X`.
+**INSTRUCTION:** Extract Entities (NPC, Location, Quest) and Story Logs.
+**CRITICAL:** You must find **EVERY SINGLE NPC** mentioned in the text, even minor ones. Do not summarize. If 20 NPCs are mentioned, you must call the function 20 times.
 
-**MANDATORY NPC SCHEMA (Do not deviate):**
-1. **`details`**: Summary.
-2. **`attributes`** (Fill ALL fields): 
-   - **`race`**, **`gender`**, **`condition`** ('Alive'/'Dead'), **`state`**, **`appearance`**, **`personality`**, **`backstory`**, **`relationships`**, **`age`**.
+**DEDUPLICATION RULE:** - If a name in the text is a variation of a name in the **KNOWN REGISTRY** (e.g., "Akiyama" matches "Akiyama Hana"), YOU MUST USE THE EXISTING NAME.
+- **UPDATE** existing entries with new details found in this narrative. Do not create duplicates.
+
+**NEW: STORY LOGGING**
+1. **NEW ORDERS:** If user issues an ORDER, PROMISE, or FUTURE INTENT: Call `manage_story_log` (action='add').
+2. **COMPLETIONS:** If an order is FULFILLED or a task finished: Call `manage_story_log` (action='resolve').
+
+**MANDATORY NPC SCHEMA (INFER MISSING DATA):**
+1. **`details`**: A concise summary of their current action/role in this scene.
+2. **`attributes`**:
+   - **`age`**: **INFER IT.** If text says "teen", output "16". If "child", "10". If "elder", "70". If unknown, make an educated guess based on role/behavior.
+   - **`appearance`**: Extract physical descriptors (e.g., "Chestnut hair, red-rimmed eyes"). **DO NOT leave empty.**
+   - **`personality`**: Infer from dialogue/actions (e.g., "Supportive, burdened"). **DO NOT leave empty.**
+   - **`relationships`**: Extract social connections (e.g., "Daughter of Tanaka").
+   - **`backstory`**: Summarize what has happened to them in this narrative chunk.
+   - **`state`**: **STRICT LIMIT: 3-5 WORDS.** (e.g., "Anxious and waiting", "Combat ready").
+   - Fill: **`race`**, **`gender`**, **`condition`**.
 
 **NARRATIVE:**
 {narrative_text}
 """
 
-# --- 3. ADVENTURE GENERATION ---
+# --- 3. TIME RECONSTRUCTION (Sync Logic) ---
+TIME_RECONSTRUCTION = """SYSTEM: You are the CHRONOMANCER.
+**TASK:** Analyze the provided conversation history (chronological order) to determine the **EXACT CURRENT TIME**.
+
+**LOGIC:**
+1. **Scan for Anchors:** Look for mentions of "Morning", "Noon", "Night", or specific times like "08:00".
+2. **Calculate Duration:** Estimate time passed in subsequent messages (e.g., A fight = 10 mins, Driving = 30 mins, Sleeping = 8 hours).
+3. **Synthesize:** If Message 1 says "Morning" and they traveled for hours in Message 5, it is now "Afternoon".
+
+**INPUT HISTORY:**
+{recent_history}
+
+**OUTPUT:**
+- You MUST call `update_environment(time_str="HH:MM", weather="...")`.
+- Infer the weather from context if possible, otherwise keep it stable.
+"""
+
+# --- 4. ADVENTURE GENERATION ---
 TITLE_GENERATION = "Generate a unique 5-word title for an RPG adventure. Scenario: {scenario}. Lore: {lore}."
 
 ADVENTURE_START = """You are the DM. **SCENARIO:** {scenario_name}. **LORE:** {lore}. {mechanics}
@@ -61,20 +87,24 @@ ADVENTURE_START = """You are the DM. **SCENARIO:** {scenario_name}. **LORE:** {l
 4. **Perspective:** 2nd Person ('You...').
 5. **Wait:** Stop and wait for user input."""
 
-# --- 4. GAME TURN (Standard Loop) ---
+# --- 5. GAME TURN (Standard Loop) ---
 GAME_TURN = """**USER ACTION:** {user_action}
 **DM INSTRUCTIONS:**
 {mechanics_instruction}
 
-**STEP 0: REALITY CHECK (ABSOLUTE PRIORITY)**
-1. **READ the [CURRENT MOMENT] line in the Transcript above.**
-2. **NO HALLUCINATED DIALOGUE:** Do not invent past speech. Start exactly where the text ended.
+**STEP 0: MANDATORY INPUT INTEGRATION (THE "NO SKIP" RULE)**
+1. **MIRROR THE ACTION:** You MUST narrate the **process** of the user's action immediately.
+   - *User Input:* "I wash her hands."
+   - *Your Output Start:* "You take her hands in yours. The water from the canteen flows cool and clear over her skin, washing away the grime..."
+   - **DO NOT** jump to the result ("Her hands are now clean") without showing the cleaning first.
+2. **INCLUDE THE DIALOGUE:** If the user spoke, you MUST include their words in your narrative.
+   - *User Input:* "How are you?"
+   - *Your Output:* "You look her in the eyes. 'How are you?' you ask softly."
+   - **NEVER** summarize dialogue (e.g., "You asked how she was"). **QUOTE IT.**
 
-**STEP 1: INPUT CLASSIFICATION**
-- **QUESTION?** -> Reply.
-- **STATEMENT?** -> React.
-- **ACTION?** -> Resolve.
-- **PASSIVE/CONTINUE?** -> NPC or World MUST act.
+**STEP 1: LIVING WORLD PROTOCOL**
+- **NPCs are PROACTIVE:** They do not wait. They interrupt, question, and act.
+- **Contextual Response:** NPCs must react to the *specific* words and tone the user just used. If the user asked a question, the NPC **MUST** answer or acknowledge it. Ignoring a user question is a critical failure.
 
 **STEP 2: CHECK PENDING ACTIONS**
 - Look at **PENDING ACTIONS / ORDERS** in Context.
@@ -88,13 +118,12 @@ GAME_TURN = """**USER ACTION:** {user_action}
 - **STOP.** Wait for tool output.
 
 **STEP 4: NARRATIVE**
-- **REFINE:** Describe the user's action and dialogue.
-- **NPC RESPONSE:** NPCs MUST reply if spoken to.
+- **REFINE:** Describe the user's action and dialogue with cinematic detail using the rules above.
 - **Style:** Novel-quality prose.
 
 {reroll_instruction}"""
 
-# --- 5. MEMORY CONTEXT BLOCK ---
+# --- 6. MEMORY CONTEXT BLOCK ---
 CONTEXT_BLOCK = """=== 🧠 SYSTEM CONTEXT ===
 **SCENARIO:** {scenario}
 **LORE:** {lore}

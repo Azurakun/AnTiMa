@@ -47,7 +47,8 @@ class RPGAdventureCog(commands.Cog):
                     tools.grant_item_to_player, tools.apply_damage, 
                     tools.apply_healing, tools.deduct_mana, 
                     tools.roll_d20, tools.update_journal,
-                    tools.update_world_entity, tools.update_environment
+                    tools.update_world_entity, tools.update_environment,
+                    tools.manage_story_log
                 ],
                 safety_settings=self.safety_settings
             )
@@ -87,7 +88,6 @@ class RPGAdventureCog(commands.Cog):
         if "old" in s or "elder" in s or "ancient" in s: return "70"
         return "Unknown" 
 
-    # [NEW] Dynamic Thinking Animation Task
     async def _animate_thinking(self, message):
         phases = [
             "🧠 **Consulting the Archives...**",
@@ -104,9 +104,9 @@ class RPGAdventureCog(commands.Cog):
                 i = (i + 1) % len(phases)
                 await message.edit(content=phases[i])
         except asyncio.CancelledError:
-            pass # Task cancelled, stop animating
+            pass 
         except Exception:
-            pass # Message likely deleted
+            pass 
 
     @tasks.loop(seconds=10)
     async def cleanup_deleted_sessions(self):
@@ -158,26 +158,18 @@ class RPGAdventureCog(commands.Cog):
 
     async def _initialize_session(self, channel_id, session_db, initial_prompt="Resume"):
         if not self.model or not self.memory_manager: return False
-        
         chat_session = self.model.start_chat(history=[])
-        
-        # [MODIFIED] Pass logger to memory manager
         memory_block, debug_data = await self.memory_manager.build_context_block(
             session_db, initial_prompt, logger=self._log_debug
         )
-        
         self._log_debug(channel_id, "system", "Context Built. Priming System...", details={"context_len": len(memory_block)})
-        
         system_prime = prompts.SYSTEM_PRIME.format(memory_block=memory_block)
-
         try: 
-            # [FIXED] No timeout, let it take its time
             await chat_session.send_message_async(system_prime)
             self._log_debug(channel_id, "system", "System Prime Accepted.")
         except Exception as e: 
             self._log_debug(channel_id, "error", f"System Prime Failed: {e}")
             return False
-
         self.active_sessions[channel_id] = {
             'session': chat_session, 'owner_id': session_db['owner_id'], 'last_prompt': initial_prompt
         }
@@ -187,8 +179,16 @@ class RPGAdventureCog(commands.Cog):
         chunk_preview = narrative_text[:30].replace('\n', ' ')
         self._log_debug(thread_id, "system", "SCRIBE: Analyzing narrative chunk", details={"preview": chunk_preview})
 
+        world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}) or {}
+        existing_npcs = list(world_data.get("npcs", {}).keys())
+        existing_locs = list(world_data.get("locations", {}).keys())
+        known_str = ", ".join(existing_npcs + existing_locs) if existing_npcs else "None recorded."
+
         scribe_session = self.model.start_chat(history=[])
-        analysis_prompt = prompts.SCRIBE_ANALYSIS.format(narrative_text=narrative_text)
+        analysis_prompt = prompts.SCRIBE_ANALYSIS.format(
+            narrative_text=narrative_text,
+            known_entities=known_str
+        )
 
         max_retries = 2
         attempt = 0
@@ -196,7 +196,6 @@ class RPGAdventureCog(commands.Cog):
 
         while attempt <= max_retries:
             try:
-                # [FIXED] No Timeout
                 if attempt == 0: response = await scribe_session.send_message_async(analysis_prompt)
                 else: response = await scribe_session.send_message_async("SYSTEM: Previous call MALFORMED. Retry.")
                 break
@@ -232,22 +231,52 @@ class RPGAdventureCog(commands.Cog):
                     if part.function_call:
                         fn = part.function_call
                         if fn.name == "update_world_entity":
-                            if "category" not in fn.args or "name" not in fn.args: continue
+                            cat = fn.args.get("category")
+                            name = fn.args.get("name")
+                            if not cat or not name: continue
+                            
                             entities_found += 1
                             attrs = dict(fn.args.get("attributes", {}))
                             rel = attrs.get("relationships") or attrs.get("relationship")
                             if rel: attrs["relationships"] = str(rel) if not isinstance(rel, list) else ", ".join(rel)
                             if "age" in attrs: attrs["age"] = self._sanitize_age(attrs["age"])
+                            
                             tools.update_world_entity(
-                                str(thread_id), fn.args["category"], fn.args["name"], 
-                                fn.args["details"], fn.args.get("status", "active"), attributes=attrs
+                                str(thread_id), 
+                                cat, 
+                                name, 
+                                fn.args.get("details", "No details detected."), 
+                                fn.args.get("status", "active"), 
+                                attributes=attrs
                             )
                         elif fn.name == "update_environment":
-                            tools.update_environment(str(thread_id), fn.args["time_of_day"], fn.args["weather"])
+                            tools.update_environment(str(thread_id), fn.args.get("time_of_day", "Auto"), fn.args.get("weather", "Clear"), int(fn.args.get("minutes_passed", 0)))
+                        elif fn.name == "manage_story_log":
+                            tools.manage_story_log(str(thread_id), fn.args.get("action", "add"), fn.args.get("note", "Unknown"))
 
             self._log_debug(thread_id, "info", f"SCRIBE: Finished. Entities Found: {entities_found}")
         except Exception as e:
             self._log_debug(thread_id, "error", f"SCRIBE ERROR: {e}")
+
+    async def _infer_time_from_history(self, thread_id, recent_context):
+        # [FEATURE DISABLED BUT PRESERVED]
+        return 
+        
+        # self._log_debug(thread_id, "system", "CHRONOMANCER: Analyzing recent history for Time Sync...")
+        # chrono_session = self.model.start_chat(history=[])
+        # prompt = prompts.TIME_RECONSTRUCTION.format(recent_history=recent_context)
+        # try:
+        #     response = await chrono_session.send_message_async(prompt)
+        #     if response.parts:
+        #         for part in response.parts:
+        #             if part.function_call and part.function_call.name == "update_environment":
+        #                 args = part.function_call.args
+        #                 res = tools.update_environment(str(thread_id), args.get("time_str", "Auto"), args.get("weather", "Clear"))
+        #                 self._log_debug(thread_id, "info", f"CHRONOMANCER: Time Updated -> {res}")
+        #                 return
+        #     self._log_debug(thread_id, "warn", "CHRONOMANCER: No time update triggered.")
+        # except Exception as e:
+        #     self._log_debug(thread_id, "error", f"CHRONOMANCER ERROR: {e}")
 
     async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name, story_mode=False, custom_title=None, manual_guild_id=None, manual_user=None):
         if interaction:
@@ -341,15 +370,11 @@ class RPGAdventureCog(commands.Cog):
         session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
         if not session_db: return
         
-        # [NEW] Initial Status Message
         processing_msg = None
         try: processing_msg = await channel.send("🧠 **The Dungeon Master is thinking...**")
         except: pass
 
-        # [NEW] Start the dynamic animation task
-        anim_task = None
-        if processing_msg:
-            anim_task = asyncio.create_task(self._animate_thinking(processing_msg))
+        anim_task = asyncio.create_task(self._animate_thinking(processing_msg)) if processing_msg else None
 
         try:
             self._log_debug(channel.id, "info", f"Processing Turn: {prompt[:50]}...")
@@ -392,7 +417,6 @@ class RPGAdventureCog(commands.Cog):
                 attempt = 0
                 while attempt <= max_retries:
                     try:
-                        # [FIXED] No Timeout
                         if attempt == 0: 
                             response = await chat_session.send_message_async(full_prompt)
                         else: 
@@ -437,7 +461,8 @@ class RPGAdventureCog(commands.Cog):
                         elif fn.name == "apply_healing": res_txt = "Story Mode." if story_mode else tools.apply_healing(str(channel.id), fn.args["user_id"], fn.args["heal_amount"])
                         elif fn.name == "deduct_mana": res_txt = "Story Mode." if story_mode else tools.deduct_mana(str(channel.id), fn.args["user_id"], fn.args["mana_cost"])
                         elif fn.name == "update_journal": res_txt = tools.update_journal(str(channel.id), fn.args.get("log_entry"))
-                        elif fn.name == "update_environment": res_txt = tools.update_environment(str(channel.id), fn.args["time_of_day"], fn.args["weather"])
+                        elif fn.name == "update_environment": res_txt = tools.update_environment(str(channel.id), fn.args.get("time_of_day", "Auto"), fn.args.get("weather", "Clear"), int(fn.args.get("minutes_passed", 0)))
+                        elif fn.name == "manage_story_log": res_txt = tools.manage_story_log(str(channel.id), fn.args["action"], fn.args["note"])
                     except Exception as tool_err: res_txt = f"Tool Error: {tool_err}"
 
                     try:
@@ -462,7 +487,6 @@ class RPGAdventureCog(commands.Cog):
 
                 footer_text = await self.memory_manager.get_token_count_and_footer(chat_session, turn_id=current_turn_id)
                 
-                # [NEW] Clean up status message
                 if anim_task: anim_task.cancel()
                 if processing_msg:
                     try: await processing_msg.delete()
@@ -537,7 +561,7 @@ class RPGAdventureCog(commands.Cog):
 
         embeds = []
         
-        env_time = env.get("time", "Day")
+        env_time = env.get("time", "08:00")
         env_weather = env.get("weather", "Clear")
         emb_env = discord.Embed(title=f"🕰️ World Clock", color=discord.Color.light_grey())
         emb_env.add_field(name="Time", value=env_time, inline=True)
@@ -597,7 +621,17 @@ class RPGAdventureCog(commands.Cog):
         session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
         if not session or interaction.user.id != session.get('owner_id'): return await interaction.response.send_message("Host only.", ephemeral=True)
         
-        await interaction.response.send_message("🔄 **Syncing Memory, Turn Sequence, & World State...**")
+        # [MODIFIED] Store the message object explicitly to avoid interaction token expiration
+        await interaction.response.send_message("🔄 **Syncing...** [1/5] 📥 Fetching Message History...")
+        
+        # FIX: Retrieve the message object using channel.fetch_message to decouple from Interaction Token
+        try:
+            inter_msg = await interaction.original_response()
+            status_msg = await interaction.channel.fetch_message(inter_msg.id)
+        except Exception as e:
+            self._log_debug(interaction.channel.id, "error", f"SYNC INIT ERROR: {e}")
+            return
+
         self._log_debug(interaction.channel.id, "system", "INIT_SYNC: Sync requested by user.")
         
         try:
@@ -648,6 +682,10 @@ class RPGAdventureCog(commands.Cog):
                 })
 
             total_count = len(reconstructed_turns)
+            
+            # [MODIFIED] Use status_msg.edit instead of interaction.edit_original_response
+            await status_msg.edit(content=f"🔄 **Syncing...** [2/5] 🧩 Reconstructed {total_count} turns. Archiving...")
+            
             self._log_debug(interaction.channel.id, "info", f"SYNC: Reconstructed {total_count} turns.")
             rpg_sessions_collection.update_one({"thread_id": interaction.channel.id}, {"$set": {
                 "turn_history": reconstructed_turns,
@@ -663,15 +701,14 @@ class RPGAdventureCog(commands.Cog):
             await self.memory_manager.clear_thread_vectors(interaction.channel.id)
             chunks = await self.memory_manager.batch_ingest_history(interaction.channel.id, cleaned_history)
             
-            self._log_debug(interaction.channel.id, "warn", "SYNC: Wiping World State for clean rebuild.")
-            rpg_world_state_collection.update_one(
-                {"thread_id": interaction.channel.id}, 
-                {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}, "environment": {}}}
-            )
+            # [MODIFIED] Non-Destructive Update
+            await status_msg.edit(content=f"🔄 **Syncing...** [3/5] 📥 Refreshing World Simulation (Non-Destructive)...")
+            self._log_debug(interaction.channel.id, "warn", "SYNC: Updating World State from narrative (Non-Destructive)...")
+            # Removed the previous line that wiped the DB
 
             self._log_debug(interaction.channel.id, "info", "SYNC: Starting Batch Entity Extraction...")
             scan_tasks = []
-            chunk_size = 15000 
+            chunk_size = 25000 
             current_chunk = ""
             total_chunks = 0
             
@@ -684,17 +721,30 @@ class RPGAdventureCog(commands.Cog):
             if current_chunk: scan_tasks.append(current_chunk)
             
             total_chunks = len(scan_tasks)
-            await interaction.edit_original_response(content=f"🔄 **Syncing...** Rebuilding World State ({total_chunks} segments). This ensures accurate Time & Weather.")
-
+            
             for i, text_chunk in enumerate(scan_tasks):
+                current_packet = i + 1
+                # [MODIFIED] Dynamic update inside the loop
+                await status_msg.edit(content=f"🔄 **Syncing...** [4/5] 🌍 Rebuilding World State: Packet {current_packet}/{total_chunks}...")
+                
                 self._log_debug(interaction.channel.id, "info", f"SYNC: analyzing segment {i+1}/{total_chunks}...")
                 await self._scan_narrative_for_entities(interaction.channel.id, text_chunk)
+            
+            # [DISABLED] Time Reconstruction
+            # await status_msg.edit(content=f"🔄 **Syncing...** [5/5] ⏳ Chronomancer calibrating timeline...")
+            # self._log_debug(interaction.channel.id, "info", "SYNC: Finalizing Time Synchronization...")
+            # recent_turns = reconstructed_turns[-10:] # Last 10 Turns
+            # recent_context = ""
+            # for t in recent_turns:
+            #     recent_context += f"[{t['user_name']}]: {t['input']}\n[DM]: {t['output']}\n"
+            # await self._infer_time_from_history(interaction.channel.id, recent_context)
             
             view = discord.ui.View()
             url = f"{WEB_DASHBOARD_URL}/rpg/inspect/{interaction.channel.id}"
             view.add_item(discord.ui.Button(label="🧠 Check Inspector", url=url, style=discord.ButtonStyle.link))
 
-            await interaction.followup.send(f"✅ **Sync Complete:**\n- 📜 Rebuilt **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **World State Wiped & Rebuilt.**\n- 🕰️ **Timeline Restored.**", view=view)
+            # [MODIFIED] Final success message
+            await status_msg.edit(content=f"✅ **Sync Complete:**\n- 📜 Rebuilt **{total_count}** Turns.\n- 🗂️ Indexed **{chunks}** Memories.\n- 🧹 **World State Updated (Preserved).**\n- 🕰️ **Timeline Restored.**", view=view)
             
         except Exception as e: 
             self._log_debug(interaction.channel.id, "error", f"SYNC CRITICAL ERROR: {e}")
