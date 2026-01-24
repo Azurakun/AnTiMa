@@ -13,7 +13,7 @@ import aiohttp
 import collections
 import functools
 # Updated imports to ensure they match utils/db.py
-from utils.db import ai_config_collection, ai_personal_memories_collection, server_lore_collection, rpg_sessions_collection
+from utils.db import ai_config_collection, ai_personal_memories_collection, server_lore_collection, rpg_sessions_collection, web_actions_collection
 from utils.limiter import limiter
 from .prompts import SYSTEM_PROMPT
 from .response_handler import should_bot_respond_ai_check, process_message_batch, handle_single_user_response
@@ -51,23 +51,43 @@ class AIChatCog(commands.Cog, name="AIChat"):
         
         self.proactive_chat_loop.start()
         self.server_lore_update_loop.start()
+        self.check_reload_requests.start()
 
     def cog_unload(self):
         self.proactive_chat_loop.cancel()
         self.server_lore_update_loop.cancel()
+        self.check_reload_requests.cancel()
         self.bot.loop.create_task(self.http_session.close())
 
     async def run_db(self, func, *args, **kwargs):
         partial_func = functools.partial(func, *args, **kwargs)
         return await self.bot.loop.run_in_executor(None, partial_func)
 
-    def _calculate_next_chat_time(self, frequency: str = "normal") -> datetime:
+    def _calculate_next_chat_time(self, frequency: str = "normal") -> datetime | None:
+        if frequency == "disabled": return None
         now = datetime.now(timezone.utc)
         if frequency == "active": minutes = random.randint(30, 90)
         elif frequency == "quiet": minutes = random.randint(360, 720)
         elif frequency == "testing": minutes = random.randint(1, 2)
         else: minutes = random.randint(120, 300)
         return now + timedelta(minutes=minutes)
+
+    @tasks.loop(seconds=3)
+    async def check_reload_requests(self):
+        """Watches for restart signals from the dashboard for instant apply."""
+        try:
+            req = await self.run_db(web_actions_collection.find_one_and_update, 
+                {"type": "reload_chat", "status": "pending"},
+                {"$set": {"status": "completed"}}
+            )
+            if req:
+                logger.info("♻️ Reload signal received. Restarting Proactive Chat Loop...")
+                self.proactive_chat_loop.restart()
+        except Exception: pass
+
+    @check_reload_requests.before_loop
+    async def before_check_reload_requests(self):
+        await self.bot.wait_until_ready()
 
     @tasks.loop(hours=4)
     async def server_lore_update_loop(self):
@@ -91,16 +111,27 @@ class AIChatCog(commands.Cog, name="AIChat"):
             for config in guild_configs:
                 try:
                     guild_id = config["_id"]
+                    
+                    # 1. Immediate Disabled Check
                     if config.get("bot_disabled", False): continue
                     
+                    # 2. Frequency Check
+                    freq = config.get("chat_frequency", "normal")
+                    if freq == "disabled": continue
+
+                    # 3. Time Check
                     next_time = config.get("next_chat_time")
                     if next_time and next_time.tzinfo is None: next_time = next_time.replace(tzinfo=timezone.utc)
+                    
                     if not next_time:
-                        new_next_time = self._calculate_next_chat_time(config.get("chat_frequency", "normal"))
-                        await self.run_db(ai_config_collection.update_one, {"_id": guild_id}, {"$set": {"next_chat_time": new_next_time}})
+                        new_next_time = self._calculate_next_chat_time(freq)
+                        if new_next_time:
+                            await self.run_db(ai_config_collection.update_one, {"_id": guild_id}, {"$set": {"next_chat_time": new_next_time}})
                         continue
+
                     if now < next_time: continue 
                     
+                    # 4. Logic Execution
                     guild = self.bot.get_guild(int(guild_id))
                     channel = self.bot.get_channel(int(config.get('channel')))
                     if not guild or not channel: continue
@@ -129,8 +160,9 @@ class AIChatCog(commands.Cog, name="AIChat"):
                     if target_user:
                         await _initiate_conversation(self, channel, target_user)
 
-                    new_next_time = self._calculate_next_chat_time(config.get("chat_frequency", "normal"))
-                    await self.run_db(ai_config_collection.update_one, {"_id": guild_id}, {"$set": {"next_chat_time": new_next_time}})
+                    new_next_time = self._calculate_next_chat_time(freq)
+                    if new_next_time:
+                        await self.run_db(ai_config_collection.update_one, {"_id": guild_id}, {"$set": {"next_chat_time": new_next_time}})
                 except: continue
         except: pass
 

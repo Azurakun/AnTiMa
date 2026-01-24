@@ -50,6 +50,11 @@
 
         .edit-btn { @apply opacity-0 group-hover:opacity-100 transition px-2 py-1 text-[10px] bg-blue-600 rounded hover:bg-blue-500 text-white font-bold ml-2; }
         .delete-btn { @apply opacity-0 group-hover:opacity-100 transition px-2 py-1 text-[10px] bg-red-600 rounded hover:bg-red-500 text-white font-bold ml-1; }
+
+        /* LIVE MIND STYLING */
+        .thought-bubble { border-left: 3px solid #6366f1; background: rgba(99, 102, 241, 0.05); }
+        .tool-use { border-left: 3px solid #f59e0b; background: rgba(245, 158, 11, 0.05); }
+        .system-alert { border-left: 3px solid #ef4444; background: rgba(239, 68, 68, 0.05); }
     </style>
 </head>
 <body class="bg-darkbg text-gray-100 font-sans h-screen flex flex-col overflow-hidden selection:bg-discord selection:text-white">
@@ -249,7 +254,7 @@
                             // Initializing connection to neural backend...<br>
                             // Authenticated. Streaming logs...
                         </div>
-                        <div id="terminal-output" class="space-y-0.5 flex-1"></div>
+                        <div id="terminal-output" class="space-y-0.5 flex-1 pb-12"></div>
                         <div class="mt-2 text-green-500 font-bold flex items-center gap-1">
                             <span>$</span> <span class="blink w-2 h-4 bg-green-500 block"></span>
                         </div>
@@ -393,6 +398,7 @@
         let npcDatabase = {};
         let questDatabase = {};
         let locationDatabase = {};
+        let eventSource = null;
 
         function switchTab(tabId) {
             document.querySelectorAll('.nav-item').forEach(el => {
@@ -411,47 +417,77 @@
             }
             document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
             document.getElementById(`view-${tabId}`).classList.remove('hidden');
+
+            if(tabId === 'logs') {
+                initLiveStream();
+            }
         }
 
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
-        function renderTerminalLine(log) {
-            const div = document.createElement('div');
-            let levelColor = "text-gray-500";
-            let msgColor = "text-gray-300";
-            let prefix = "INFO";
-            if (log.level === 'warn') { levelColor = "text-yellow-500"; msgColor = "text-yellow-100"; prefix = "WARN"; }
-            if (log.level === 'error') { levelColor = "text-red-500 font-bold"; msgColor = "text-red-300"; prefix = "ERR "; }
-            if (log.level === 'system') { levelColor = "text-blue-400"; msgColor = "text-blue-200"; prefix = "SYS "; }
-            if (log.level === 'ai') { levelColor = "text-purple-400 font-bold"; msgColor = "text-purple-200"; prefix = "AI  "; }
+        // --- LIVE LOG STREAM ---
+        function initLiveStream() {
+            if (eventSource) return;
 
-            div.className = `log-entry flex gap-3 px-2 py-0.5 cursor-pointer rounded transition-colors border-l-2 border-transparent hover:border-gray-600`;
-            div.innerHTML = `
-                <span class="text-gray-600 shrink-0 font-mono">[${log.time}]</span>
-                <span class="${levelColor} shrink-0 font-mono font-bold">${prefix}</span>
-                <span class="${msgColor} font-mono truncate">${log.message}</span>
-            `;
-            div.onclick = () => {
-                document.getElementById('json-viewer').innerText = JSON.stringify(log.details || {}, null, 2);
-                document.querySelectorAll('.log-entry').forEach(e => e.classList.remove('bg-white/5', 'border-gray-500'));
-                div.classList.add('bg-white/5', 'border-gray-500');
+            const container = document.getElementById('terminal-output');
+            eventSource = new EventSource(`/rpg/inspect/${threadId}/stream`);
+            
+            eventSource.onmessage = function(event) {
+                const log = JSON.parse(event.data);
+                
+                const div = document.createElement('div');
+                let levelColor = "text-gray-500";
+                let msgColor = "text-gray-300";
+                let prefix = "INFO";
+                let typeClass = "border-l-2 border-transparent hover:border-gray-600";
+
+                if (log.level === 'warn') { levelColor = "text-yellow-500"; msgColor = "text-yellow-100"; prefix = "WARN"; }
+                if (log.level === 'error') { levelColor = "text-red-500 font-bold"; msgColor = "text-red-300"; prefix = "ERR "; typeClass = "system-alert"; }
+                if (log.level === 'system') { levelColor = "text-blue-400"; msgColor = "text-blue-200"; prefix = "SYS "; }
+                if (log.level === 'ai') { levelColor = "text-purple-400 font-bold"; msgColor = "text-purple-200"; prefix = "AI  "; }
+                
+                // Special styling for thought process
+                if (log.level === 'thought_process') {
+                    levelColor = "text-indigo-400 font-bold";
+                    msgColor = "text-indigo-200";
+                    prefix = "THINK";
+                    typeClass = "thought-bubble";
+                }
+                
+                // Special styling for tools
+                if (log.message && log.message.includes('TOOL')) {
+                    levelColor = "text-amber-400 font-bold";
+                    msgColor = "text-amber-200";
+                    prefix = "TOOL ";
+                    typeClass = "tool-use";
+                }
+
+                div.className = `log-entry flex gap-3 px-2 py-0.5 cursor-pointer rounded transition-colors ${typeClass} fade-in mb-1`;
+                div.innerHTML = `
+                    <span class="text-gray-600 shrink-0 font-mono">[${log.timestamp}]</span>
+                    <span class="${levelColor} shrink-0 font-mono font-bold w-12 text-right">${prefix}</span>
+                    <span class="${msgColor} font-mono truncate">${log.message}</span>
+                `;
+                
+                div.onclick = () => {
+                    document.getElementById('json-viewer').innerText = JSON.stringify(log.details || {}, null, 2);
+                    document.querySelectorAll('.log-entry').forEach(e => e.classList.remove('bg-white/5'));
+                    div.classList.add('bg-white/5');
+                };
+
+                container.appendChild(div);
+                container.scrollTop = container.scrollHeight;
             };
-            return div;
+
+            eventSource.onerror = function() {
+                console.log("Stream error, retrying...");
+                eventSource.close();
+                eventSource = null;
+                setTimeout(initLiveStream, 3000);
+            };
         }
 
-        async function updateTerminal() {
-            try {
-                const res = await fetch(`/api/rpg/debug/${threadId}`);
-                if(!res.ok) return;
-                const logs = await res.json();
-                const container = document.getElementById('terminal-output');
-                container.innerHTML = ""; 
-                logs.forEach(log => container.appendChild(renderTerminalLine(log)));
-            } catch (e) { console.error(e); }
-            document.getElementById('terminal-clock').innerText = new Date().toLocaleTimeString('en-US', {hour12: false});
-        }
-
-        // --- MAIN DATA SYNC ---
+        // --- INITIAL DATA LOAD ---
         async function loadData() {
             try {
                 const res = await fetch(`/api/rpg/memory/${threadId}`);
@@ -658,7 +694,6 @@
 
                 const attrs = data?.attributes || {};
                 
-                // Specific fields per category
                 if(category === 'quest') {
                     addAttrField('Issuer', attrs.issuer);
                     addAttrField('Rewards', attrs.rewards);
@@ -684,7 +719,6 @@
                 document.getElementById('ent-details').value = "";
                 document.getElementById('ent-status').value = "active";
                 
-                // Default fields for new additions
                 if(category === 'npc') {
                     ['Race', 'Gender', 'Age', 'Role', 'State', 'Condition', 'Appearance', 'Personality', 'Relationships', 'Backstory'].forEach(f => addAttrField(f, ''));
                 } else if (category === 'quest') {
@@ -697,7 +731,6 @@
 
         function addAttrField(label, value) {
             const div = document.createElement('div');
-            // If text is long, use textarea for better UX
             let inputField = `<input type="text" data-key="${label.toLowerCase()}" class="ent-attr-input w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm" value="${value || ''}">`;
             
             if (['Appearance', 'Personality', 'Backstory', 'Relationships'].includes(label)) {
@@ -827,13 +860,9 @@
             document.getElementById('npc-modal').classList.remove('hidden');
         }
 
-        // --- NPC MANAGEMENT (DEPRECATED - MERGED INTO GENERIC) ---
-        // The buttons now call openEntityForm('npc') instead.
-
-        loadData();
-        updateTerminal();
         setInterval(loadData, 5000);
-        setInterval(updateTerminal, 2500); 
+        document.getElementById('terminal-clock').innerText = new Date().toLocaleTimeString();
+        loadData();
     </script>
 </body>
 </html>

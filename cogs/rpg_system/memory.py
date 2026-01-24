@@ -118,9 +118,22 @@ class RPGContextManager:
         )
 
     async def snapshot_world_state(self, thread_id, turn_id):
+        # 1. Snapshot World Data (NPCs, Quests, etc.)
         world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)})
-        if not world_data: return
-        snapshot = {k: v for k, v in world_data.items() if k != "_id"}
+        snapshot = {k: v for k, v in world_data.items() if k != "_id"} if world_data else {}
+        
+        # 2. Snapshot Player Inventories
+        session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
+        inventory_snapshot = {}
+        if session:
+            for player_id in session.get("players", []):
+                inv = rpg_inventory_collection.find_one({"user_id": player_id})
+                if inv:
+                    # Key by stringified user_id for MongoDB compatibility
+                    inventory_snapshot[str(player_id)] = inv.get("items", [])
+
+        snapshot["_inventory_backup"] = inventory_snapshot
+
         rpg_sessions_collection.update_one(
             {"thread_id": int(thread_id), "turn_history.turn_id": turn_id},
             {"$set": {"turn_history.$.world_snapshot": snapshot}}
@@ -128,6 +141,18 @@ class RPGContextManager:
 
     def restore_world_state(self, thread_id, snapshot):
         if not snapshot: return
+
+        # 1. Restore Inventory
+        inventory_data = snapshot.pop("_inventory_backup", None)
+        if inventory_data:
+            for user_id_str, items in inventory_data.items():
+                rpg_inventory_collection.update_one(
+                    {"user_id": int(user_id_str)},
+                    {"$set": {"items": items}},
+                    upsert=True
+                )
+
+        # 2. Restore World
         snapshot["thread_id"] = int(thread_id)
         rpg_world_state_collection.replace_one(
             {"thread_id": int(thread_id)},
@@ -299,21 +324,32 @@ class RPGContextManager:
         
     def delete_last_turn(self, thread_id):
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
-        if not session or "turn_history" not in session: return
+        if not session or "turn_history" not in session: return None
         history = session["turn_history"]
-        if not history: return
+        if not history: return None
+        
+        # 1. Pop the last turn
+        deleted_turn = history.pop()
+        
+        # 2. Update DB
         rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {
             "$pop": {"turn_history": 1},
             "$inc": {"total_turns": -1}
         })
-        new_last_turn = history[-2] if len(history) >= 2 else None
+        
+        # 3. Restore World State from the *new* last turn (the one before the deleted one)
+        new_last_turn = history[-1] if history else None
+        
         if new_last_turn and "world_snapshot" in new_last_turn:
             self.restore_world_state(thread_id, new_last_turn["world_snapshot"])
         elif not new_last_turn:
+            # Revert to clean slate if history is empty
              rpg_world_state_collection.update_one(
                  {"thread_id": int(thread_id)},
                  {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}, "environment": {}}}
              )
+        
+        return deleted_turn
 
     def trim_history(self, thread_id, target_turn_id):
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})

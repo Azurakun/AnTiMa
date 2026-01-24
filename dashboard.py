@@ -617,7 +617,8 @@ async def update_bot_config(data: ConfigRequest):
         if data.channel_id: update_fields["channel"] = int(data.channel_id)
         if data.frequency: 
             update_fields["chat_frequency"] = data.frequency
-            update_fields["next_chat_time"] = datetime.utcnow()
+            if data.frequency != "disabled":
+                update_fields["next_chat_time"] = datetime.utcnow()
         if data.bot_status: update_fields["bot_disabled"] = (data.bot_status == "off")
         if data.group_chat: update_fields["group_chat_enabled"] = (data.group_chat == "allow")
         if data.rpg_channel_id: update_fields["rpg_channel_id"] = int(data.rpg_channel_id)
@@ -627,6 +628,20 @@ async def update_bot_config(data: ConfigRequest):
             "user": "Dashboard Admin", "guild": f"ID: {data.guild_id}", "action": "Updated Config", "timestamp": datetime.utcnow()
         })
         return JSONResponse({"status": "Configuration updated"})
+    except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/control/reload_chat")
+async def reload_chat_module():
+    try:
+        action_doc = {
+            "type": "reload_chat", "guild_id": "global", "status": "pending", 
+            "created_at": datetime.utcnow(), "source": "dashboard"
+        }
+        web_actions_collection.insert_one(action_doc)
+        live_activity_collection.insert_one({
+            "user": "Dashboard Admin", "guild": "Global", "action": "Triggered Reload", "timestamp": datetime.utcnow()
+        })
+        return JSONResponse({"status": "Reload signal sent."})
     except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/control/action/queue")

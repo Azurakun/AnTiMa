@@ -108,16 +108,19 @@
                 <div class="bg-gray-800 p-4 border-b border-gray-700"><h2 class="text-lg font-bold text-white flex items-center gap-2"><span class="text-blue-400">⚙️</span> Server Configuration</h2></div>
                 <div class="p-6 space-y-4">
                     <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label><input type="text" id="conf-guild-id" placeholder="1234567890..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Bot Status</label><select id="conf-status" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="on">🟢 Online</option><option value="off">🔴 Offline</option></select></div>
                         <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Group Chat</label><select id="conf-group" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="allow">✅ Allow</option><option value="block">🚫 Block</option></select></div>
+                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Proactive Chat</label><select id="conf-freq" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="disabled">🚫 Disabled</option><option value="active">🔥 Active (30m - 90m)</option><option value="normal">🙂 Normal (2h - 5h)</option><option value="quiet">🌙 Quiet (6h - 12h)</option><option value="testing">🛠️ Testing (1m - 2m)</option></select></div>
                     </div>
-                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Proactive chat Frequency</label><select id="conf-freq" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="active">🔥 Active (30m - 90m)</option><option value="normal">🙂 Normal (2h - 5h)</option><option value="quiet">🌙 Quiet (6h - 12h)</option><option value="testing">🛠️ Testing (1m - 2m)</option></select></div>
                     <div class="grid grid-cols-2 gap-4">
                         <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Chat Channel ID</label><input type="text" id="conf-chat-id" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
                         <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">RPG Channel ID</label><input type="text" id="conf-rpg-id" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
                     </div>
-                    <button onclick="submitConfig()" class="w-full bg-discord hover:bg-indigo-500 text-white font-bold py-2 rounded transition shadow-lg mt-4">Save Configuration</button>
+                    <div class="flex gap-2 mt-4">
+                        <button onclick="submitConfig()" class="flex-1 bg-discord hover:bg-indigo-500 text-white font-bold py-2 rounded transition shadow-lg">Save Configuration</button>
+                        <button onclick="reloadChat()" class="flex-none bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded transition shadow-lg border border-gray-600" title="Immediately reload chat system">🔄 Reload</button>
+                    </div>
                     <div id="conf-msg" class="text-xs text-center min-h-[1rem]"></div>
                 </div>
             </div>
@@ -188,6 +191,9 @@
         async function submitConfig() {
             const payload = { guild_id: document.getElementById('conf-guild-id').value, channel_id: document.getElementById('conf-chat-id').value || null, frequency: document.getElementById('conf-freq').value || null, bot_status: document.getElementById('conf-status').value || null, group_chat: document.getElementById('conf-group').value || null, rpg_channel_id: document.getElementById('conf-rpg-id').value || null };
             await sendControlRequest('/api/control/config/update', payload, 'conf-msg');
+        }
+        async function reloadChat() {
+            await sendControlRequest('/api/control/reload_chat', {}, 'conf-msg');
         }
         async function submitAction() {
             const payload = { guild_id: document.getElementById('mod-guild-id').value, action_type: document.getElementById('mod-action').value, target_id: document.getElementById('mod-target-id').value, reason: document.getElementById('mod-reason').value, setting_value: document.getElementById('mod-extra-val').value };
