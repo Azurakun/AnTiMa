@@ -1,6 +1,6 @@
 # dashboard.py
 from fastapi import FastAPI, WebSocket, Request, HTTPException, Response
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse # <--- Added StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 import uvicorn
@@ -525,6 +525,43 @@ async def manage_log(req: ManageLogRequest):
 @app.get("/rpg/inspect/{thread_id}", response_class=HTMLResponse)
 async def inspect_rpg_page(request: Request, thread_id: str):
     return templates.TemplateResponse("memory_inspector.html", {"request": request, "thread_id": thread_id})
+
+# --- SSE STREAMING ENDPOINT ---
+# Added to fix the 404 error and provide live updates to the System Debug Terminal
+
+async def log_stream_generator(thread_id: str):
+    """Yields new logs as they appear in the database."""
+    last_check = datetime.utcnow()
+    # Initial buffer (send last 10 logs so terminal isn't empty)
+    initial_logs = await run_sync_db(fetch_rpg_debug_logs, thread_id)
+    # fetch_rpg_debug_logs returns formatted logs in chrono order (oldest -> newest)
+    for log in initial_logs[-10:]:
+        yield f"data: {json.dumps(log)}\n\n"
+    
+    while True:
+        # Check for logs newer than last_check
+        new_logs = await run_sync_db(lambda: list(db.rpg_debug_terminal.find({
+            "thread_id": str(thread_id),
+            "timestamp": {"$gt": last_check}
+        }).sort("timestamp", 1)))
+        
+        if new_logs:
+            last_check = new_logs[-1]["timestamp"]
+            for log in new_logs:
+                # Format for frontend
+                formatted = {
+                    "time": log["timestamp"].strftime("%H:%M:%S"),
+                    "level": log.get("level", "info"),
+                    "message": log.get("message", ""),
+                    "details": log.get("details", {})
+                }
+                yield f"data: {json.dumps(formatted)}\n\n"
+        
+        await asyncio.sleep(1) # Polling interval to reduce DB load
+
+@app.get("/rpg/inspect/{thread_id}/stream")
+async def stream_rpg_logs(thread_id: str):
+    return StreamingResponse(log_stream_generator(thread_id), media_type="text/event-stream")
 
 # --- RPG SETUP & PERSONAS ---
 

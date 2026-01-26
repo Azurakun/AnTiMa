@@ -27,31 +27,18 @@
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;700&display=swap" rel="stylesheet">
     <style>
-        /* Custom Scrollbar */
         ::-webkit-scrollbar { width: 8px; height: 8px; }
         ::-webkit-scrollbar-track { background: #1a1b1e; }
         ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
         ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
-        
-        /* Animations */
         .fade-in { animation: fadeIn 0.2s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-        
         .blink { animation: blinker 1s step-end infinite; }
         @keyframes blinker { 50% { opacity: 0; } }
-
-        /* Status Colors */
-        .status-alive { color: #4ade80; border-color: #4ade80; background-color: rgba(74, 222, 128, 0.1); }
-        .status-dead { color: #f87171; border-color: #f87171; background-color: rgba(248, 113, 113, 0.1); }
-        
-        /* Terminal Specifics */
         .terminal-text { font-family: 'Fira Code', monospace; }
         .log-entry:hover { background-color: rgba(255, 255, 255, 0.05); }
-
         .edit-btn { @apply opacity-0 group-hover:opacity-100 transition px-2 py-1 text-[10px] bg-blue-600 rounded hover:bg-blue-500 text-white font-bold ml-2; }
         .delete-btn { @apply opacity-0 group-hover:opacity-100 transition px-2 py-1 text-[10px] bg-red-600 rounded hover:bg-red-500 text-white font-bold ml-1; }
-
-        /* LIVE MIND STYLING */
         .thought-bubble { border-left: 3px solid #6366f1; background: rgba(99, 102, 241, 0.05); }
         .tool-use { border-left: 3px solid #f59e0b; background: rgba(245, 158, 11, 0.05); }
         .system-alert { border-left: 3px solid #ef4444; background: rgba(239, 68, 68, 0.05); }
@@ -77,41 +64,22 @@
             <div class="p-6 border-b border-gray-800">
                 <h2 class="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-4">Memory Banks</h2>
                 <nav class="space-y-1">
-                    <button onclick="switchTab('overview')" id="nav-overview" class="nav-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 bg-discord text-white text-sm font-bold shadow-md transition-all">
-                        <span>📊</span> Overview
-                    </button>
-                    <button onclick="switchTab('quests')" id="nav-quests" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all">
-                        <span>🛡️</span> Quests
-                    </button>
-                    <button onclick="switchTab('story-log')" id="nav-story-log" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all">
-                        <span>📝</span> Story Log
-                    </button>
-                    <button onclick="switchTab('events')" id="nav-events" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all">
-                        <span>📅</span> Events
-                    </button>
-                    <button onclick="switchTab('npcs')" id="nav-npcs" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all">
-                        <span>👥</span> NPC Registry
-                    </button>
-                    <button onclick="switchTab('locations')" id="nav-locations" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all">
-                        <span>📍</span> Locations
-                    </button>
+                    <button onclick="switchTab('overview')" id="nav-overview" class="nav-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 bg-discord text-white text-sm font-bold shadow-md transition-all"><span>📊</span> Overview</button>
+                    <button onclick="switchTab('quests')" id="nav-quests" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all"><span>🛡️</span> Quests</button>
+                    <button onclick="switchTab('story-log')" id="nav-story-log" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all"><span>📝</span> Story Log</button>
+                    <button onclick="switchTab('events')" id="nav-events" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all"><span>📅</span> Events</button>
+                    <button onclick="switchTab('npcs')" id="nav-npcs" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all"><span>👥</span> NPC Registry</button>
+                    <button onclick="switchTab('locations')" id="nav-locations" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all"><span>📍</span> Locations</button>
                     <div class="my-2 border-t border-gray-800"></div>
-                    <button onclick="switchTab('logs')" id="nav-logs" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-green-400 hover:bg-green-900/20 text-sm font-mono font-bold border border-transparent hover:border-green-800 transition-all">
-                        <span>>_</span> DM Terminal
-                    </button>
+                    <button onclick="switchTab('logs')" id="nav-logs" class="nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-green-400 hover:bg-green-900/20 text-sm font-mono font-bold border border-transparent hover:border-green-800 transition-all"><span>>_</span> DM Terminal</button>
                 </nav>
             </div>
             
             <div class="mt-auto p-6 space-y-4">
-                 <a id="export-btn" href="#" target="_blank" class="w-full text-center block px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold text-sm border border-gray-600 transition shadow-lg">
-                    💾 Export Story
-                 </a>
-
+                 <a id="export-btn" href="#" target="_blank" class="w-full text-center block px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold text-sm border border-gray-600 transition shadow-lg">💾 Export Story</a>
                  <div class="bg-black/40 p-4 rounded-xl border border-gray-800 backdrop-blur-sm">
                     <h3 class="text-[10px] font-bold text-gray-500 uppercase mb-3">Live Session Metadata</h3>
-                    <div id="sidebar-meta" class="text-xs space-y-2 text-gray-400 font-mono">
-                        <div class="animate-pulse">Loading stream...</div>
-                    </div>
+                    <div id="sidebar-meta" class="text-xs space-y-2 text-gray-400 font-mono"><div class="animate-pulse">Loading stream...</div></div>
                  </div>
             </div>
         </aside>
@@ -122,13 +90,10 @@
                 <div class="flex items-center justify-between">
                     <div>
                         <h2 class="text-3xl font-bold text-white tracking-tight" id="meta-title">Loading...</h2>
-                        <div class="text-sm text-gray-400 mt-1 flex items-center gap-2">
-                            <span class="w-2 h-2 rounded-full bg-green-500"></span> Live Neural Link Active
-                        </div>
+                        <div class="text-sm text-gray-400 mt-1 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-green-500"></span> Live Neural Link Active</div>
                     </div>
                     <span class="px-4 py-1.5 bg-green-500/10 text-green-400 border border-green-500/30 rounded-full text-xs font-bold uppercase tracking-wider shadow-sm">Active Session</span>
                 </div>
-
                 <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
                     <div class="bg-card p-6 rounded-2xl border border-gray-700 shadow-lg relative overflow-hidden group">
                         <div class="absolute top-0 right-0 p-4 opacity-10 text-6xl group-hover:scale-110 transition-transform">📜</div>
@@ -151,7 +116,6 @@
                          <div class="text-4xl font-bold text-emerald-400 mt-2" id="stat-locs">-</div>
                     </div>
                 </div>
-
                 <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
                     <div class="bg-card rounded-2xl border border-gray-700 overflow-hidden shadow-md">
                         <div class="bg-gray-800/50 px-6 py-4 border-b border-gray-700"><h3 class="font-bold text-gray-200 flex items-center gap-2">🎭 Adventuring Party</h3></div>
@@ -169,105 +133,74 @@
 
             <div id="view-quests" class="tab-view hidden fade-in max-w-6xl mx-auto space-y-8">
                 <div class="flex justify-between items-center">
-                    <h2 class="text-2xl font-bold text-orange-400 flex items-center gap-3">
-                        <span class="bg-orange-500/10 p-2 rounded-lg border border-orange-500/20 text-xl">🛡️</span> Active Objectives
-                    </h2>
+                    <h2 class="text-2xl font-bold text-orange-400 flex items-center gap-3"><span class="bg-orange-500/10 p-2 rounded-lg border border-orange-500/20 text-xl">🛡️</span> Active Objectives</h2>
                     <button onclick="openEntityForm('quest')" class="bg-orange-600 hover:bg-orange-500 text-white px-3 py-1.5 rounded text-sm font-bold shadow">+ Add Quest</button>
                 </div>
                 <div id="container-quests-active" class="grid gap-4"></div>
                 <div class="opacity-70 hover:opacity-100 transition-opacity">
-                    <h2 class="text-xl font-bold text-green-400 mb-4 flex items-center gap-3">
-                        <span class="bg-green-500/10 p-2 rounded-lg border border-green-500/20 text-lg">✅</span> Completed Log
-                    </h2>
+                    <h2 class="text-xl font-bold text-green-400 mb-4 flex items-center gap-3"><span class="bg-green-500/10 p-2 rounded-lg border border-green-500/20 text-lg">✅</span> Completed Log</h2>
                     <div id="container-quests-completed" class="grid gap-4"></div>
                 </div>
             </div>
 
             <div id="view-story-log" class="tab-view hidden fade-in max-w-6xl mx-auto space-y-8">
                 <div class="flex justify-between items-center">
-                    <h2 class="text-2xl font-bold text-yellow-400 flex items-center gap-3">
-                        <span class="bg-yellow-500/10 p-2 rounded-lg border border-yellow-500/20 text-xl">📌</span> Pending Directives
-                    </h2>
+                    <h2 class="text-2xl font-bold text-yellow-400 flex items-center gap-3"><span class="bg-yellow-500/10 p-2 rounded-lg border border-yellow-500/20 text-xl">📌</span> Pending Directives</h2>
                     <button onclick="openLogForm()" class="bg-yellow-600 hover:bg-yellow-500 text-white px-3 py-1.5 rounded text-sm font-bold shadow">+ Add Note</button>
                 </div>
                 <p class="text-gray-400 text-sm mb-4">Active orders, promises, or tasks the AI is currently tracking.</p>
                 <div id="container-story-pending" class="grid gap-4"></div>
                 <div class="opacity-70 hover:opacity-100 transition-opacity mt-8">
-                    <h2 class="text-xl font-bold text-blue-400 mb-4 flex items-center gap-3">
-                        <span class="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20 text-lg">🗃️</span> Resolved History
-                    </h2>
+                    <h2 class="text-xl font-bold text-blue-400 mb-4 flex items-center gap-3"><span class="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20 text-lg">🗃️</span> Resolved History</h2>
                     <p class="text-gray-500 text-xs mb-4">Completed or fulfilled directives.</p>
                     <div id="container-story-resolved" class="space-y-3"></div>
                 </div>
             </div>
 
             <div id="view-events" class="tab-view hidden fade-in max-w-5xl mx-auto">
-                <h2 class="text-2xl font-bold text-yellow-400 mb-6 flex items-center gap-3">
-                    <span class="bg-yellow-500/10 p-2 rounded-lg border border-yellow-500/20">📅</span> Event Timeline
-                </h2>
+                <h2 class="text-2xl font-bold text-yellow-400 mb-6 flex items-center gap-3"><span class="bg-yellow-500/10 p-2 rounded-lg border border-yellow-500/20">📅</span> Event Timeline</h2>
                 <div id="container-events" class="space-y-4 relative border-l-2 border-gray-700 ml-4 pl-8"></div>
             </div>
 
             <div id="view-npcs" class="tab-view hidden fade-in max-w-7xl mx-auto">
                 <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold text-blue-400 flex items-center gap-3">
-                         <span class="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20">👥</span> NPC Registry
-                    </h2>
-                    <button onclick="openEntityForm('npc')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg transition">
-                        + Add NPC
-                    </button>
+                    <h2 class="text-2xl font-bold text-blue-400 flex items-center gap-3"><span class="bg-blue-500/10 p-2 rounded-lg border border-blue-500/20">👥</span> NPC Registry</h2>
+                    <button onclick="openEntityForm('npc')" class="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg transition">+ Add NPC</button>
                 </div>
                 <div id="container-npcs" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6"></div>
             </div>
 
             <div id="view-locations" class="tab-view hidden fade-in max-w-6xl mx-auto">
                 <div class="flex justify-between items-center mb-6">
-                    <h2 class="text-2xl font-bold text-emerald-400 flex items-center gap-3">
-                        <span class="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">📍</span> World Map
-                    </h2>
+                    <h2 class="text-2xl font-bold text-emerald-400 flex items-center gap-3"><span class="bg-emerald-500/10 p-2 rounded-lg border border-emerald-500/20">📍</span> World Map</h2>
                     <button onclick="openEntityForm('location')" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded text-sm font-bold shadow">+ Add Location</button>
                 </div>
                 <div id="container-locations" class="grid grid-cols-1 md:grid-cols-2 gap-6"></div>
             </div>
 
             <div id="view-logs" class="tab-view hidden fade-in h-full flex flex-col gap-4">
-                
                 <div class="flex justify-between items-end pb-2 border-b border-gray-800">
                     <div>
-                        <h2 class="text-2xl font-bold text-green-500 font-mono tracking-tighter flex items-center gap-2">
-                            <span class="animate-pulse">>_</span> SYSTEM_DEBUG_TERMINAL
-                        </h2>
-                        <div class="text-[10px] text-gray-500 font-mono uppercase tracking-widest mt-1">
-                            AnTiMa Core v2.5 // Live Neural Stream
-                        </div>
+                        <h2 class="text-2xl font-bold text-green-500 font-mono tracking-tighter flex items-center gap-2"><span class="animate-pulse">>_</span> SYSTEM_DEBUG_TERMINAL</h2>
+                        <div class="text-[10px] text-gray-500 font-mono uppercase tracking-widest mt-1">AnTiMa Core v2.5 // Live Neural Stream</div>
                     </div>
                     <div class="flex gap-2 text-xs font-mono">
                         <div class="px-2 py-1 bg-gray-800 rounded text-gray-400">STATUS: <span class="text-green-400">ONLINE</span></div>
                         <div class="px-2 py-1 bg-gray-800 rounded text-gray-400" id="terminal-clock">00:00:00</div>
                     </div>
                 </div>
-                
                 <div class="flex flex-1 gap-4 overflow-hidden min-h-0">
-                    
                     <div class="flex-1 bg-terminal rounded-lg border border-gray-800 p-4 font-mono text-xs text-gray-300 overflow-y-auto custom-scrollbar shadow-inner flex flex-col" id="terminal-container">
-                        <div class="mb-4 text-gray-600 select-none">
-                            // Initializing connection to neural backend...<br>
-                            // Authenticated. Streaming logs...
-                        </div>
+                        <div class="mb-4 text-gray-600 select-none">// Initializing connection to neural backend...<br>// Authenticated. Streaming logs...</div>
                         <div id="terminal-output" class="space-y-0.5 flex-1 pb-12"></div>
-                        <div class="mt-2 text-green-500 font-bold flex items-center gap-1">
-                            <span>$</span> <span class="blink w-2 h-4 bg-green-500 block"></span>
-                        </div>
+                        <div class="mt-2 text-green-500 font-bold flex items-center gap-1"><span>$</span> <span class="blink w-2 h-4 bg-green-500 block"></span></div>
                     </div>
-
                     <div class="w-1/3 bg-gray-900 rounded-lg border border-gray-700 flex flex-col shadow-lg">
                          <div class="bg-gray-800 px-4 py-2 border-b border-gray-700 flex justify-between items-center">
                              <h3 class="text-xs font-bold uppercase text-gray-300 font-mono">Data Packet Inspector</h3>
                              <span class="text-[10px] text-gray-500">JSON</span>
                          </div>
-                         <div class="p-4 overflow-y-auto text-xs font-mono text-blue-300 custom-scrollbar flex-1 whitespace-pre-wrap select-text" id="json-viewer">
-// Select a log entry from the terminal to inspect attached data payloads.
-                         </div>
+                         <div class="p-4 overflow-y-auto text-xs font-mono text-blue-300 custom-scrollbar flex-1 whitespace-pre-wrap select-text" id="json-viewer">// Select a log entry...</div>
                     </div>
                 </div>
             </div>
@@ -288,7 +221,7 @@
                 <div><h3 class="text-gray-500 font-bold uppercase text-[10px] mb-2">Description</h3><p id="modal-quest-desc" class="text-gray-300 leading-relaxed text-sm"></p></div>
                 <div class="grid grid-cols-2 gap-4">
                     <div class="bg-card p-3 rounded border border-gray-700"><h3 class="text-blue-400 font-bold uppercase text-[10px] mb-1">Issuer</h3><div id="modal-quest-issuer" class="text-white text-sm"></div></div>
-                    <div class="bg-card p-3 rounded border border-gray-700"><h3 class="text-green-400 font-bold uppercase text-[10px] mb-1">Completion Condition</h3><div id="modal-quest-trigger" class="text-white text-sm font-mono text-xs"></div></div>
+                    <div class="bg-card p-3 rounded border border-gray-700"><h3 class="text-green-400 font-bold uppercase text-[10px] mb-1">Condition</h3><div id="modal-quest-trigger" class="text-white text-sm font-mono text-xs"></div></div>
                 </div>
                 <div><h3 class="text-yellow-500 font-bold uppercase text-[10px] mb-2">Rewards</h3><div id="modal-quest-rewards" class="text-yellow-100/80 italic text-sm"></div></div>
             </div>
@@ -296,41 +229,46 @@
     </div>
 
     <div id="npc-modal" class="fixed inset-0 bg-black/80 hidden z-[100] flex justify-center items-center backdrop-blur-sm p-4 fade-in" onclick="closeModal('npc-modal')">
-        <div class="bg-card w-full max-w-3xl rounded-2xl shadow-2xl border border-gray-700 flex flex-col max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
+        <div class="bg-card w-full max-w-4xl rounded-2xl shadow-2xl border border-gray-700 flex flex-col max-h-[90vh] overflow-hidden" onclick="event.stopPropagation()">
             <div class="p-6 border-b border-gray-700 bg-gray-800 flex justify-between items-center">
-                <div>
-                    <h2 id="modal-npc-name" class="text-3xl font-bold text-white">NPC Name</h2>
-                    <div id="modal-npc-role" class="text-gray-500 text-xs font-bold uppercase tracking-wider mt-1">Role / Class</div>
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-xl font-bold text-white shadow-inner">👤</div>
+                    <div>
+                        <h2 id="modal-npc-name" class="text-3xl font-bold text-white tracking-tight">NPC Name</h2>
+                        <div id="modal-npc-role" class="text-gray-500 text-xs font-bold uppercase tracking-wider mt-1">Role / Class</div>
+                    </div>
                 </div>
                 <div class="flex gap-2">
-                    <button onclick="openEntityForm('npc', document.getElementById('modal-npc-name').innerText)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold">Edit</button>
-                    <button onclick="deleteEntity('npc', document.getElementById('modal-npc-name').innerText)" class="bg-red-900/50 hover:bg-red-700 text-red-200 px-3 py-1 rounded text-xs font-bold border border-red-800">Delete</button>
+                    <button onclick="openEntityForm('npc', document.getElementById('modal-npc-name').innerText)" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs font-bold transition">Edit Profile</button>
                     <button onclick="closeModal('npc-modal')" class="bg-gray-700 hover:bg-gray-600 rounded-full p-2 transition text-gray-300 hover:text-white ml-2">✕</button>
                 </div>
             </div>
-            
-            <div class="p-8 overflow-y-auto custom-scrollbar flex-1 space-y-6 bg-darkbg">
-                <div id="modal-npc-aliases-container" class="hidden">
-                    <h3 class="text-indigo-400 font-bold uppercase text-[10px] mb-2">Known Aliases</h3>
-                    <div id="modal-npc-aliases" class="flex flex-wrap gap-2"></div>
+            <div class="flex flex-1 overflow-hidden">
+                <div class="w-1/3 bg-darkbg border-r border-gray-700 p-6 overflow-y-auto custom-scrollbar space-y-6">
+                     <div class="grid grid-cols-2 gap-3 text-center">
+                        <div class="bg-card p-2 rounded border border-gray-700"><div class="text-[10px] uppercase text-gray-500 font-bold">Age</div><div id="modal-npc-age" class="text-white font-bold">-</div></div>
+                        <div class="bg-card p-2 rounded border border-gray-700"><div class="text-[10px] uppercase text-gray-500 font-bold">Race</div><div id="modal-npc-race" class="text-white font-bold">-</div></div>
+                    </div>
+                    <div><h3 class="text-blue-400 font-bold uppercase text-[10px] mb-1">State</h3><div id="modal-npc-state" class="font-bold">-</div></div>
+                    <div><h3 class="text-gray-500 font-bold uppercase text-[10px] mb-1">Appearance</h3><p id="modal-npc-app" class="text-gray-300 text-xs leading-relaxed"></p></div>
+                    <div><h3 class="text-gray-500 font-bold uppercase text-[10px] mb-1">Personality</h3><p id="modal-npc-personality" class="text-gray-300 text-xs leading-relaxed"></p></div>
+                    <div><h3 class="text-gray-500 font-bold uppercase text-[10px] mb-1">Relationships</h3><p id="modal-npc-rel" class="text-blue-200 text-xs italic"></p></div>
                 </div>
-
-                <div class="grid grid-cols-3 gap-4 text-center">
-                    <div class="bg-card p-3 rounded border border-gray-700"><div class="text-[10px] uppercase text-gray-500 font-bold">Age</div><div id="modal-npc-age" class="text-white font-bold">-</div></div>
-                    <div class="bg-card p-3 rounded border border-gray-700"><div class="text-[10px] uppercase text-gray-500 font-bold">Gender</div><div id="modal-npc-gender" class="text-white font-bold">-</div></div>
-                    <div class="bg-card p-3 rounded border border-gray-700"><div class="text-[10px] uppercase text-gray-500 font-bold">Race</div><div id="modal-npc-race" class="text-white font-bold">-</div></div>
-                </div>
-
-                <div class="grid grid-cols-2 gap-4 text-center">
-                     <div class="bg-card p-3 rounded border border-gray-700"><div class="text-[10px] uppercase text-gray-500 font-bold">State</div><div id="modal-npc-state" class="font-bold">-</div></div>
-                     <div class="bg-card p-3 rounded border border-gray-700"><div class="text-[10px] uppercase text-gray-500 font-bold">Condition</div><div id="modal-npc-condition" class="font-bold text-white">-</div></div>
-                </div>
-
-                <div class="space-y-4">
-                    <div><h3 class="text-blue-400 font-bold uppercase text-[10px] border-b border-gray-700 pb-1 mb-2">Appearance</h3><p id="modal-npc-app" class="text-gray-300 text-sm leading-relaxed"></p></div>
-                    <div><h3 class="text-purple-400 font-bold uppercase text-[10px] border-b border-gray-700 pb-1 mb-2">Personality</h3><p id="modal-npc-personality" class="text-gray-300 text-sm leading-relaxed"></p></div>
-                    <div class="bg-blue-900/10 p-4 rounded border border-blue-900/30"><h3 class="text-blue-300 font-bold uppercase text-[10px] mb-1">Relationships</h3><p id="modal-npc-rel" class="text-blue-100/80 text-sm italic"></p></div>
-                    <div><h3 class="text-gray-400 font-bold uppercase text-[10px] border-b border-gray-700 pb-1 mb-2">Biography</h3><p id="modal-npc-backstory" class="text-gray-400 text-sm leading-relaxed"></p></div>
+                <div class="w-2/3 bg-gray-900/50 p-6 flex flex-col overflow-hidden">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-lg font-bold text-emerald-400 flex items-center gap-2"><span>🧠</span> Individual Memory Bank</h3>
+                        <div class="flex gap-2">
+                             <select id="new-mem-type" class="bg-gray-800 border border-gray-600 text-white text-xs rounded px-2 py-1 outline-none">
+                                 <option value="achievement">🏆 Achievement</option>
+                                 <option value="activity">🏃 Activity</option>
+                                 <option value="interaction">💬 Interaction</option>
+                                 <option value="secret">🔒 Secret</option>
+                             </select>
+                             <button onclick="addNPCMemory()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded text-xs font-bold">+ Add</button>
+                        </div>
+                    </div>
+                    <textarea id="new-mem-text" placeholder="Record a significant act, key activity, or memory for this NPC..." class="w-full bg-black/30 border border-gray-700 rounded p-3 text-sm text-white focus:border-emerald-500 outline-none h-20 mb-4 resize-none transition"></textarea>
+                    <div id="npc-memory-list" class="flex-1 overflow-y-auto custom-scrollbar space-y-3 pr-2"></div>
                 </div>
             </div>
         </div>
@@ -352,18 +290,16 @@
                 <div>
                     <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Status</label>
                     <select id="ent-status" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm">
-                        <option value="active">Active</option>
+                        <option value="active">Active (Forces Presence)</option>
+                        <option value="background">Background (Auto-Location)</option>
                         <option value="completed">Completed (Quest)</option>
-                        <option value="background">Background</option>
                     </select>
                 </div>
                 <div>
                     <label class="text-xs font-bold text-gray-500 uppercase block mb-1">Details / Description</label>
                     <textarea id="ent-details" class="w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-32"></textarea>
                 </div>
-                
                 <div id="ent-attrs-container" class="space-y-4 pt-2 border-t border-gray-700"></div>
-
                 <button onclick="submitEntityForm()" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-3 rounded font-bold shadow-lg transition mt-4">Save</button>
             </div>
         </div>
@@ -399,103 +335,53 @@
         let questDatabase = {};
         let locationDatabase = {};
         let eventSource = null;
+        let currentNPCView = null;
 
         function switchTab(tabId) {
             document.querySelectorAll('.nav-item').forEach(el => {
-                if(el.id === 'nav-logs') {
-                    el.className = "nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-green-400 hover:bg-green-900/20 text-sm font-mono font-bold border border-transparent hover:border-green-800 transition-all";
-                } else {
-                    el.className = "nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all";
-                }
+                el.className = "nav-item w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 text-gray-400 hover:bg-gray-800 hover:text-gray-200 text-sm font-bold transition-all";
             });
-
             const btn = document.getElementById(`nav-${tabId}`);
-            if(tabId === 'logs') {
-                 btn.className = "nav-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 bg-green-900/30 text-green-400 border border-green-600/50 text-sm font-mono font-bold shadow-md transition-all";
-            } else {
-                 btn.className = "nav-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 bg-discord text-white text-sm font-bold shadow-md transition-all";
-            }
+            if(tabId === 'logs') btn.className = "nav-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 bg-green-900/30 text-green-400 border border-green-600/50 text-sm font-mono font-bold shadow-md transition-all";
+            else btn.className = "nav-item active w-full text-left px-4 py-3 rounded-lg flex items-center gap-3 bg-discord text-white text-sm font-bold shadow-md transition-all";
+            
             document.querySelectorAll('.tab-view').forEach(el => el.classList.add('hidden'));
             document.getElementById(`view-${tabId}`).classList.remove('hidden');
-
-            if(tabId === 'logs') {
-                initLiveStream();
-            }
+            if(tabId === 'logs') initLiveStream();
         }
 
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); }
 
-        // --- LIVE LOG STREAM ---
         function initLiveStream() {
             if (eventSource) return;
-
             const container = document.getElementById('terminal-output');
             eventSource = new EventSource(`/rpg/inspect/${threadId}/stream`);
-            
             eventSource.onmessage = function(event) {
                 const log = JSON.parse(event.data);
-                
                 const div = document.createElement('div');
-                let levelColor = "text-gray-500";
-                let msgColor = "text-gray-300";
-                let prefix = "INFO";
-                let typeClass = "border-l-2 border-transparent hover:border-gray-600";
-
+                let levelColor = "text-gray-500", msgColor = "text-gray-300", prefix = "INFO", typeClass = "border-l-2 border-transparent hover:border-gray-600";
                 if (log.level === 'warn') { levelColor = "text-yellow-500"; msgColor = "text-yellow-100"; prefix = "WARN"; }
                 if (log.level === 'error') { levelColor = "text-red-500 font-bold"; msgColor = "text-red-300"; prefix = "ERR "; typeClass = "system-alert"; }
                 if (log.level === 'system') { levelColor = "text-blue-400"; msgColor = "text-blue-200"; prefix = "SYS "; }
                 if (log.level === 'ai') { levelColor = "text-purple-400 font-bold"; msgColor = "text-purple-200"; prefix = "AI  "; }
-                
-                // Special styling for thought process
-                if (log.level === 'thought_process') {
-                    levelColor = "text-indigo-400 font-bold";
-                    msgColor = "text-indigo-200";
-                    prefix = "THINK";
-                    typeClass = "thought-bubble";
-                }
-                
-                // Special styling for tools
-                if (log.message && log.message.includes('TOOL')) {
-                    levelColor = "text-amber-400 font-bold";
-                    msgColor = "text-amber-200";
-                    prefix = "TOOL ";
-                    typeClass = "tool-use";
-                }
-
+                if (log.level === 'thought_process') { levelColor = "text-indigo-400 font-bold"; msgColor = "text-indigo-200"; prefix = "THINK"; typeClass = "thought-bubble"; }
+                if (log.message && log.message.includes('TOOL')) { levelColor = "text-amber-400 font-bold"; msgColor = "text-amber-200"; prefix = "TOOL "; typeClass = "tool-use"; }
                 div.className = `log-entry flex gap-3 px-2 py-0.5 cursor-pointer rounded transition-colors ${typeClass} fade-in mb-1`;
-                div.innerHTML = `
-                    <span class="text-gray-600 shrink-0 font-mono">[${log.timestamp}]</span>
-                    <span class="${levelColor} shrink-0 font-mono font-bold w-12 text-right">${prefix}</span>
-                    <span class="${msgColor} font-mono truncate">${log.message}</span>
-                `;
-                
+                div.innerHTML = `<span class="text-gray-600 shrink-0 font-mono">[${log.timestamp}]</span><span class="${levelColor} shrink-0 font-mono font-bold w-12 text-right">${prefix}</span><span class="${msgColor} font-mono truncate">${log.message}</span>`;
                 div.onclick = () => {
                     document.getElementById('json-viewer').innerText = JSON.stringify(log.details || {}, null, 2);
                     document.querySelectorAll('.log-entry').forEach(e => e.classList.remove('bg-white/5'));
                     div.classList.add('bg-white/5');
                 };
-
-                container.appendChild(div);
-                container.scrollTop = container.scrollHeight;
-            };
-
-            eventSource.onerror = function() {
-                console.log("Stream error, retrying...");
-                eventSource.close();
-                eventSource = null;
-                setTimeout(initLiveStream, 3000);
+                container.appendChild(div); container.scrollTop = container.scrollHeight;
             };
         }
 
-        // --- INITIAL DATA LOAD ---
         async function loadData() {
             try {
                 const res = await fetch(`/api/rpg/memory/${threadId}`);
                 const data = await res.json();
-                if (data.error) {
-                    document.getElementById('connection-status').innerHTML = `<span class="text-red-400">Disconnected</span>`;
-                    return;
-                }
+                if (data.error) { document.getElementById('connection-status').innerHTML = `<span class="text-red-400">Disconnected</span>`; return; }
                 document.getElementById('connection-status').innerHTML = `<span class="w-2 h-2 rounded-full bg-green-500"></span> <span class="text-green-400">Online</span>`;
                 document.getElementById('export-btn').href = `/api/rpg/export/${threadId}`;
                 document.getElementById('meta-title').innerText = data.meta.title || "Untitled Adventure";
@@ -505,176 +391,60 @@
                 document.getElementById('stat-locs').innerText = data.locations.length;
                 
                 const env = data.environment || {};
-                document.getElementById('sidebar-meta').innerHTML = `
-                    <div class="flex justify-between"><span>Host</span> <span class="text-white">${data.meta.owner}</span></div>
-                    <div class="flex justify-between"><span>Scenario</span> <span class="text-white truncate w-24 text-right">${data.meta.scenario}</span></div>
-                    <div class="border-t border-gray-700 my-2"></div>
-                    <div class="flex justify-between text-yellow-500 font-bold"><span>Story Time</span> <span>${env.time || 'Day'}</span></div>
-                    <div class="flex justify-between text-blue-400"><span>Weather</span> <span>${env.weather || 'Clear'}</span></div>
-                `;
+                document.getElementById('sidebar-meta').innerHTML = `<div class="flex justify-between"><span>Host</span> <span class="text-white">${data.meta.owner}</span></div><div class="flex justify-between"><span>Scenario</span> <span class="text-white truncate w-24 text-right">${data.meta.scenario}</span></div><div class="border-t border-gray-700 my-2"></div><div class="flex justify-between text-yellow-500 font-bold"><span>Story Time</span> <span>${env.time || 'Day'}</span></div><div class="flex justify-between text-blue-400"><span>Weather</span> <span>${env.weather || 'Clear'}</span></div>`;
 
-                // Render Story Logs
-                const storyLog = data.story_log || [];
-                const pendingActions = storyLog.filter(l => l.status === 'pending');
-                const resolvedActions = storyLog.filter(l => l.status !== 'pending');
-                
-                const pendingContainer = document.getElementById('container-story-pending');
-                if (pendingActions.length > 0) {
-                    pendingContainer.innerHTML = pendingActions.map(item => `
-                        <div class="flex items-start gap-4 bg-card p-4 rounded-xl border border-gray-700 shadow-md group relative">
-                             <div class="absolute top-2 right-2 flex">
-                                <button onclick="openLogForm('${item.id}', '${item.note.replace(/'/g, "\\'")}', '${item.status}')" class="edit-btn">EDIT</button>
-                                <button onclick="deleteLog('${item.id}')" class="delete-btn">DEL</button>
-                             </div>
-                             <div class="mt-1 text-2xl animate-pulse">📌</div>
-                             <div class="flex-1">
-                                 <h4 class="font-bold text-yellow-400 text-sm uppercase tracking-wide">Action Required</h4>
-                                 <p class="text-gray-200 mt-1 leading-relaxed">${item.note}</p>
-                                 <div class="text-[10px] text-gray-500 font-mono mt-2 bg-black/20 inline-block px-2 py-0.5 rounded">ID: ${item.id} | ${item.timestamp ? item.timestamp.split('T')[0] + ' ' + item.timestamp.split('T')[1].substring(0,5) : 'Unknown Time'}</div>
-                             </div>
-                        </div>
-                    `).join('');
-                } else {
-                    pendingContainer.innerHTML = `<div class="p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">No pending directives.</div>`;
-                }
-
-                const resolvedContainer = document.getElementById('container-story-resolved');
-                if (resolvedActions.length > 0) {
-                    resolvedContainer.innerHTML = resolvedActions.map(item => `
-                        <div class="flex items-start gap-3 opacity-60 hover:opacity-100 transition p-3 rounded border border-transparent hover:border-gray-700 hover:bg-white/5 group relative">
-                             <div class="absolute top-2 right-2 flex">
-                                <button onclick="openLogForm('${item.id}', '${item.note.replace(/'/g, "\\'")}', '${item.status}')" class="edit-btn">EDIT</button>
-                                <button onclick="deleteLog('${item.id}')" class="delete-btn">DEL</button>
-                             </div>
-                             <div class="mt-0.5 text-green-500 text-sm">✅</div>
-                             <div>
-                                 <p class="text-gray-400 text-sm line-through decoration-gray-600 decoration-2">${item.note}</p>
-                                 <div class="text-[10px] text-gray-600 font-mono mt-0.5">${item.timestamp ? item.timestamp.split('T')[0] : ''}</div>
-                             </div>
-                        </div>
-                    `).join('');
-                } else {
-                    resolvedContainer.innerHTML = `<div class="text-center text-gray-600 text-xs italic py-4">History is clear.</div>`;
-                }
-
-                document.getElementById('overview-party').innerHTML = Object.values(data.players).map(p => `
-                    <div class="flex items-center justify-between bg-black/30 p-3 rounded-lg border border-gray-700">
-                        <div class="flex items-center gap-3">
-                             <div class="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-white shadow-md">${p.name.substring(0,2).toUpperCase()}</div>
-                             <div>
-                                 <div class="font-bold text-sm text-white">${p.name}</div>
-                                 <div class="text-[10px] text-gray-500 uppercase tracking-wide">${p.class}</div>
-                             </div>
-                        </div>
-                        <div class="text-right text-xs space-y-1">
-                             <div class="text-green-400 bg-green-900/20 px-2 py-0.5 rounded">HP ${p.hp}/${p.max_hp}</div>
-                             <div class="text-blue-400 bg-blue-900/20 px-2 py-0.5 rounded">MP ${p.mp}/${p.max_mp}</div>
-                        </div>
-                    </div>
-                `).join('');
-
+                renderLogList(data.story_log || []);
+                document.getElementById('overview-party').innerHTML = Object.values(data.players).map(p => `<div class="flex items-center justify-between bg-black/30 p-3 rounded-lg border border-gray-700"><div class="flex items-center gap-3"><div class="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center font-bold text-white shadow-md">${p.name.substring(0,2).toUpperCase()}</div><div><div class="font-bold text-sm text-white">${p.name}</div><div class="text-[10px] text-gray-500 uppercase tracking-wide">${p.class}</div></div></div><div class="text-right text-xs space-y-1"><div class="text-green-400 bg-green-900/20 px-2 py-0.5 rounded">HP ${p.hp}/${p.max_hp}</div><div class="text-blue-400 bg-blue-900/20 px-2 py-0.5 rounded">MP ${p.mp}/${p.max_mp}</div></div></div>`).join('');
                 const topQuests = data.quests.filter(q => q.status === 'active').slice(0, 3);
-                document.getElementById('overview-quests').innerHTML = topQuests.map(q => `
-                    <div class="group flex items-center gap-3 cursor-pointer hover:bg-white/5 p-2 rounded-lg transition" onclick="switchTab('quests')">
-                        <div class="w-1 h-8 bg-orange-500 rounded-full group-hover:h-10 transition-all"></div>
-                        <div class="overflow-hidden">
-                            <div class="text-sm font-bold text-gray-200 truncate group-hover:text-orange-400">${q.name}</div>
-                            <div class="text-xs text-gray-500 truncate">${q.details}</div>
-                        </div>
-                    </div>
-                `).join('') || '<div class="text-gray-600 text-sm italic py-2">No active quests.</div>';
+                document.getElementById('overview-quests').innerHTML = topQuests.map(q => `<div class="group flex items-center gap-3 cursor-pointer hover:bg-white/5 p-2 rounded-lg transition" onclick="switchTab('quests')"><div class="w-1 h-8 bg-orange-500 rounded-full group-hover:h-10 transition-all"></div><div class="overflow-hidden"><div class="text-sm font-bold text-gray-200 truncate group-hover:text-orange-400">${q.name}</div><div class="text-xs text-gray-500 truncate">${q.details}</div></div></div>`).join('') || '<div class="text-gray-600 text-sm italic py-2">No active quests.</div>';
 
-                // Populate Databases
-                questDatabase = {};
-                data.quests.forEach(q => questDatabase[q.name] = q);
+                questDatabase = {}; data.quests.forEach(q => questDatabase[q.name] = q);
                 renderQuestList('container-quests-active', data.quests.filter(q => q.status === 'active'), 'orange');
                 renderQuestList('container-quests-completed', data.quests.filter(q => q.status !== 'active'), 'green');
-                
-                npcDatabase = {};
-                data.npcs.forEach(n => npcDatabase[n.name] = n);
+                npcDatabase = {}; data.npcs.forEach(n => npcDatabase[n.name] = n);
                 renderNPCGrid('container-npcs', data.npcs, 'blue');
-                
-                locationDatabase = {};
-                data.locations.forEach(l => locationDatabase[l.name] = l);
+                locationDatabase = {}; data.locations.forEach(l => locationDatabase[l.name] = l);
                 renderGrid('container-locations', data.locations, 'emerald', 'location');
-                
                 renderEventList('container-events', data.events);
-
             } catch (e) { console.error(e); }
         }
 
-        // --- RENDERERS ---
+        function renderLogList(logs) {
+             const pending = logs.filter(l => l.status === 'pending');
+             document.getElementById('container-story-pending').innerHTML = pending.length ? pending.map(item => `<div class="flex items-start gap-4 bg-card p-4 rounded-xl border border-gray-700 shadow-md group relative"><div class="absolute top-2 right-2 flex"><button onclick="openLogForm('${item.id}', '${item.note.replace(/'/g, "\\'")}', '${item.status}')" class="edit-btn">EDIT</button><button onclick="deleteLog('${item.id}')" class="delete-btn">DEL</button></div><div class="mt-1 text-2xl animate-pulse">📌</div><div class="flex-1"><h4 class="font-bold text-yellow-400 text-sm uppercase tracking-wide">Action Required</h4><p class="text-gray-200 mt-1 leading-relaxed">${item.note}</p><div class="text-[10px] text-gray-500 font-mono mt-2 bg-black/20 inline-block px-2 py-0.5 rounded">ID: ${item.id}</div></div></div>`).join('') : `<div class="p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">No pending directives.</div>`;
+             
+             const resolved = logs.filter(l => l.status !== 'pending');
+             document.getElementById('container-story-resolved').innerHTML = resolved.length ? resolved.map(item => `<div class="flex items-start gap-3 opacity-60 hover:opacity-100 transition p-3 rounded border border-transparent hover:border-gray-700 hover:bg-white/5 group relative"><div class="absolute top-2 right-2 flex"><button onclick="openLogForm('${item.id}', '${item.note.replace(/'/g, "\\'")}', '${item.status}')" class="edit-btn">EDIT</button><button onclick="deleteLog('${item.id}')" class="delete-btn">DEL</button></div><div class="mt-0.5 text-green-500 text-sm">✅</div><div><p class="text-gray-400 text-sm line-through decoration-gray-600 decoration-2">${item.note}</p><div class="text-[10px] text-gray-600 font-mono mt-0.5">${item.timestamp ? item.timestamp.split('T')[0] : ''}</div></div></div>`).join('') : `<div class="text-center text-gray-600 text-xs italic py-4">History is clear.</div>`;
+        }
+
         function renderQuestList(id, items, color) {
             const el = document.getElementById(id);
             if (!items.length) { el.innerHTML = `<div class="p-6 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600 text-sm">Nothing to report.</div>`; return; }
-            el.innerHTML = items.map(item => `
-                <div class="bg-card p-5 rounded-xl border border-gray-700 hover:border-${color}-500/50 transition group shadow-sm relative">
-                    <div class="absolute top-4 right-4 flex">
-                        <button onclick="openEntityForm('quest', '${item.name}')" class="edit-btn">EDIT</button>
-                        <button onclick="deleteEntity('quest', '${item.name}')" class="delete-btn">DEL</button>
-                    </div>
-                    <div class="flex justify-between items-start mb-2" onclick="openQuestModal('${item.name}')">
-                        <h4 class="font-bold text-gray-100 text-lg group-hover:text-${color}-400 transition cursor-pointer">${item.name}</h4>
-                        <span class="text-xs font-mono text-gray-600">${item.last_updated ? item.last_updated.split('T')[0] : ''}</span>
-                    </div>
-                    <div class="text-gray-400 text-sm line-clamp-2">${item.details}</div>
-                </div>
-            `).join('');
+            el.innerHTML = items.map(item => `<div class="bg-card p-5 rounded-xl border border-gray-700 hover:border-${color}-500/50 transition group shadow-sm relative"><div class="absolute top-4 right-4 flex"><button onclick="openEntityForm('quest', '${item.name}')" class="edit-btn">EDIT</button><button onclick="deleteEntity('quest', '${item.name}')" class="delete-btn">DEL</button></div><div class="flex justify-between items-start mb-2" onclick="openQuestModal('${item.name}')"><h4 class="font-bold text-gray-100 text-lg group-hover:text-${color}-400 transition cursor-pointer">${item.name}</h4><span class="text-xs font-mono text-gray-600">${item.last_updated ? item.last_updated.split('T')[0] : ''}</span></div><div class="text-gray-400 text-sm line-clamp-2">${item.details}</div></div>`).join('');
         }
+
         function renderEventList(id, items) {
              const el = document.getElementById(id);
              if (!items.length) { el.innerHTML = `<div class="p-6 text-center text-gray-600 text-sm italic">Timeline empty.</div>`; return; }
-             el.innerHTML = items.map(item => `
-                <div class="relative pl-6 pb-6 border-l-2 border-gray-700 last:border-0 last:pb-0">
-                    <div class="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-gray-800 border-2 border-yellow-500"></div>
-                    <div class="bg-card p-4 rounded-lg border border-gray-700 shadow-sm group relative">
-                        <div class="absolute top-2 right-2 flex">
-                            <button onclick="deleteEntity('event', '${item.name}')" class="delete-btn">DEL</button>
-                        </div>
-                        <h4 class="font-bold text-yellow-400 text-sm mb-1">${item.name}</h4>
-                        <p class="text-gray-400 text-xs leading-relaxed">${item.details}</p>
-                    </div>
-                </div>
-             `).join('');
+             el.innerHTML = items.map(item => `<div class="relative pl-6 pb-6 border-l-2 border-gray-700 last:border-0 last:pb-0"><div class="absolute -left-[9px] top-0 w-4 h-4 rounded-full bg-gray-800 border-2 border-yellow-500"></div><div class="bg-card p-4 rounded-lg border border-gray-700 shadow-sm group relative"><div class="absolute top-2 right-2 flex"><button onclick="deleteEntity('event', '${item.name}')" class="delete-btn">DEL</button></div><h4 class="font-bold text-yellow-400 text-sm mb-1">${item.name}</h4><p class="text-gray-400 text-xs leading-relaxed">${item.details}</p></div></div>`).join('');
         }
+
         function renderNPCGrid(id, items, color) {
             const el = document.getElementById(id);
             if (!items.length) { el.innerHTML = `<div class="col-span-full p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">No data found.</div>`; return; }
             el.innerHTML = items.map(item => {
                 const state = item.attributes?.state || "Alive";
                 const stateColor = state.toLowerCase() === 'dead' ? 'text-red-500' : 'text-green-400';
-                return `
-                <div onclick="openNPCModal('${item.name}')" class="bg-card p-5 rounded-xl border border-gray-700 hover:-translate-y-1 hover:shadow-xl hover:border-${color}-500/50 transition cursor-pointer relative overflow-hidden group">
-                    <div class="absolute top-0 right-0 w-20 h-20 bg-${color}-500/5 rounded-full blur-xl group-hover:bg-${color}-500/10 transition"></div>
-                    <div class="flex justify-between items-start mb-2">
-                        <h4 class="font-bold text-white text-lg truncate pr-2">${item.name}</h4>
-                        <span class="text-[10px] uppercase font-bold bg-black/40 px-2 py-0.5 rounded border border-gray-700/50 ${stateColor}">${state}</span>
-                    </div>
-                    <div class="text-${color}-300 text-xs mb-3 italic truncate">${item.attributes?.race || 'Unknown'} | ${item.attributes?.role || 'Character'}</div>
-                    <div class="text-gray-400 text-sm line-clamp-2">${item.details}</div>
-                    <div class="mt-4 pt-3 border-t border-gray-700/50 flex justify-between items-center opacity-50 group-hover:opacity-100 transition">
-                        <span class="text-[10px] font-bold text-${color}-400 uppercase tracking-wider">Inspect Profile</span>
-                        <span>→</span>
-                    </div>
-                </div>
-            `}).join('');
+                return `<div onclick="openNPCModal('${item.name}')" class="bg-card p-5 rounded-xl border border-gray-700 hover:-translate-y-1 hover:shadow-xl hover:border-${color}-500/50 transition cursor-pointer relative overflow-hidden group"><div class="absolute top-0 right-0 w-20 h-20 bg-${color}-500/5 rounded-full blur-xl group-hover:bg-${color}-500/10 transition"></div><div class="flex justify-between items-start mb-2"><h4 class="font-bold text-white text-lg truncate pr-2">${item.name}</h4><span class="text-[10px] uppercase font-bold bg-black/40 px-2 py-0.5 rounded border border-gray-700/50 ${stateColor}">${state}</span></div><div class="text-${color}-300 text-xs mb-3 italic truncate">${item.attributes?.race || 'Unknown'} | ${item.attributes?.role || 'Character'}</div><div class="text-gray-400 text-sm line-clamp-2">${item.details}</div><div class="mt-4 pt-3 border-t border-gray-700/50 flex justify-between items-center opacity-50 group-hover:opacity-100 transition"><span class="text-[10px] font-bold text-${color}-400 uppercase tracking-wider">Inspect Profile</span><span>→</span></div></div>`;
+            }).join('');
         }
+
         function renderGrid(id, items, color, type) {
              const el = document.getElementById(id);
              if (!items.length) { el.innerHTML = `<div class="col-span-full p-8 text-center border-2 border-dashed border-gray-800 rounded-xl text-gray-600">No data.</div>`; return; }
-             el.innerHTML = items.map(item => `
-                <div class="bg-card p-5 rounded-xl border border-gray-700 hover:border-${color}-500/50 transition group relative">
-                    <div class="absolute top-4 right-4 flex">
-                        <button onclick="openEntityForm('${type}', '${item.name}')" class="edit-btn">EDIT</button>
-                        <button onclick="deleteEntity('${type}', '${item.name}')" class="delete-btn">DEL</button>
-                    </div>
-                    <h4 class="font-bold text-white text-lg mb-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-${color}-500"></span> ${item.name}</h4>
-                    <p class="text-gray-400 text-sm h-20 overflow-y-auto custom-scrollbar">${item.details}</p>
-                </div>
-             `).join('');
+             el.innerHTML = items.map(item => `<div class="bg-card p-5 rounded-xl border border-gray-700 hover:border-${color}-500/50 transition group relative"><div class="absolute top-4 right-4 flex"><button onclick="openEntityForm('${type}', '${item.name}')" class="edit-btn">EDIT</button><button onclick="deleteEntity('${type}', '${item.name}')" class="delete-btn">DEL</button></div><h4 class="font-bold text-white text-lg mb-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-${color}-500"></span> ${item.name}</h4><p class="text-gray-400 text-sm h-20 overflow-y-auto custom-scrollbar">${item.details}</p></div>`).join('');
         }
 
-        // --- GENERIC ENTITY MANAGEMENT ---
         function openEntityForm(category, name=null) {
             document.getElementById('ent-category').value = category;
             document.getElementById('ent-attrs-container').innerHTML = "";
@@ -701,42 +471,40 @@
                 } else if(category === 'location') {
                     addAttrField('Region', attrs.region);
                 } else if(category === 'npc') {
+                    // --- UPDATED FOR SPATIAL PERSISTENCE ---
+                    addAttrField('Location', attrs.location); 
+                    addAttrField('Clothing', attrs.clothing); 
+                    // ---------------------------------------
                     addAttrField('Race', attrs.race);
                     addAttrField('Gender', attrs.gender);
-                    addAttrField('Age', attrs.age);
                     addAttrField('Role', attrs.role);
                     addAttrField('State', attrs.state);
-                    addAttrField('Condition', attrs.condition);
                     addAttrField('Appearance', attrs.appearance);
                     addAttrField('Personality', attrs.personality);
                     addAttrField('Relationships', attrs.relationships);
-                    addAttrField('Backstory', attrs.backstory || attrs.bio);
                 }
             } else {
                 document.getElementById('entity-form-title').innerText = `Add New ${category.toUpperCase()}`;
                 document.getElementById('ent-original-name').value = "";
                 document.getElementById('ent-name').value = "";
                 document.getElementById('ent-details').value = "";
-                document.getElementById('ent-status').value = "active";
+                document.getElementById('ent-status').value = "background"; 
                 
                 if(category === 'npc') {
-                    ['Race', 'Gender', 'Age', 'Role', 'State', 'Condition', 'Appearance', 'Personality', 'Relationships', 'Backstory'].forEach(f => addAttrField(f, ''));
+                    ['Location', 'Clothing', 'Race', 'Gender', 'Role', 'State', 'Appearance', 'Personality'].forEach(f => addAttrField(f, ''));
                 } else if (category === 'quest') {
                     ['Issuer', 'Rewards', 'Trigger'].forEach(f => addAttrField(f, ''));
                 }
             }
-            
             modal.classList.remove('hidden');
         }
 
         function addAttrField(label, value) {
             const div = document.createElement('div');
             let inputField = `<input type="text" data-key="${label.toLowerCase()}" class="ent-attr-input w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm" value="${value || ''}">`;
-            
             if (['Appearance', 'Personality', 'Backstory', 'Relationships'].includes(label)) {
                 inputField = `<textarea data-key="${label.toLowerCase()}" class="ent-attr-input w-full bg-darkbg border border-gray-700 rounded p-2 text-white text-sm h-16">${value || ''}</textarea>`;
             }
-
             div.innerHTML = `<label class="text-xs font-bold text-gray-500 uppercase block mb-1">${label}</label>${inputField}`;
             document.getElementById('ent-attrs-container').appendChild(div);
         }
@@ -745,80 +513,39 @@
             const cat = document.getElementById('ent-category').value;
             const originalName = document.getElementById('ent-original-name').value;
             const action = originalName ? 'edit' : 'add';
-            
             const attrs = {};
-            document.querySelectorAll('.ent-attr-input').forEach(el => {
-                if(el.value) attrs[el.dataset.key] = el.value;
-            });
-
-            const payload = {
-                thread_id: threadId,
-                category: cat,
-                action: action,
-                original_name: originalName || null,
-                data: {
-                    name: document.getElementById('ent-name').value,
-                    details: document.getElementById('ent-details').value,
-                    status: document.getElementById('ent-status').value,
-                    attributes: attrs
-                }
-            };
-
+            document.querySelectorAll('.ent-attr-input').forEach(el => { if(el.value) attrs[el.dataset.key] = el.value; });
             await fetch('/api/rpg/manage/entity', {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({thread_id: threadId, category: cat, action: action, original_name: originalName || null, data: { name: document.getElementById('ent-name').value, details: document.getElementById('ent-details').value, status: document.getElementById('ent-status').value, attributes: attrs }})
             });
-            closeModal('entity-form-modal');
-            loadData();
+            closeModal('entity-form-modal'); loadData();
         }
 
         async function deleteEntity(category, name) {
             if(!confirm(`Delete this ${category}?`)) return;
-            await fetch('/api/rpg/manage/entity', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({thread_id: threadId, category: category, action: 'delete', original_name: name})
-            });
+            await fetch('/api/rpg/manage/entity', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({thread_id: threadId, category: category, action: 'delete', original_name: name}) });
             loadData();
         }
 
-        // --- STORY LOG MANAGEMENT ---
         function openLogForm(id=null, note=null, status='pending') {
-            document.getElementById('log-id').value = id || "";
-            document.getElementById('log-note').value = note || "";
-            document.getElementById('log-status').value = status;
+            document.getElementById('log-id').value = id || ""; document.getElementById('log-note').value = note || ""; document.getElementById('log-status').value = status;
             document.getElementById('log-form-modal').classList.remove('hidden');
         }
 
         async function submitLogForm() {
             const id = document.getElementById('log-id').value;
-            const action = id ? 'edit' : 'add';
-            
-            await fetch('/api/rpg/manage/log', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({
-                    thread_id: threadId,
-                    action: action,
-                    log_id: id || null,
-                    note: document.getElementById('log-note').value,
-                    status: document.getElementById('log-status').value
-                })
-            });
-            closeModal('log-form-modal');
-            loadData();
+            await fetch('/api/rpg/manage/log', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ thread_id: threadId, action: id ? 'edit' : 'add', log_id: id || null, note: document.getElementById('log-note').value, status: document.getElementById('log-status').value }) });
+            closeModal('log-form-modal'); loadData();
         }
 
         async function deleteLog(id) {
             if(!confirm("Delete log entry?")) return;
-            await fetch('/api/rpg/manage/log', {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({thread_id: threadId, action: 'delete', log_id: id})
-            });
+            await fetch('/api/rpg/manage/log', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({thread_id: threadId, action: 'delete', log_id: id}) });
             loadData();
         }
 
-        // --- DETAILS POPULATION ---
         function openQuestModal(name) {
-            const q = questDatabase[name];
-            if(!q) return;
+            const q = questDatabase[name]; if(!q) return;
             const attrs = q.attributes || {};
             document.getElementById('modal-quest-name').innerText = q.name;
             document.getElementById('modal-quest-desc').innerText = q.details;
@@ -831,33 +558,50 @@
         }
 
         function openNPCModal(name) {
-            const n = npcDatabase[name];
-            if(!n) return;
+            const n = npcDatabase[name]; if(!n) return;
+            currentNPCView = name;
             const attrs = n.attributes || {};
             document.getElementById('modal-npc-name').innerText = n.name;
             document.getElementById('modal-npc-role').innerText = attrs.role || "Character";
             document.getElementById('modal-npc-age').innerText = attrs.age || "?";
-            document.getElementById('modal-npc-gender').innerText = attrs.gender || "?";
             document.getElementById('modal-npc-race').innerText = attrs.race || "?";
             const stateEl = document.getElementById('modal-npc-state');
-            stateEl.innerText = attrs.state || "Alive";
+            stateEl.innerText = `${attrs.state || "Alive"} | ${attrs.condition || "Healthy"}`;
             stateEl.className = attrs.state?.toLowerCase() === 'dead' ? "font-bold text-red-500" : "font-bold text-green-400";
-            document.getElementById('modal-npc-condition').innerText = attrs.condition || "Healthy";
             document.getElementById('modal-npc-app').innerText = attrs.appearance || "No description.";
             document.getElementById('modal-npc-personality').innerText = attrs.personality || "No personality data.";
             document.getElementById('modal-npc-rel').innerText = attrs.relationships || attrs.relationship || "Neutral";
-            document.getElementById('modal-npc-backstory').innerText = attrs.bio || attrs.backstory || "No history.";
-            
-            const aliasCont = document.getElementById('modal-npc-aliases-container');
-            const aliasList = document.getElementById('modal-npc-aliases');
-            aliasList.innerHTML = "";
-            if(attrs.aliases && attrs.aliases.length) {
-                aliasCont.classList.remove('hidden');
-                attrs.aliases.forEach(a => {
-                    aliasList.innerHTML += `<span class="bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded text-xs border border-indigo-700/50">${a}</span>`;
-                });
-            } else { aliasCont.classList.add('hidden'); }
+            document.getElementById('new-mem-text').value = "";
+            renderNPCMemories(attrs.history || []);
             document.getElementById('npc-modal').classList.remove('hidden');
+        }
+
+        function renderNPCMemories(history) {
+            const container = document.getElementById('npc-memory-list');
+            if (!history || history.length === 0) { container.innerHTML = `<div class="text-center text-gray-600 text-xs italic py-10">No individual memories recorded yet.<br>Add acts, achievements, or key activities above.</div>`; return; }
+            const sortedHistory = [...history].reverse();
+            container.innerHTML = sortedHistory.map(mem => {
+                let icon = "📝", color = "gray";
+                if(mem.type === 'achievement') { icon = "🏆"; color = "yellow"; }
+                if(mem.type === 'activity') { icon = "🏃"; color = "blue"; }
+                if(mem.type === 'interaction') { icon = "💬"; color = "purple"; }
+                if(mem.type === 'secret') { icon = "🔒"; color = "red"; }
+                return `<div class="bg-card p-3 rounded-lg border border-gray-700/50 hover:border-${color}-500/30 transition group flex gap-3 relative"><div class="text-xl mt-1">${icon}</div><div class="flex-1"><div class="flex justify-between items-center mb-1"><span class="text-[10px] font-bold uppercase text-${color}-400 tracking-wider">${mem.type}</span><span class="text-[10px] font-mono text-gray-600">${mem.timestamp ? mem.timestamp.split('T')[0] : ''}</span></div><p class="text-gray-300 text-sm leading-snug">${mem.text}</p></div><button onclick="deleteNPCMemory('${mem.id}')" class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-red-500 hover:text-red-400 font-bold text-xs bg-black/50 px-2 py-1 rounded transition">DEL</button></div>`;
+            }).join('');
+        }
+
+        async function addNPCMemory() {
+            const text = document.getElementById('new-mem-text').value;
+            const type = document.getElementById('new-mem-type').value;
+            if(!text || !currentNPCView) return;
+            const res = await fetch('/api/rpg/manage/npc_memory', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ thread_id: threadId, npc_name: currentNPCView, action: 'add', memory_type: type, text: text }) });
+            if(res.ok) { document.getElementById('new-mem-text').value = ""; await loadData(); openNPCModal(currentNPCView); }
+        }
+
+        async function deleteNPCMemory(memId) {
+            if(!confirm("Delete this memory forever?")) return;
+            await fetch('/api/rpg/manage/npc_memory', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ thread_id: threadId, npc_name: currentNPCView, action: 'delete', memory_type: 'any', text: memId }) });
+            await loadData(); openNPCModal(currentNPCView);
         }
 
         setInterval(loadData, 5000);

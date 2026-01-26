@@ -118,18 +118,15 @@ class RPGContextManager:
         )
 
     async def snapshot_world_state(self, thread_id, turn_id):
-        # 1. Snapshot World Data (NPCs, Quests, etc.)
         world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)})
         snapshot = {k: v for k, v in world_data.items() if k != "_id"} if world_data else {}
         
-        # 2. Snapshot Player Inventories
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
         inventory_snapshot = {}
         if session:
             for player_id in session.get("players", []):
                 inv = rpg_inventory_collection.find_one({"user_id": player_id})
                 if inv:
-                    # Key by stringified user_id for MongoDB compatibility
                     inventory_snapshot[str(player_id)] = inv.get("items", [])
 
         snapshot["_inventory_backup"] = inventory_snapshot
@@ -142,7 +139,6 @@ class RPGContextManager:
     def restore_world_state(self, thread_id, snapshot):
         if not snapshot: return
 
-        # 1. Restore Inventory
         inventory_data = snapshot.pop("_inventory_backup", None)
         if inventory_data:
             for user_id_str, items in inventory_data.items():
@@ -152,7 +148,6 @@ class RPGContextManager:
                     upsert=True
                 )
 
-        # 2. Restore World
         snapshot["thread_id"] = int(thread_id)
         rpg_world_state_collection.replace_one(
             {"thread_id": int(thread_id)},
@@ -200,58 +195,92 @@ class RPGContextManager:
         
         debug_snapshot = {"active_quests": [], "active_locs": [], "active_npcs": [], "recalled_npcs": []}
 
-        # 0. ENVIRONMENT (NUMERIC TIME)
+        # 0. ENVIRONMENT
         env = data.get("environment", {})
         time_str = env.get("time", "08:00")
         weather_str = env.get("weather", "Clear")
         env_text = f"**🕰️ TIME:** {time_str} | **Weather:** {weather_str}\n"
 
-        # 1. PENDING ACTIONS / STORY LOG (NEW)
+        # 1. LOGS
         logs = data.get("story_log", [])
         active_logs = [l for l in logs if l.get("status") == "pending"]
         log_text = ""
         if active_logs:
             log_text = "**📝 PENDING ACTIONS / ORDERS:**\n" + "".join([f"> 📌 {l['note']}\n" for l in active_logs]) + "\n"
 
-        # 2. OBJECTIVES
+        # 2. LOCATIONS (DETERMINES PLAYER LOCATION)
+        locations = data.get("locations", {})
+        active_loc_objs = [v for v in locations.values() if v.get("status") == "active"]
+        active_loc_names = [l['name'].lower().strip() for l in active_loc_objs]
+        
+        loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_loc_objs]) if active_loc_objs else "**📍 CURRENT LOCATION:** Unknown / Wilderness\n"
+        debug_snapshot["active_locs"] = [l['name'] for l in active_loc_objs]
+
+        # 3. QUESTS
         quests = data.get("quests", {})
         active_quests = [v for v in quests.values() if v.get("status") == "active"]
         quest_text = "**🛡️ ACTIVE QUESTS:**\n" + "".join([f"> 🔸 **{q['name']}**: {q['details']}\n" for q in active_quests]) if active_quests else ""
         debug_snapshot["active_quests"] = [q['name'] for q in active_quests]
 
-        # 3. LOCATIONS
-        locations = data.get("locations", {})
-        active_locs = [v for v in locations.values() if v.get("status") == "active"]
-        loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_locs]) if active_locs else ""
-        debug_snapshot["active_locs"] = [l['name'] for l in active_locs]
-
-        # 4. NPC REGISTRY
+        # 4. NPC REGISTRY (SPATIAL & COMPANION FILTERING)
         npcs = data.get("npcs", {})
-        active_npcs = [v for v in npcs.values() if v.get("status") == "active"]
+        visible_npcs = []
+
+        for npc in npcs.values():
+            attrs = npc.get("attributes", {})
+            npc_loc = attrs.get("location", "").lower().strip()
+            role = attrs.get("role", "").lower().strip()
+            status = npc.get("status", "background").lower()
+
+            # Rule 1: Always show 'Companions' regardless of location
+            is_companion = "companion" in role or "party" in role
+            
+            # Rule 2: Show if NPC is in the current active location
+            is_present = npc_loc and (npc_loc in active_loc_names)
+            
+            # Rule 3: Manual override (if status is forcibly set to active)
+            is_active_forced = status == "active"
+
+            if (is_companion or is_present or is_active_forced) and status != "dead":
+                visible_npcs.append(npc)
         
         npc_list = []
-        for npc in active_npcs:
+        for npc in visible_npcs:
             details = npc['details']
             attrs = npc.get("attributes", {})
             alias_str = " ".join([f"`{a}`" for a in attrs.get("aliases", [])]) if attrs.get("aliases") else ""
             rel = attrs.get("relationships") or "Neutral"
             if isinstance(rel, list): rel = ", ".join(rel)
             
+            # Include Clothing in context
+            clothing = attrs.get("clothing", "Standard attire")
+            
+            # Individual History
+            history = attrs.get("history", [])
+            history_txt = ""
+            if history:
+                recent_mems = history[-3:] 
+                history_txt = "\n>    └─ **MEMORIES:** " + " | ".join([f"[{m['type'].upper()}] {m['text']}" for m in recent_mems])
+
             npc_list.append(
                 f"> 👤 **{npc['name']}** [{attrs.get('race','?')} | {attrs.get('gender','?')}] {alias_str}\n"
-                f">    ├─ **STATUS:** {attrs.get('condition','Alive')} | {attrs.get('state','Healthy')}\n"
+                f">    ├─ **STATUS:** {attrs.get('condition','Alive')} | **WEARING:** {clothing}\n"
                 f">    ├─ **RELATIONSHIP:** {rel}\n"
-                f">    └─ **INFO:** {details}"
+                f">    ├─ **INFO:** {details}"
+                f"{history_txt}"
             )
             debug_snapshot["active_npcs"].append(npc['name'])
         
+        # Recalled NPCs (Keywords in user input)
         input_lower = current_input.lower()
+        active_names = [n['name'].lower() for n in visible_npcs]
+        
         for key, npc in npcs.items():
-            if npc.get("status") != "active" and npc['name'].lower() in input_lower:
+            if npc['name'].lower() not in active_names and npc['name'].lower() in input_lower:
                 npc_list.append(f"> 🧠 **{npc['name']}** (Recalled Memory): {npc['details']}")
                 debug_snapshot["recalled_npcs"].append(npc['name'])
         
-        npc_text = "**👥 NPC REGISTRY (CONTEXT):**\n" + "\n".join(npc_list) if npc_list else "**👥 NPC REGISTRY:** None in scene."
+        npc_text = "**👥 NPC REGISTRY (NEARBY / ACTIVE):**\n" + "\n".join(npc_list) if npc_list else "**👥 NPC REGISTRY:** No one relevant nearby."
 
         # 5. EVENTS
         events = data.get("events", {})
@@ -337,13 +366,12 @@ class RPGContextManager:
             "$inc": {"total_turns": -1}
         })
         
-        # 3. Restore World State from the *new* last turn (the one before the deleted one)
+        # 3. Restore World State from the *new* last turn
         new_last_turn = history[-1] if history else None
         
         if new_last_turn and "world_snapshot" in new_last_turn:
             self.restore_world_state(thread_id, new_last_turn["world_snapshot"])
         elif not new_last_turn:
-            # Revert to clean slate if history is empty
              rpg_world_state_collection.update_one(
                  {"thread_id": int(thread_id)},
                  {"$set": {"quests": {}, "npcs": {}, "locations": {}, "events": {}, "environment": {}}}

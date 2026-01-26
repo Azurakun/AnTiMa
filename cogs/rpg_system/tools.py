@@ -1,5 +1,6 @@
 # cogs/rpg_system/tools.py
 import random
+import uuid # <--- Added for Memory IDs
 from datetime import datetime, timedelta
 from utils.db import rpg_sessions_collection, rpg_inventory_collection, rpg_world_state_collection
 
@@ -46,8 +47,6 @@ def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: st
 def update_environment(thread_id: str, time_str: str, weather: str, minutes_passed: int = 0):
     """
     Updates the in-game Time (HH:MM) and Weather.
-    'minutes_passed': Optional auto-advance. If provided, calculates new time based on old time.
-    'time_str': Specific time string (e.g. "14:30"). If "Auto", relies on minutes_passed.
     """
     try:
         data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}) or {}
@@ -59,19 +58,17 @@ def update_environment(thread_id: str, time_str: str, weather: str, minutes_pass
         # Auto-calculate time advancement
         if minutes_passed > 0:
             try:
-                # Parse current time (handle HH:MM)
                 if ":" in current_time_str:
                     curr_h, curr_m = map(int, current_time_str.split(":"))
                 else:
-                    curr_h, curr_m = 8, 0 # Default fallback
+                    curr_h, curr_m = 8, 0 
                 
-                # Add minutes
                 total_minutes = (curr_h * 60) + curr_m + minutes_passed
                 new_h = (total_minutes // 60) % 24
                 new_m = total_minutes % 60
                 final_time = f"{new_h:02d}:{new_m:02d}"
             except:
-                pass # Fallback to provided time_str if parse fails
+                pass 
 
         if final_time == "Auto" or not final_time:
             final_time = current_time_str
@@ -89,11 +86,6 @@ def update_environment(thread_id: str, time_str: str, weather: str, minutes_pass
     except Exception as e: return f"System Error: {e}"
 
 def manage_story_log(thread_id: str, action: str, note: str, status: str = "pending"):
-    """
-    Records important details, orders given to NPCs, or promises.
-    action: 'add', 'resolve'
-    note: The detail (e.g., "Ordered Akiyama to protect Tanaka family")
-    """
     try:
         if action == "add":
             log_entry = {
@@ -110,7 +102,6 @@ def manage_story_log(thread_id: str, action: str, note: str, status: str = "pend
             return f"System: Note recorded: '{note}'"
         
         elif action == "resolve":
-            # Marks a note as completed/irrelevant based on partial match
             rpg_world_state_collection.update_one(
                 {"thread_id": int(thread_id), "story_log.note": {"$regex": note, "$options": "i"}},
                 {"$set": {"story_log.$.status": "resolved"}}
@@ -120,38 +111,47 @@ def manage_story_log(thread_id: str, action: str, note: str, status: str = "pend
         return "System: Invalid Action"
     except Exception as e: return f"System Error: {e}"
 
-def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None):
+def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None, **kwargs):
+    """
+    Updates or creates an entity in the world state.
+    Handles **kwargs for hallucinated arguments.
+    Handles 'memory_add' to push structured memories to NPC history.
+    """
     try:
-        # 1. Smart Deduplication Logic
+        # 1. Attributes Normalization
+        if attributes is None: attributes = {}
+        
+        # Merge loose kwargs
+        for key, val in kwargs.items():
+            if val is not None:
+                attributes[key] = val
+
+        # 2. Smart Deduplication Logic
         safe_name = name.strip().replace('.', '_').replace('$', '')
         key_to_use = safe_name
         final_name = name.strip()
         
-        # Only perform deep search for NPCs to avoid duplicates like "Akiyama" vs "Akiyama Hana"
+        # NPC specific deduplication
         if category.lower() == "npc":
             existing_doc = rpg_world_state_collection.find_one({"thread_id": int(thread_id)})
             if existing_doc and "npcs" in existing_doc:
                 for existing_key, existing_data in existing_doc["npcs"].items():
-                    # Exact key match
                     if existing_key == safe_name:
                         key_to_use = existing_key; break
                     
-                    # Alias match
                     existing_aliases = existing_data.get("attributes", {}).get("aliases", [])
                     if name.strip() in existing_aliases:
                         key_to_use = existing_key; final_name = existing_data["name"]; break
                     
-                    # Substring match (if name length > 4 chars)
                     existing_real_name = existing_data.get("name", "")
                     if len(name) > 4 and (name in existing_real_name or existing_real_name in name):
                          key_to_use = existing_key
-                         # Prefer the longer name generally
                          if len(existing_real_name) > len(name): final_name = existing_real_name
                          break
 
         db_key = f"{category.lower()}s.{key_to_use}"
         
-        # 2. Detail Preservation & Attribute Merging
+        # 3. Data Retrieval
         existing_doc = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}, {db_key: 1})
         existing_data = {}
         if existing_doc and category.lower() + "s" in existing_doc:
@@ -159,23 +159,51 @@ def update_world_entity(thread_id: str, category: str, name: str, details: str, 
             if key_to_use in cat_dict:
                 existing_data = cat_dict[key_to_use]
 
-        # LOGIC: If existing details are "high quality" (long) and new details are "low quality" (short),
-        # keep the old details. But always update status and attributes.
+        # Preserve long descriptions
         existing_details = existing_data.get("details", "")
         final_details = details
-        
         if len(existing_details) > 50 and len(details) < 20:
-            final_details = existing_details # Preserve old, better description
+            final_details = existing_details 
 
+        # 4. Attribute Merging & Memory Handling
         existing_attrs = existing_data.get("attributes", {})
         new_attributes = existing_attrs.copy()
+        
         if attributes:
+            # Handle Alias Merging
             if "aliases" in attributes:
                 new_aliases = attributes.get("aliases", [])
                 if isinstance(new_aliases, str): new_aliases = [new_aliases]
                 current_aliases = existing_attrs.get("aliases", [])
                 combined_aliases = sorted(list(set(current_aliases + new_aliases)))
                 attributes["aliases"] = combined_aliases
+            
+            # --- NEW: MEMORY SYNC LOGIC ---
+            memory_add = attributes.get('memory_add')
+            if memory_add:
+                if 'history' not in new_attributes: new_attributes['history'] = []
+                
+                # Check for duplicates to prevent spamming logs on re-sync
+                is_duplicate = False
+                for mem in new_attributes['history']:
+                    if isinstance(mem, dict) and mem.get('text') == memory_add:
+                        is_duplicate = True
+                        break
+                
+                if not is_duplicate:
+                    new_mem = {
+                        "id": str(uuid.uuid4())[:8],
+                        "type": attributes.get('memory_type', 'interaction'),
+                        "text": memory_add,
+                        "timestamp": datetime.utcnow().isoformat()
+                    }
+                    new_attributes['history'].append(new_mem)
+                
+                # Cleanup keys so they don't persist as attributes
+                if 'memory_add' in attributes: del attributes['memory_add']
+                if 'memory_type' in attributes: del attributes['memory_type']
+            # -----------------------------
+
             new_attributes.update(attributes)
 
         update_payload = {

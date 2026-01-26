@@ -86,6 +86,23 @@ class RPGEngine:
             mechanics_instr = "**MODE: STORY**" if story_mode else "**MODE: STANDARD**"
             reroll_instr = "Reroll requested." if is_reroll else ""
             
+            # --- NEW: PASSIVE DETECTOR ---
+            # Detects if the user is being silent, waiting, or giving very short non-dialogue inputs
+            # This prevents the "waiting room" effect where NPCs just stand around.
+            passive_keywords = ["...", "wait", "nothing", "silence", "stares", "blinks", "hmm", "listen"]
+            is_passive = len(prompt) < 15 or any(k == prompt.lower().strip() for k in passive_keywords)
+            
+            social_pressure = ""
+            if is_passive and not is_reroll:
+                social_pressure = (
+                    "\n🚨 **SOCIAL PRESSURE TRIGGER:**\n"
+                    "The User is silent/passive. If NPCs are present, they MUST react to this silence.\n"
+                    "- Friendly NPCs might check in (\"Everything okay?\").\n"
+                    "- Hostile/Busy NPCs should get annoyed, suspicious, or aggressive.\n"
+                    "- DO NOT just describe the silence. MAKE THE WORLD ACT."
+                )
+            # -----------------------------
+            
             if not is_reroll:
                 session_data['last_prompt'] = prompt
                 session_data['last_roll_result'] = None
@@ -93,7 +110,7 @@ class RPGEngine:
             full_prompt = prompts.GAME_TURN.format(
                 user_action=prompt,
                 mechanics_instruction=mechanics_instr,
-                reroll_instruction=reroll_instr
+                reroll_instruction=reroll_instr + social_pressure
             )
             
             await RPGLogger.broadcast(channel.id, "PROMPTING", "Sending Prompt to Model", {"length": len(full_prompt)})
@@ -303,7 +320,11 @@ class RPGEngine:
             if fn.name == "deduct_mana": return "Story Mode" if story_mode else tools.deduct_mana(str(channel.id), **args)
             if fn.name == "update_journal": return tools.update_journal(str(channel.id), **args)
             if fn.name == "update_environment": return tools.update_environment(str(channel.id), **args)
-            if fn.name == "manage_story_log": return tools.manage_story_log(str(channel.id), **args)
+            
+            if fn.name == "manage_story_log":
+                # === DEFENSIVE FIX FOR LOGS ===
+                args.pop('thread_id', None)
+                return tools.manage_story_log(str(channel.id), **args)
 
             return f"Error: Unknown tool {fn.name}"
         except Exception as e:
@@ -350,8 +371,13 @@ class RPGEngine:
 
                             if "age" in args: args["age"] = sanitize_age(args["age"])
                             tools.update_world_entity(str(thread_id), **args)
+                        
                         elif fn.name == "manage_story_log":
-                            tools.manage_story_log(str(thread_id), **dict(fn.args))
+                            args = dict(fn.args)
+                            # === DEFENSIVE FIX FOR LOGS ===
+                            args.pop('thread_id', None)
+                            tools.manage_story_log(str(thread_id), **args)
+                            
         except Exception as e:
             RPGLogger.log(thread_id, "error", f"Scribe Error: {e}")
 
