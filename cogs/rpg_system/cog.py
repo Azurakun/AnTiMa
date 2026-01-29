@@ -204,7 +204,8 @@ class RPGAdventureCog(commands.Cog):
         deleted_turns, rewind_ts = self.memory_manager.trim_history(interaction.channel.id, turn_id)
         
         if rewind_ts:
-            await self.memory_manager.purge_memories_since(interaction.channel.id, rewind_ts)
+            # FIXED: Uses purge_memories with specific turn ID for deterministic cleanup
+            await self.memory_manager.purge_memories(interaction.channel.id, rewind_ts, from_turn_id=turn_id)
             
         if deleted_turns:
             for turn in deleted_turns:

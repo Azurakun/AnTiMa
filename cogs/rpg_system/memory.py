@@ -1,6 +1,6 @@
 # cogs/rpg_system/memory.py
 import discord
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 import asyncio
 import re
@@ -61,11 +61,27 @@ class RPGContextManager:
     async def clear_thread_vectors(self, thread_id):
         rpg_vector_memory_collection.delete_many({"thread_id": int(thread_id)})
 
+    # FIXED: Added logic to purge by Turn ID and sanitize timestamps
+    async def purge_memories(self, thread_id, cutoff_timestamp, from_turn_id=None):
+        query = {"thread_id": int(thread_id)}
+        conditions = []
+
+        if cutoff_timestamp:
+            # Ensure naive UTC for comparison
+            if cutoff_timestamp.tzinfo is not None:
+                cutoff_timestamp = cutoff_timestamp.astimezone(timezone.utc).replace(tzinfo=None)
+            conditions.append({"timestamp": {"$gt": cutoff_timestamp}})
+        
+        if from_turn_id:
+            conditions.append({"metadata.max_turn_id": {"$gt": int(from_turn_id)}})
+
+        if conditions:
+            query["$or"] = conditions
+            rpg_vector_memory_collection.delete_many(query)
+
+    # Legacy wrapper for compatibility if needed, but we'll update calls
     async def purge_memories_since(self, thread_id, cutoff_timestamp):
-        rpg_vector_memory_collection.delete_many({
-            "thread_id": int(thread_id),
-            "timestamp": {"$gt": cutoff_timestamp}
-        })
+        await self.purge_memories(thread_id, cutoff_timestamp)
 
     async def batch_ingest_history(self, thread_id, messages):
         chunk_size = 5
@@ -73,12 +89,21 @@ class RPGContextManager:
         count = 0
         for chunk in chunks:
             chunk_text = ""
+            max_turn = 0
             for msg in chunk:
                 chunk_text += f"[{msg['author']}]: {msg['content']}\n"
+                # Capture max turn_id in this chunk
+                if msg.get('turn_id', 0) > max_turn:
+                    max_turn = msg.get('turn_id')
+
             await self.store_memory(
                 thread_id, 
                 chunk_text, 
-                metadata={"type": "historical_sync", "date": chunk[0]['timestamp'].isoformat()}
+                metadata={
+                    "type": "historical_sync", 
+                    "date": str(chunk[0].get('timestamp')), 
+                    "max_turn_id": max_turn # Tag with Turn ID
+                }
             )
             count += 1
         return count
@@ -160,10 +185,22 @@ class RPGContextManager:
         if len(history) > 40:
             to_archive = history[:5]
             remaining = history[5:]
+            
+            # FIXED: Get max turn ID for metadata tagging
+            max_turn = to_archive[-1].get('turn_id', 0)
+            
             archive_text = ""
             for turn in to_archive:
                 archive_text += f"[{turn['user_name']}]: {turn['input']}\n[DM]: {turn['output']}\n"
-            await self.store_memory(thread_id, archive_text, metadata={"type": "archived_history"})
+            
+            await self.store_memory(
+                thread_id, 
+                archive_text, 
+                metadata={
+                    "type": "archived_history",
+                    "max_turn_id": max_turn # Added Tag
+                }
+            )
             rpg_sessions_collection.update_one(
                 {"thread_id": int(thread_id)},
                 {"$set": {"turn_history": remaining}}
@@ -395,6 +432,8 @@ class RPGContextManager:
         new_history = full_history[:split_index+1] 
         deleted_turns = full_history[split_index+1:]
         last_kept_turn = new_history[-1] if new_history else None
+        
+        # FIXED: Ensure clean timestamp extraction
         rewind_timestamp = last_kept_turn["timestamp"] if last_kept_turn else datetime.min
         
         rpg_sessions_collection.update_one(

@@ -3,8 +3,9 @@ import discord
 import asyncio
 import random
 import traceback
+from datetime import datetime, timezone
 import google.generativeai as genai
-from datetime import datetime
+# ... (rest of imports remain the same)
 from utils.db import (
     rpg_sessions_collection, rpg_world_state_collection, 
     ai_config_collection, rpg_vector_memory_collection
@@ -16,13 +17,12 @@ from .utils import RPGLogger, ThinkingAnimator, sanitize_age
 from .ui import RPGGameView
 
 class RPGEngine:
+    # ... (init and process_turn remain the same)
     def __init__(self, bot, model, memory_manager):
         self.bot = bot
         self.model = model
         self.memory_manager = memory_manager
         self.active_sessions = {} 
-
-    # --- CORE GAME LOOP ---
 
     async def initialize_session(self, channel_id, session_db, initial_prompt="Resume"):
         await RPGLogger.broadcast(channel_id, "INIT", "Booting Context Manager", {"prompt": initial_prompt})
@@ -87,8 +87,6 @@ class RPGEngine:
             reroll_instr = "Reroll requested." if is_reroll else ""
             
             # --- NEW: PASSIVE DETECTOR ---
-            # Detects if the user is being silent, waiting, or giving very short non-dialogue inputs
-            # This prevents the "waiting room" effect where NPCs just stand around.
             passive_keywords = ["...", "wait", "nothing", "silence", "stares", "blinks", "hmm", "listen"]
             is_passive = len(prompt) < 15 or any(k == prompt.lower().strip() for k in passive_keywords)
             
@@ -101,7 +99,6 @@ class RPGEngine:
                     "- Hostile/Busy NPCs should get annoyed, suspicious, or aggressive.\n"
                     "- DO NOT just describe the silence. MAKE THE WORLD ACT."
                 )
-            # -----------------------------
             
             if not is_reroll:
                 session_data['last_prompt'] = prompt
@@ -116,7 +113,6 @@ class RPGEngine:
             await RPGLogger.broadcast(channel.id, "PROMPTING", "Sending Prompt to Model", {"length": len(full_prompt)})
 
             async with channel.typing():
-                # INJECT LAST-SECOND REMINDER TO FORCE DIALOGUE CONSISTENCY
                 response = await self._safe_generate(chat_session, full_prompt)
                 
                 turns = 0
@@ -189,6 +185,9 @@ class RPGEngine:
             current_turn = None 
 
             for msg in raw_messages:
+                # FIXED: Force timezone-naive UTC for consistent storage
+                naive_ts = msg.created_at.astimezone(timezone.utc).replace(tzinfo=None)
+
                 if msg.author.bot and msg.author.id == self.bot.user.id:
                     if current_turn:
                         content = msg.content or (msg.embeds[0].description if msg.embeds else "")
@@ -211,7 +210,7 @@ class RPGEngine:
                         'user_name': msg.author.name,
                         'input': msg.content,
                         'user_id': msg.id,
-                        'timestamp': msg.created_at,
+                        'timestamp': naive_ts, # FIXED
                         'bot_parts': [],
                         'bot_msg_ids': []
                     }
@@ -238,8 +237,9 @@ class RPGEngine:
 
             cleaned_history = []
             for t in reconstructed_turns:
-                cleaned_history.append({"author": t['user_name'], "content": t['input'], "timestamp": t['timestamp']})
-                cleaned_history.append({"author": "DM", "content": t['output'], "timestamp": t['timestamp']})
+                # FIXED: Pass turn_id to cleaned history so memory manager can tag vectors
+                cleaned_history.append({"author": t['user_name'], "content": t['input'], "timestamp": t['timestamp'], "turn_id": t['turn_id']})
+                cleaned_history.append({"author": "DM", "content": t['output'], "timestamp": t['timestamp'], "turn_id": t['turn_id']})
 
             await self.memory_manager.clear_thread_vectors(channel.id)
             await self.memory_manager.batch_ingest_history(channel.id, cleaned_history)
@@ -268,9 +268,8 @@ class RPGEngine:
         except Exception as e:
             RPGLogger.log(channel.id, "error", f"SYNC ERROR: {e}")
             raise e
-
-    # --- INTERNAL HELPERS ---
-
+            
+    # ... (rest of class)
     async def _safe_generate(self, session, content):
         max_retries = 2
         for attempt in range(max_retries + 1):
@@ -305,12 +304,9 @@ class RPGEngine:
 
             args = dict(fn.args)
             if fn.name == "update_world_entity":
-                # === DEFENSIVE FIXES ===
-                args.pop('thread_id', None) # Prevent duplicate arg error
-                
+                args.pop('thread_id', None)
                 if 'category' not in args: return "Error: Missing 'category' argument for entity update."
                 if 'name' not in args: return "Error: Missing 'name' argument for entity update."
-                
                 if "age" in args: args["age"] = sanitize_age(args["age"])
                 return tools.update_world_entity(str(channel.id), **args)
             
@@ -320,9 +316,7 @@ class RPGEngine:
             if fn.name == "deduct_mana": return "Story Mode" if story_mode else tools.deduct_mana(str(channel.id), **args)
             if fn.name == "update_journal": return tools.update_journal(str(channel.id), **args)
             if fn.name == "update_environment": return tools.update_environment(str(channel.id), **args)
-            
             if fn.name == "manage_story_log":
-                # === DEFENSIVE FIX FOR LOGS ===
                 args.pop('thread_id', None)
                 return tools.manage_story_log(str(channel.id), **args)
 
@@ -364,17 +358,13 @@ class RPGEngine:
                         fn = part.function_call
                         if fn.name == "update_world_entity":
                             args = dict(fn.args)
-                            
-                            # === DEFENSIVE FIXES ===
                             args.pop('thread_id', None)
                             if 'category' not in args or 'name' not in args: continue 
-
                             if "age" in args: args["age"] = sanitize_age(args["age"])
                             tools.update_world_entity(str(thread_id), **args)
                         
                         elif fn.name == "manage_story_log":
                             args = dict(fn.args)
-                            # === DEFENSIVE FIX FOR LOGS ===
                             args.pop('thread_id', None)
                             tools.manage_story_log(str(thread_id), **args)
                             
