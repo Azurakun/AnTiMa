@@ -19,7 +19,7 @@ from .engine import RPGEngine
 from .utils import RPGLogger
 from . import prompts, tools
 
-WEB_DASHBOARD_URL = "https://barbra-inexpugnable-stuporously.ngrok-free.dev"
+WEB_DASHBOARD_URL = "http://0.0.0.0:8000/"
 
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):

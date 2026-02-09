@@ -74,15 +74,28 @@ async def run_bot():
     # -w 2: Two worker processes
     # -k uvicorn.workers.UvicornWorker: Use Uvicorn for FastAPI support
     # --bind 0.0.0.0:PORT: Bind to the external interface and assigned port
-    gunicorn_cmd = [
-        "gunicorn", 
-        "dashboard:app", 
-        "-w", "2", 
-        "-k", "uvicorn.workers.UvicornWorker", 
-        "--bind", f"0.0.0.0:{port}",
-        "--access-logfile", "-", 
-        "--error-logfile", "-"
-    ]
+
+    if sys.platform == "win32":
+        # Windows does not support Gunicorn (no fcntl). Use Uvicorn directly.
+        print(f"🖥️  Running on Windows: Using Uvicorn directly on port {port}")
+        gunicorn_cmd = [
+            "uvicorn",
+            "dashboard:app",
+            "--host", "0.0.0.0",
+            "--port", port,
+            "--log-level", "info"
+        ]
+    else:
+        # Linux/Cloud (Railway): Use Gunicorn for production
+        gunicorn_cmd = [
+            "gunicorn", 
+            "dashboard:app", 
+            "-w", "2", 
+            "-k", "uvicorn.workers.UvicornWorker", 
+            "--bind", f"0.0.0.0:{port}",
+            "--access-logfile", "-", 
+            "--error-logfile", "-"
+        ]
     
     # Start Gunicorn as a subprocess so it runs alongside the bot
     dashboard_process = subprocess.Popen(gunicorn_cmd)

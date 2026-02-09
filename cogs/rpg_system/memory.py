@@ -61,13 +61,11 @@ class RPGContextManager:
     async def clear_thread_vectors(self, thread_id):
         rpg_vector_memory_collection.delete_many({"thread_id": int(thread_id)})
 
-    # FIXED: Added logic to purge by Turn ID and sanitize timestamps
     async def purge_memories(self, thread_id, cutoff_timestamp, from_turn_id=None):
         query = {"thread_id": int(thread_id)}
         conditions = []
 
         if cutoff_timestamp:
-            # Ensure naive UTC for comparison
             if cutoff_timestamp.tzinfo is not None:
                 cutoff_timestamp = cutoff_timestamp.astimezone(timezone.utc).replace(tzinfo=None)
             conditions.append({"timestamp": {"$gt": cutoff_timestamp}})
@@ -79,7 +77,6 @@ class RPGContextManager:
             query["$or"] = conditions
             rpg_vector_memory_collection.delete_many(query)
 
-    # Legacy wrapper for compatibility if needed, but we'll update calls
     async def purge_memories_since(self, thread_id, cutoff_timestamp):
         await self.purge_memories(thread_id, cutoff_timestamp)
 
@@ -92,7 +89,6 @@ class RPGContextManager:
             max_turn = 0
             for msg in chunk:
                 chunk_text += f"[{msg['author']}]: {msg['content']}\n"
-                # Capture max turn_id in this chunk
                 if msg.get('turn_id', 0) > max_turn:
                     max_turn = msg.get('turn_id')
 
@@ -102,7 +98,7 @@ class RPGContextManager:
                 metadata={
                     "type": "historical_sync", 
                     "date": str(chunk[0].get('timestamp')), 
-                    "max_turn_id": max_turn # Tag with Turn ID
+                    "max_turn_id": max_turn
                 }
             )
             count += 1
@@ -186,7 +182,6 @@ class RPGContextManager:
             to_archive = history[:5]
             remaining = history[5:]
             
-            # FIXED: Get max turn ID for metadata tagging
             max_turn = to_archive[-1].get('turn_id', 0)
             
             archive_text = ""
@@ -198,7 +193,7 @@ class RPGContextManager:
                 archive_text, 
                 metadata={
                     "type": "archived_history",
-                    "max_turn_id": max_turn # Added Tag
+                    "max_turn_id": max_turn
                 }
             )
             rpg_sessions_collection.update_one(
@@ -217,8 +212,17 @@ class RPGContextManager:
             appearance = stats.get("appearance", "Standard adventurer gear.")
             personality = stats.get("personality", "Determined.")
             
+            # --- IMPROVEMENT: HARD-CODED INVENTORY ---
+            inv_data = rpg_inventory_collection.find_one({"user_id": int(user_id)})
+            items = [i['name'] for i in inv_data.get('items', [])] if inv_data else ["Empty"]
+            item_str = ", ".join(items[:12]) # Limit to ~12 items to save tokens
+            if len(items) > 12: item_str += f" (+{len(items)-12} more)"
+            # ----------------------------------------
+            
             profile_txt = (
                 f"👤 **{name}** ({p_class}) [{pronouns}]\n"
+                f"   - **HP:** {stats.get('hp', 100)}/{stats.get('max_hp', 100)} | **MP:** {stats.get('mp', 50)}/{stats.get('max_mp', 50)}\n"
+                f"   - **Inventory:** {item_str}\n"
                 f"   - **App:** {appearance}\n"
                 f"   - **Personality:** {personality}\n"
                 f"   - **Backstory:** {backstory}"
@@ -250,7 +254,14 @@ class RPGContextManager:
         active_loc_objs = [v for v in locations.values() if v.get("status") == "active"]
         active_loc_names = [l['name'].lower().strip() for l in active_loc_objs]
         
-        loc_text = "**📍 CURRENT LOCATION:**\n" + "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_loc_objs]) if active_loc_objs else "**📍 CURRENT LOCATION:** Unknown / Wilderness\n"
+        # --- IMPROVEMENT: FALLBACK LOCATION ---
+        loc_text = "**📍 CURRENT LOCATION:**\n" 
+        if active_loc_objs:
+            loc_text += "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_loc_objs])
+        else:
+            loc_text += "Unknown / In Transit. (System: If the narrative implies a specific named location, call `update_world_entity` to set it as active).\n"
+        # --------------------------------------
+        
         debug_snapshot["active_locs"] = [l['name'] for l in active_loc_objs]
 
         # 3. QUESTS
@@ -269,13 +280,8 @@ class RPGContextManager:
             role = attrs.get("role", "").lower().strip()
             status = npc.get("status", "background").lower()
 
-            # Rule 1: Always show 'Companions' regardless of location
             is_companion = "companion" in role or "party" in role
-            
-            # Rule 2: Show if NPC is in the current active location
             is_present = npc_loc and (npc_loc in active_loc_names)
-            
-            # Rule 3: Manual override (if status is forcibly set to active)
             is_active_forced = status == "active"
 
             if (is_companion or is_present or is_active_forced) and status != "dead":
@@ -289,10 +295,8 @@ class RPGContextManager:
             rel = attrs.get("relationships") or "Neutral"
             if isinstance(rel, list): rel = ", ".join(rel)
             
-            # Include Clothing in context
             clothing = attrs.get("clothing", "Standard attire")
             
-            # Individual History
             history = attrs.get("history", [])
             history_txt = ""
             if history:
@@ -308,7 +312,7 @@ class RPGContextManager:
             )
             debug_snapshot["active_npcs"].append(npc['name'])
         
-        # Recalled NPCs (Keywords in user input)
+        # Recalled NPCs
         input_lower = current_input.lower()
         active_names = [n['name'].lower() for n in visible_npcs]
         
@@ -394,16 +398,13 @@ class RPGContextManager:
         history = session["turn_history"]
         if not history: return None
         
-        # 1. Pop the last turn
         deleted_turn = history.pop()
         
-        # 2. Update DB
         rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {
             "$pop": {"turn_history": 1},
             "$inc": {"total_turns": -1}
         })
         
-        # 3. Restore World State from the *new* last turn
         new_last_turn = history[-1] if history else None
         
         if new_last_turn and "world_snapshot" in new_last_turn:
@@ -433,7 +434,6 @@ class RPGContextManager:
         deleted_turns = full_history[split_index+1:]
         last_kept_turn = new_history[-1] if new_history else None
         
-        # FIXED: Ensure clean timestamp extraction
         rewind_timestamp = last_kept_turn["timestamp"] if last_kept_turn else datetime.min
         
         rpg_sessions_collection.update_one(

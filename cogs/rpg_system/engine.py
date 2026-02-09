@@ -5,7 +5,6 @@ import random
 import traceback
 from datetime import datetime, timezone
 import google.generativeai as genai
-# ... (rest of imports remain the same)
 from utils.db import (
     rpg_sessions_collection, rpg_world_state_collection, 
     ai_config_collection, rpg_vector_memory_collection
@@ -17,7 +16,6 @@ from .utils import RPGLogger, ThinkingAnimator, sanitize_age
 from .ui import RPGGameView
 
 class RPGEngine:
-    # ... (init and process_turn remain the same)
     def __init__(self, bot, model, memory_manager):
         self.bot = bot
         self.model = model
@@ -33,10 +31,14 @@ class RPGEngine:
             session_db, initial_prompt, logger=RPGLogger.log
         )
         
+        # - Capturing the list of NPCs present in the context
+        active_npcs = debug_data.get("world_entities", {}).get("active_npcs", [])
+
         RPGLogger.log(channel_id, "system", "Context Built", details={
             "token_count_approx": len(memory_block)/4,
             "components": list(debug_data.keys()),
-            "rag_hits": debug_data.get("rag_hits_count", 0)
+            "rag_hits": debug_data.get("rag_hits_count", 0),
+            "active_npcs": active_npcs
         })
         
         system_prime = prompts.SYSTEM_PRIME.format(memory_block=memory_block)
@@ -50,7 +52,8 @@ class RPGEngine:
         self.active_sessions[channel_id] = {
             'session': chat_session,
             'owner_id': session_db['owner_id'],
-            'last_prompt': initial_prompt
+            'last_prompt': initial_prompt,
+            'active_npcs': active_npcs # Store for the Scribe
         }
         return True
 
@@ -86,9 +89,15 @@ class RPGEngine:
             mechanics_instr = "**MODE: STORY**" if story_mode else "**MODE: STANDARD**"
             reroll_instr = "Reroll requested." if is_reroll else ""
             
-            # --- NEW: PASSIVE DETECTOR ---
+            # Passive Detector (Tweaked to ignore action verbs)
             passive_keywords = ["...", "wait", "nothing", "silence", "stares", "blinks", "hmm", "listen"]
-            is_passive = len(prompt) < 15 or any(k == prompt.lower().strip() for k in passive_keywords)
+            action_indicators = ["attack", "cast", "shoot", "run", "go", "use", "look", "grab", "dodge", "check"]
+            
+            is_short = len(prompt) < 15
+            is_keyword = any(k == prompt.lower().strip() for k in passive_keywords)
+            contains_action = any(verb in prompt.lower() for verb in action_indicators)
+            
+            is_passive = (is_short or is_keyword) and not contains_action
             
             social_pressure = ""
             if is_passive and not is_reroll:
@@ -134,7 +143,7 @@ class RPGEngine:
                         ))]
                     ))
 
-                # 4. TEXT EXTRACTION (Fail-Safe)
+                # 4. TEXT EXTRACTION
                 try:
                     text_content = response.text
                 except ValueError:
@@ -161,7 +170,10 @@ class RPGEngine:
                     user_message_id=message_id, bot_message_id=bot_msg_ids, current_turn_id=current_turn_id
                 )
                 
-                await self._run_scribe(channel.id, text_content)
+                # Pass Active NPCs to Scribe so it knows who can witness events
+                active_list = session_data.get('active_npcs', [])
+                await self._run_scribe(channel.id, text_content, active_list)
+                
                 await self.memory_manager.snapshot_world_state(channel.id, current_turn_id)
                 
                 if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
@@ -185,7 +197,6 @@ class RPGEngine:
             current_turn = None 
 
             for msg in raw_messages:
-                # FIXED: Force timezone-naive UTC for consistent storage
                 naive_ts = msg.created_at.astimezone(timezone.utc).replace(tzinfo=None)
 
                 if msg.author.bot and msg.author.id == self.bot.user.id:
@@ -210,7 +221,7 @@ class RPGEngine:
                         'user_name': msg.author.name,
                         'input': msg.content,
                         'user_id': msg.id,
-                        'timestamp': naive_ts, # FIXED
+                        'timestamp': naive_ts, 
                         'bot_parts': [],
                         'bot_msg_ids': []
                     }
@@ -237,7 +248,6 @@ class RPGEngine:
 
             cleaned_history = []
             for t in reconstructed_turns:
-                # FIXED: Pass turn_id to cleaned history so memory manager can tag vectors
                 cleaned_history.append({"author": t['user_name'], "content": t['input'], "timestamp": t['timestamp'], "turn_id": t['turn_id']})
                 cleaned_history.append({"author": "DM", "content": t['output'], "timestamp": t['timestamp'], "turn_id": t['turn_id']})
 
@@ -269,7 +279,6 @@ class RPGEngine:
             RPGLogger.log(channel.id, "error", f"SYNC ERROR: {e}")
             raise e
             
-    # ... (rest of class)
     async def _safe_generate(self, session, content):
         max_retries = 2
         for attempt in range(max_retries + 1):
@@ -308,7 +317,11 @@ class RPGEngine:
                 if 'category' not in args: return "Error: Missing 'category' argument for entity update."
                 if 'name' not in args: return "Error: Missing 'name' argument for entity update."
                 if "age" in args: args["age"] = sanitize_age(args["age"])
-                return tools.update_world_entity(str(channel.id), **args)
+                
+                result = tools.update_world_entity(str(channel.id), **args)
+                if "Updated" in result and "(Key:" in result:
+                     result += " (NOTE: Use this canonical name in the narrative)."
+                return result
             
             if fn.name == "grant_item_to_player": return tools.grant_item_to_player(**args)
             if fn.name == "apply_damage": return "Story Mode" if story_mode else tools.apply_damage(str(channel.id), **args)
@@ -341,14 +354,21 @@ class RPGEngine:
             msg_ids.append(msg.id)
         return msg_ids
 
-    async def _run_scribe(self, thread_id, text):
+    async def _run_scribe(self, thread_id, text, active_npcs=None):
         try:
             world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}) or {}
             existing = list(world_data.get("npcs", {}).keys()) + list(world_data.get("locations", {}).keys())
             known_str = ", ".join(existing) if existing else "None."
+            
+            # Format active list for the prompt
+            active_str = ", ".join(active_npcs) if active_npcs else "Unknown (Infer from text)"
 
             scribe_chat = self.model.start_chat(history=[])
-            prompt = prompts.SCRIBE_ANALYSIS.format(narrative_text=text[:4000], known_entities=known_str)
+            prompt = prompts.SCRIBE_ANALYSIS.format(
+                narrative_text=text[:4000], 
+                known_entities=known_str,
+                active_participants=active_str
+            )
             
             response = await scribe_chat.send_message_async(prompt)
             
