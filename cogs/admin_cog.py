@@ -2,6 +2,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from utils.db import rpg_world_state_collection
 
 class AdminCog(commands.Cog, name="Admin"):
     def __init__(self, bot: commands.Bot):
@@ -63,6 +64,37 @@ class AdminCog(commands.Cog, name="Admin"):
             
         embed.description = description or "No servers found."
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # --- EMERGENCY FIXES ---
+    @app_commands.command(name="fix_bloat", description="[Admin] Fix RPG Lag: Reset all non-companion NPCs to background status.")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def fix_bloat(self, interaction: discord.Interaction):
+        """
+        Emergency command to cure 'Stuck on Typing' lag.
+        It forces all NPCs in the current thread to 'background' status unless they are marked as 'companion' or 'party'.
+        """
+        if not isinstance(interaction.channel, discord.Thread):
+            return await interaction.response.send_message("⚠️ Please run this command inside the laggy Adventure Thread.", ephemeral=True)
+
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # MongoDB Update: Set status='background' for all NPCs where role does NOT contain 'companion' or 'party'
+            result = rpg_world_state_collection.update_many(
+                {"thread_id": interaction.channel_id},
+                {"$set": {"npcs.$[elem].status": "background"}},
+                array_filters=[{"elem.attributes.role": {"$not": {"$regex": "companion|party", "$options": "i"}}}]
+            )
+            
+            if result.modified_count > 0:
+                msg = f"✅ **Success:** Reset {result.modified_count} NPCs to background status.\n📉 **Context Bloat:** Reduced.\n🚀 **Next Turn:** Should be much faster."
+            else:
+                msg = "ℹ️ **No changes made.** Population was already optimized or no Matching NPCs found."
+                
+            await interaction.followup.send(msg, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ **Fix Failed:** {str(e)}", ephemeral=True)
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AdminCog(bot))

@@ -44,5 +44,23 @@ def init_db():
     try:
         client.admin.command('ping')
         print(f"✅ MongoDB Connected to: {DB_NAME}")
+        
+        # --- PERFORMANCE INDEXING ---
+        print("⚙️ Verifying Database Indexes...")
+        
+        # 1. RPG Sessions: Queries often look for 'thread_id'
+        rpg_sessions_collection.create_index("thread_id", unique=True)
+        
+        # 2. World State: Always 1:1 with thread_id
+        rpg_world_state_collection.create_index("thread_id", unique=True)
+        
+        # 3. Web Actions: Poller queries by status+type every 3 seconds
+        web_actions_collection.create_index([("status", 1), ("type", 1)])
+        
+        # 4. Vector Memory: Frequent lookups by thread_id
+        rpg_vector_memory_collection.create_index("thread_id")
+        
+        print("✅ Database Indexes Verified.")
+        
     except Exception as e:
-        print(f"❌ MongoDB Connection Failed: {e}")
+        print(f"❌ MongoDB Connection/Indexing Failed: {e}")

@@ -25,6 +25,7 @@ class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.model = None
+        self.scribe_model = None
         self.engine = None
         self.memory_manager = None
         
@@ -36,6 +37,7 @@ class RPGAdventureCog(commands.Cog):
                 HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
             }
             
+            # 1. Main Model (Pro) for Narrative Intelligence
             self.model = genai.GenerativeModel(
                 'gemini-2.5-pro',
                 tools=[
@@ -47,10 +49,18 @@ class RPGAdventureCog(commands.Cog):
                 ],
                 safety_settings=safety_settings
             )
+
+            # 2. Scribe Model (Flash) for Cheap Background Processing
+            self.scribe_model = genai.GenerativeModel(
+                'gemini-2.5-flash',
+                safety_settings=safety_settings
+            )
             
             self.memory_manager = RPGContextManager(self.model)
-            self.engine = RPGEngine(bot, self.model, self.memory_manager)
-            print("✅ RPG System Online.")
+            
+            # Pass BOTH models to the engine
+            self.engine = RPGEngine(bot, self.model, self.memory_manager, self.scribe_model)
+            print("✅ RPG System Online (Hybrid Architecture: Pro + Flash).")
             
         except Exception as e:
             print(f"❌ Failed to load Gemini RPG: {e}")
@@ -204,7 +214,6 @@ class RPGAdventureCog(commands.Cog):
         deleted_turns, rewind_ts = self.memory_manager.trim_history(interaction.channel.id, turn_id)
         
         if rewind_ts:
-            # FIXED: Uses purge_memories with specific turn ID for deterministic cleanup
             await self.memory_manager.purge_memories(interaction.channel.id, rewind_ts, from_turn_id=turn_id)
             
         if deleted_turns:

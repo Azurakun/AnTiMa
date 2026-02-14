@@ -19,6 +19,8 @@ class RPGContextManager:
         self.model = model
         self.max_tokens = 1_000_000
         self.embed_model = "models/text-embedding-004" 
+        # Smart Context Budget (Approx 2000-2500 tokens allowed for history)
+        self.HISTORY_TOKEN_BUDGET = 2500
 
     def _cosine_similarity(self, v1, v2):
         dot_product = sum(a * b for a, b in zip(v1, v2))
@@ -212,12 +214,10 @@ class RPGContextManager:
             appearance = stats.get("appearance", "Standard adventurer gear.")
             personality = stats.get("personality", "Determined.")
             
-            # --- IMPROVEMENT: HARD-CODED INVENTORY ---
             inv_data = rpg_inventory_collection.find_one({"user_id": int(user_id)})
             items = [i['name'] for i in inv_data.get('items', [])] if inv_data else ["Empty"]
-            item_str = ", ".join(items[:12]) # Limit to ~12 items to save tokens
+            item_str = ", ".join(items[:12]) 
             if len(items) > 12: item_str += f" (+{len(items)-12} more)"
-            # ----------------------------------------
             
             profile_txt = (
                 f"👤 **{name}** ({p_class}) [{pronouns}]\n"
@@ -249,18 +249,16 @@ class RPGContextManager:
         if active_logs:
             log_text = "**📝 PENDING ACTIONS / ORDERS:**\n" + "".join([f"> 📌 {l['note']}\n" for l in active_logs]) + "\n"
 
-        # 2. LOCATIONS (DETERMINES PLAYER LOCATION)
+        # 2. LOCATIONS
         locations = data.get("locations", {})
         active_loc_objs = [v for v in locations.values() if v.get("status") == "active"]
         active_loc_names = [l['name'].lower().strip() for l in active_loc_objs]
         
-        # --- IMPROVEMENT: FALLBACK LOCATION ---
         loc_text = "**📍 CURRENT LOCATION:**\n" 
         if active_loc_objs:
             loc_text += "".join([f"> 🏰 **{l['name']}**: {l['details']}\n" for l in active_loc_objs])
         else:
-            loc_text += "Unknown / In Transit. (System: If the narrative implies a specific named location, call `update_world_entity` to set it as active).\n"
-        # --------------------------------------
+            loc_text += "Unknown / In Transit.\n"
         
         debug_snapshot["active_locs"] = [l['name'] for l in active_loc_objs]
 
@@ -270,23 +268,45 @@ class RPGContextManager:
         quest_text = "**🛡️ ACTIVE QUESTS:**\n" + "".join([f"> 🔸 **{q['name']}**: {q['details']}\n" for q in active_quests]) if active_quests else ""
         debug_snapshot["active_quests"] = [q['name'] for q in active_quests]
 
-        # 4. NPC REGISTRY (SPATIAL & COMPANION FILTERING)
+        # 4. NPC REGISTRY (OPTIMIZED WITH AUTO-CULL)
         npcs = data.get("npcs", {})
         visible_npcs = []
+        input_lower = current_input.lower()
 
+        # Phase 1: Gather potential candidates with detailed scoring
         for npc in npcs.values():
             attrs = npc.get("attributes", {})
             npc_loc = attrs.get("location", "").lower().strip()
             role = attrs.get("role", "").lower().strip()
             status = npc.get("status", "background").lower()
+            name_lower = npc['name'].lower()
 
+            # PRIORITY FLAGS
             is_companion = "companion" in role or "party" in role
             is_present = npc_loc and (npc_loc in active_loc_names)
             is_active_forced = status == "active"
+            is_mentioned = name_lower in input_lower
 
-            if (is_companion or is_present or is_active_forced) and status != "dead":
+            # Base Inclusion Check
+            if (is_companion or is_present or is_active_forced or is_mentioned) and status != "dead":
+                # Assign Priority Score (Higher = More likely to stay if bloat occurs)
+                npc["_temp_score"] = 0 
+                if is_mentioned: npc["_temp_score"] += 30  # Highest priority: User is talking about them
+                if is_companion: npc["_temp_score"] += 20  # High priority: Party member
+                if is_present: npc["_temp_score"] += 10    # Medium priority: In the room
+                if is_active_forced: npc["_temp_score"] += 1 # Low priority: Just marked active in DB
+                
                 visible_npcs.append(npc)
         
+        # Phase 2: Safety Cap (Anti-Bloat)
+        # If we have > 15 Active NPCs, we are likely experiencing "Stuck" issues.
+        # We auto-cull the list to the top 15 most relevant ones.
+        if len(visible_npcs) > 15:
+            # Sort by score descending (Mentioned > Companion > Present > Active)
+            visible_npcs.sort(key=lambda x: x.get("_temp_score", 0), reverse=True)
+            visible_npcs = visible_npcs[:15] # Hard Cap
+
+        # Format Final List
         npc_list = []
         for npc in visible_npcs:
             details = npc['details']
@@ -312,12 +332,12 @@ class RPGContextManager:
             )
             debug_snapshot["active_npcs"].append(npc['name'])
         
-        # Recalled NPCs
-        input_lower = current_input.lower()
+        # Recalled NPCs (Explicit mentions of people NOT active)
+        # (This is mostly redundant now due to is_mentioned logic above, but kept for deep background recalls)
         active_names = [n['name'].lower() for n in visible_npcs]
-        
         for key, npc in npcs.items():
             if npc['name'].lower() not in active_names and npc['name'].lower() in input_lower:
+                # Add if not already included in the active list
                 npc_list.append(f"> 🧠 **{npc['name']}** (Recalled Memory): {npc['details']}")
                 debug_snapshot["recalled_npcs"].append(npc['name'])
         
@@ -341,19 +361,31 @@ class RPGContextManager:
         player_context = self._format_player_profiles(session_data)
         world_sheet, world_debug = self._format_world_sheet(thread_id, current_user_input)
         
+        # --- SMART CONTEXT PRUNING (Token Budgeting) ---
         history = session_data.get("turn_history", [])
-        text_log = []
-        last_idx = len(history) - 1
-        start_idx = max(0, last_idx - 30)
+        text_log_reversed = []
+        current_cost = 0
         
-        for i in range(start_idx, len(history)):
+        # Walk backwards: Add newest turns first
+        for i in range(len(history) - 1, -1, -1):
             turn = history[i]
-            is_latest = (i == last_idx)
-            tag = " <--- [CURRENT MOMENT]" if is_latest else ""
-            text_log.append(f"[{turn['user_name']}]: {turn['input']}")
-            text_log.append(f"[DM]: {turn['output']}{tag}")
+            # Rough estimation: 1 character ~= 0.3 tokens
+            turn_text = f"[{turn['user_name']}]: {turn['input']}\n[DM]: {turn['output']}\n"
+            cost = len(turn_text) * 0.3
             
-        recent_history = "\n\n".join(text_log)
+            if current_cost + cost > self.HISTORY_TOKEN_BUDGET:
+                break
+                
+            is_latest = (i == len(history) - 1)
+            tag = " <--- [CURRENT MOMENT]" if is_latest else ""
+            
+            # Prepend because we are iterating backwards
+            entry = f"[{turn['user_name']}]: {turn['input']}\n[DM]: {turn['output']}{tag}"
+            text_log_reversed.insert(0, entry) 
+            current_cost += cost
+            
+        recent_history = "\n\n".join(text_log_reversed)
+        # -----------------------------------------------
 
         if logger: logger(thread_id, "system", "Retrieving Vector Memories...")
         rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
