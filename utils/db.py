@@ -32,6 +32,10 @@ user_personas_collection = db["user_personas"]
 rpg_vector_memory_collection = db["rpg_vector_memory"] # Stores embeddings
 rpg_world_state_collection = db["rpg_world_state"]   # Stores detailed NPC/Location sheets
 
+# Anime Gacha System
+anime_gacha_users_collection = db["anime_gacha_users"]       # Currency, stats, cooldowns
+anime_gacha_inventory_collection = db["anime_gacha_inventory"] # Owned cards
+
 stats_collection = db["bot_stats"] 
 live_activity_collection = db["live_activity"]
 web_actions_collection = db["web_actions"]
@@ -59,6 +63,10 @@ def init_db():
         
         # 4. Vector Memory: Frequent lookups by thread_id
         rpg_vector_memory_collection.create_index("thread_id")
+
+        # 5. Gacha System
+        anime_gacha_users_collection.create_index("user_id", unique=True)
+        anime_gacha_inventory_collection.create_index([("user_id", 1), ("image_id", 1)], unique=True)
         
         print("✅ Database Indexes Verified.")
         

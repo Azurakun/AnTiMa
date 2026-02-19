@@ -14,7 +14,7 @@ import google.generativeai as genai
 from .memory_handler import summarize_and_save_memory
 from .utils import _find_member, _safe_get_response_text, get_gif_url, should_send_gif, perform_web_search, identify_visual_content
 from utils.db import ai_config_collection
-from .rate_limiter import can_make_request
+
 
 logger = logging.getLogger(__name__)
 MAX_HISTORY = 15
@@ -135,7 +135,7 @@ async def handle_single_user_response(cog, message, prompt, author):
     try:
         async with message.channel.typing():
             guild_config = ai_config_collection.find_one({"_id": str(message.guild.id)}) or {}
-            daily_limit = guild_config.get("daily_rate_limit", 50)
+
             
             history = [{'role': 'model' if m.author==cog.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=cog.bot.user else m.clean_content]} async for m in message.channel.history(limit=MAX_HISTORY) if m.id != message.id]
             history.reverse()
@@ -156,8 +156,7 @@ async def handle_single_user_response(cog, message, prompt, author):
                             content.append(video_file)
                             uploaded_files_cleanup.append(video_file)
 
-            is_allowed, _, _ = can_make_request(str(message.guild.id), daily_limit)
-            if not is_allowed: return
+
 
             response = await _send_and_handle_tool_loop(chat, content, message.channel, cog.summarizer_model, current_topic=current_topic)
             
@@ -208,7 +207,7 @@ async def process_message_batch(cog, channel_id):
     try:
         async with last_message.channel.typing():
             guild_config = ai_config_collection.find_one({"_id": str(last_message.guild.id)}) or {}
-            daily_limit = guild_config.get("daily_rate_limit", 50)
+
             
             history = [{'role': 'model' if m.author==cog.bot.user else 'user', 'parts': [f"{m.author.display_name}: {m.clean_content}" if m.author!=cog.bot.user else m.clean_content]} async for m in last_message.channel.history(limit=MAX_HISTORY) if m.id not in [msg.id for msg in batch]]
             history.reverse()
@@ -229,8 +228,7 @@ async def process_message_batch(cog, channel_id):
 
             content.insert(0, f"Respond to:\n" + "\n".join(messages_str_parts))
             
-            is_allowed, _, _ = can_make_request(str(last_message.guild.id), daily_limit)
-            if not is_allowed: return
+
 
             response = await _send_and_handle_tool_loop(chat, content, last_message.channel, cog.summarizer_model)
             

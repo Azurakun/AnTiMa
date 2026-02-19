@@ -3,7 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.db import ai_config_collection
-from utils.limiter import limiter
+
 from utils.timezone_manager import set_user_timezone, DEFAULT_TIMEZONE
 from datetime import datetime, timedelta, timezone
 import random
@@ -72,12 +72,7 @@ class ConfigurationCog(commands.Cog):
         ai_config_collection.update_one({"_id": str(interaction.guild.id)}, {"$set": {"group_chat_enabled": enabled}}, upsert=True)
         await interaction.response.send_message(f"✅ Group Replies: **{'Allowed' if enabled else 'Blocked'}**.", ephemeral=True)
 
-    @configuration_group.command(name="limits", description="[Creator Only] Set Rate Limits.")
-    async def config_limits(self, interaction: discord.Interaction, scope: str, target_id: str, feature: str, limit: int):
-        if interaction.user.id != CREATOR_ID: return await interaction.response.send_message("❌ Creator only.", ephemeral=True)
-        if not target_id.isdigit(): return await interaction.response.send_message("❌ ID must be numeric.", ephemeral=True)
-        limiter.set_override(target_id, scope, feature, limit)
-        await interaction.response.send_message(f"✅ Limit Set: {scope} {target_id} -> {limit} reqs/min for {feature}.", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ConfigurationCog(bot))

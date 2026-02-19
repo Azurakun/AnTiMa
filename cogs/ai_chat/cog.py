@@ -14,7 +14,7 @@ import collections
 import functools
 # Updated imports to ensure they match utils/db.py
 from utils.db import ai_config_collection, ai_personal_memories_collection, server_lore_collection, rpg_sessions_collection, web_actions_collection
-from utils.limiter import limiter
+
 from .prompts import SYSTEM_PROMPT
 from .response_handler import should_bot_respond_ai_check, process_message_batch, handle_single_user_response
 from .proactive_chat import _initiate_conversation
@@ -230,17 +230,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
         is_targeted = self.bot.user in message.mentions or (message.reference and message.reference.resolved and message.reference.resolved.author == self.bot.user)
         
         # --- LIMITER CHECK ---
-        if is_targeted and not limiter.check_available(message.author.id, message.guild.id, "antima_gen"):
-            embed = discord.Embed(
-                title="⏳ Energy Depleted",
-                description="You've used up your free AI interactions for now!\nTo support AnTiMa's development and server costs, please consider donating:",
-                color=discord.Color.red()
-            )
-            embed.add_field(name="☕ International", value="[Support on Ko-fi](https://ko-fi.com/shirozura)", inline=True)
-            embed.add_field(name="🍱 Indonesia", value="[Support on Trakteer](https://trakteer.id/Azuranyan)", inline=True)
-            embed.set_footer(text="Your support helps keep the AI alive!")
-            await message.reply(embed=embed)
-            return
+
 
         guild_id = str(message.guild.id)
         guild_config = await self.run_db(ai_config_collection.find_one, {"_id": guild_id}) or {}
@@ -262,8 +252,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
             self.batch_timers[message.channel.id] = self.bot.loop.call_later(self.BATCH_DELAY, lambda: self.bot.loop.create_task(process_message_batch(self, message.channel.id)))
         else:
             await handle_single_user_response(self, message, clean, message.author)
-            if is_targeted:
-                limiter.consume(message.author.id, message.guild.id, "antima_gen")
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(AIChatCog(bot))

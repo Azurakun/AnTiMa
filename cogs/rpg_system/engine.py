@@ -10,7 +10,7 @@ from utils.db import (
     rpg_sessions_collection, rpg_world_state_collection, 
     ai_config_collection, rpg_vector_memory_collection
 )
-from utils.limiter import limiter
+
 from .config import RPG_CLASSES
 from . import prompts, tools
 from .utils import RPGLogger, StatusManager, sanitize_age
@@ -229,7 +229,7 @@ class RPGEngine:
                 
                 await self.memory_manager.snapshot_world_state(channel.id, current_turn_id)
                 
-                if user: limiter.consume(user.id, channel.guild.id, "rpg_gen")
+
                 
                 await RPGLogger.broadcast(channel.id, "TURN_COMPLETE", "Turn Finished", {"turn_id": current_turn_id})
 

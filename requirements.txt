@@ -25,3 +25,4 @@ uvicorn
 jinja2
 websockets
 gunicorn
+beautifulsoup4

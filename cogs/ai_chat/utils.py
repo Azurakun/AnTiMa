@@ -26,6 +26,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 TENOR_API_KEY = os.environ.get("TENOR_API_KEY")
+GOOGLE_SEARCH_API_KEY = os.environ.get("GOOGLE_SEARCH_API_KEY")
+GOOGLE_SEARCH_ENGINE_ID = os.environ.get("GOOGLE_SEARCH_ENGINE_ID")
 TENOR_CLIENT_KEY = "AnTiMa-Discord-Bot"
 
 def _safe_get_response_text(response) -> str:
@@ -55,6 +57,39 @@ async def fetch_website_content(url: str) -> str:
     except Exception as e:
         return f"Scrape failed: {str(e)}"
 
+async def google_custom_search(query: str, num_results: int = 5):
+    """
+    Performs a Google Custom Search.
+    Returns a list of dicts with 'title', 'link', 'snippet'.
+    """
+    if not GOOGLE_SEARCH_API_KEY or not GOOGLE_SEARCH_ENGINE_ID:
+        return None
+
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        'key': GOOGLE_SEARCH_API_KEY,
+        'cx': GOOGLE_SEARCH_ENGINE_ID,
+        'q': query,
+        'num': num_results
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, params=params) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                items = data.get('items', [])
+                return [
+                    {
+                        'title': item.get('title'),
+                        'link': item.get('link'),
+                        'snippet': item.get('snippet')
+                    }
+                    for item in items
+                ]
+            else:
+                logger.error(f"Google Search failed: {resp.status} - {await resp.text()}")
+                return None
+
 async def perform_web_search(query: str) -> str:
     """
     REQUIRED TOOL: Searches the internet to find real-time information, facts, or news.
@@ -66,29 +101,46 @@ async def perform_web_search(query: str) -> str:
     Args:
         query: The search string (e.g. "latest Elden Ring patch notes").
     """
-    if not DDGS: return "Search disabled: Missing library."
-    
     start_time = datetime.utcnow()
     logger.info(f"Deep Search Initiated: {query}")
     
-    # 1. Broad Search
-    loop = asyncio.get_running_loop()
-    try:
-        def run_ddg():
-            with DDGS() as ddgs:
-                return list(ddgs.text(query, max_results=15))
-        raw_results = await loop.run_in_executor(None, run_ddg)
-    except Exception as e:
-        return f"Search Error: {e}"
+    raw_results = None
+    
+    # 1. Try Google Search First
+    if GOOGLE_SEARCH_API_KEY and GOOGLE_SEARCH_ENGINE_ID:
+        try:
+            raw_results = await google_custom_search(query, num_results=10)
+        except Exception as e:
+            logger.error(f"Google Search Exception: {e}")
+    
+    # 2. Fallback to DuckDuckGo if Google fails or is unconfigured
+    if not raw_results:
+        if not DDGS: return "Search disabled: Missing library and no Google keys."
+        try:
+            loop = asyncio.get_running_loop()
+            def run_ddg():
+                with DDGS() as ddgs:
+                    return list(ddgs.text(query, max_results=15))
+            raw_results = await loop.run_in_executor(None, run_ddg)
+            # DDG results usually have 'href' and 'body', normalize them
+            for r in raw_results:
+                if 'href' in r and 'link' not in r: r['link'] = r['href']
+                if 'body' in r and 'snippet' not in r: r['snippet'] = r['body']
+        except Exception as e:
+            return f"Search Error: {e}"
 
     if not raw_results: return "No results found for that query."
 
     # 2. Parallel Deep Scrape (Top 8-10 sources)
     search_data = []
     fetch_tasks = []
-    for r in raw_results[:10]:
-        search_data.append({"title": r.get('title'), "link": r.get('href'), "snippet": r.get('body')})
-        fetch_tasks.append(fetch_website_content(r.get('href')))
+    
+    # Filter and prioritize results
+    for r in raw_results[:8]:
+        link = r.get('link') or r.get('href')
+        if not link: continue
+        search_data.append({"title": r.get('title'), "link": link, "snippet": r.get('snippet') or r.get('body')})
+        fetch_tasks.append(fetch_website_content(link))
 
     scraped_contents = await asyncio.gather(*fetch_tasks)
     
@@ -102,7 +154,7 @@ async def perform_web_search(query: str) -> str:
         verify_prompt = (
             f"You are the Ultimate Truth Engine. Analyze the data below to answer: '{query}'.\n\n"
             "INSTRUCTIONS:\n"
-            "1. CROSS-REFERENCE: Use all 10 sources. Prioritize official wikis and news.\n"
+            "1. CROSS-REFERENCE: Use all available sources. Prioritize official wikis and news.\n"
             "2. MAXIMUM DETAIL: Provide a deep, comprehensive answer. Do not skip nuances.\n"
             "3. NO UNCERTAINTY: Do not say 'I don't know' if any source has info. Be confident.\n"
             f"DATA:\n{context_blob}"
@@ -120,7 +172,9 @@ async def perform_web_search(query: str) -> str:
             "synthesis": final_info,
             "processing_time": (datetime.utcnow() - start_time).total_seconds()
         }
-        search_debug_collection.insert_one(debug_entry)
+        try:
+            search_debug_collection.insert_one(debug_entry)
+        except: pass
 
         return f"### VERIFIED SEARCH RESULTS:\n{final_info}\n\nSources used: " + ", ".join([d['link'] for d in search_data[:5]]) + " (+ more)"
 
