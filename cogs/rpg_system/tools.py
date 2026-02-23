@@ -1,9 +1,7 @@
 # cogs/rpg_system/tools.py
-import random
-import uuid # <--- Added for Memory IDs
-from datetime import datetime, timedelta
-from utils.db import rpg_sessions_collection, rpg_inventory_collection, rpg_world_state_collection
+from google.generativeai.tool import tool
 
+@tool
 def grant_item_to_player(user_id: str, item_name: str, description: str):
     """Adds an item to the player's permanent inventory."""
     try:
@@ -15,6 +13,7 @@ def grant_item_to_player(user_id: str, item_name: str, description: str):
         return f"System: Added {item_name} to player {user_id}'s inventory."
     except Exception as e: return f"System Error: {e}"
 
+@tool
 def update_player_stats(thread_id: str, user_id: str, hp_change: int, mp_change: int):
     try:
         session = rpg_sessions_collection.find_one({"thread_id": int(thread_id)})
@@ -30,20 +29,25 @@ def update_player_stats(thread_id: str, user_id: str, hp_change: int, mp_change:
         return f"System: Player {uid} HP/MP updated."
     except Exception as e: return f"System Error: {e}"
 
+@tool
 def apply_damage(thread_id: str, user_id: str, damage_amount: int):
     return update_player_stats(thread_id, user_id, hp_change=-int(damage_amount), mp_change=0)
 
+@tool
 def apply_healing(thread_id: str, user_id: str, heal_amount: int):
     return update_player_stats(thread_id, user_id, hp_change=int(heal_amount), mp_change=0)
 
+@tool
 def deduct_mana(thread_id: str, user_id: str, mana_cost: int):
     return update_player_stats(thread_id, user_id, hp_change=0, mp_change=-int(mana_cost))
 
+@tool
 def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: str = None):
     roll = random.randint(1, 20)
     total = roll + modifier
     return f"Rolled {roll} + {modifier} ({stat_label}) = {total} vs DC {difficulty}"
 
+@tool
 def update_environment(thread_id: str, time_str: str, weather: str, minutes_passed: int = 0):
     """
     Updates the in-game Time (HH:MM) and Weather.
@@ -85,6 +89,7 @@ def update_environment(thread_id: str, time_str: str, weather: str, minutes_pass
         return f"System: Clock updated to {final_time}, Weather: {weather}."
     except Exception as e: return f"System Error: {e}"
 
+@tool
 def manage_story_log(thread_id: str, action: str, note: str, status: str = "pending"):
     try:
         if action == "add":
@@ -111,6 +116,7 @@ def manage_story_log(thread_id: str, action: str, note: str, status: str = "pend
         return "System: Invalid Action"
     except Exception as e: return f"System Error: {e}"
 
+@tool
 def update_world_entity(thread_id: str, category: str, name: str, details: str, status: str = "active", attributes: dict = None, **kwargs):
     """
     Updates or creates an entity in the world state.
@@ -222,6 +228,7 @@ def update_world_entity(thread_id: str, category: str, name: str, details: str, 
         return f"System: Updated {category} '{final_name}' (Key: {key_to_use})."
     except Exception as e: return f"System Error: {e}"
 
+@tool
 def update_journal(thread_id: str, log_entry: str):
     try:
         entry = f"[{datetime.utcnow().strftime('%H:%M')}] {log_entry}"
@@ -230,3 +237,16 @@ def update_journal(thread_id: str, log_entry: str):
         )
         return "System: Journal updated."
     except Exception as e: return f"System Error: {e}"
+
+@tool
+def propose_actions(actions: list[str]):
+    """
+    Propose a list of 2-4 distinct, relevant actions for the current player to take in the next turn.
+    These should be short, clear, and directly related to the current scene and narrative context.
+    Do not propose actions that are passive or uninteresting.
+    Example: ["Check the chest for traps", "Listen at the door", "Ready your sword"]
+    """
+    # This is a stub for the AI model to call. The RPG engine will intercept the call
+    # and use the 'actions' list to generate interactive UI components (buttons).
+    # The function itself does not need to do anything.
+    pass
