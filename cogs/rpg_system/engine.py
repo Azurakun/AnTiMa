@@ -289,7 +289,17 @@ class RPGEngine:
                 cleaned_history.append({"author": "DM", "content": t['output'], "timestamp": t['timestamp'], "turn_id": t['turn_id']})
             await self.memory_manager.clear_thread_vectors(channel.id)
             await self.memory_manager.batch_ingest_history(channel.id, cleaned_history)
-            await status_msg.edit(content=f"🔄 **Syncing...** [3/4] 🌍 Rebuilding World State (Non-Destructive)...")
+            
+            await status_msg.edit(content=f"🔄 **Syncing...** [3/4] 🧠 Populating NPC Memories...")
+            # New Step: Backfill NPC memories using the Scribe
+            for turn in reconstructed_turns:
+                # We only need to analyze the bot's narrative output for events
+                narrative_text = turn.get('output', '')
+                if narrative_text:
+                    # We can pass an empty list for active_npcs as the Scribe will infer from the text
+                    await self._run_scribe(channel.id, narrative_text, active_npcs=[])
+
+            await status_msg.edit(content=f"🔄 **Syncing...** [4/4] 🌍 Rebuilding World State (Non-Destructive)...")
             scan_tasks = []
             chunk_size = 15000 
             current_chunk = ""
