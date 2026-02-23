@@ -36,6 +36,7 @@ Dive into limitless adventures with a persistent, AI-driven role-playing game.
 -   **Web Dashboard**: A full-featured web interface to create new adventures, manage characters, and inspect the game state.
 -   **Character Personas**: Create and save your own characters to use in different adventures.
 -   **Persistent State**: The bot remembers everything that happens in the game world, from player actions to NPC relationships.
+-   **Dynamic Action UI**: The AI generates context-aware action buttons (e.g., "Examine the mysterious altar" or "Try to persuade the guard"), providing an intuitive way to play. This can be toggled off for a classic text-based experience.
 -   **Slash Commands**:
     -   `/rpg start`: Start a new RPG adventure.
     -   `/rpg world`: Inspect the current state of the game world.
@@ -43,6 +44,7 @@ Dive into limitless adventures with a persistent, AI-driven role-playing game.
     -   `/rpg sync`: Re-synchronize the game state from the chat history.
     -   `/rpg web_new`: Create a new adventure using the web dashboard.
     -   `/rpg personas`: Manage your saved character personas.
+    -   `/rpg uimode`: (GM) Switch between button and text-based UI.
     -   `/rpg end`: End the current adventure.
 
 ### 💮 Anime Gacha Game

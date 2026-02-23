@@ -273,6 +273,29 @@ class RPGAdventureCog(commands.Cog):
         rpg_sessions_collection.update_one({"thread_id": interaction.channel.id}, {"$set": {"story_mode": (mode=="story")}})
         await interaction.response.send_message(f"Mode set to: **{mode.upper()}**")
 
+    @rpg_group.command(name="uimode", description="Switch between button-based or text-based UI.")
+    @app_commands.choices(mode=[
+        app_commands.Choice(name="Buttons (Default)", value="buttons"),
+        app_commands.Choice(name="Text-Only (Classic)", value="text")
+    ])
+    async def rpg_uimode(self, interaction: discord.Interaction, mode: str):
+        if not isinstance(interaction.channel, discord.Thread):
+            return await interaction.response.send_message("This command can only be used within an adventure thread.", ephemeral=True)
+        
+        session = rpg_sessions_collection.find_one({"thread_id": interaction.channel.id})
+        if not session:
+            return await interaction.response.send_message("Could not find an active session for this thread.", ephemeral=True)
+
+        # Check if the user is the owner of the session
+        if interaction.user.id != session.get("owner_id"):
+            return await interaction.response.send_message("Only the session owner (the one who started the game) can change the UI mode.", ephemeral=True)
+
+        rpg_sessions_collection.update_one(
+            {"thread_id": interaction.channel.id},
+            {"$set": {"ui_mode": mode}}
+        )
+        await interaction.response.send_message(f"✅ UI mode has been set to: **{mode.capitalize()}**.", ephemeral=True)
+
     @rpg_group.command(name="web_new", description="Create an adventure via the Web Dashboard.")
     async def rpg_web_new(self, interaction: discord.Interaction):
         token = str(uuid.uuid4())

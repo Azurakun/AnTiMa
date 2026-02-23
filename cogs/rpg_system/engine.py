@@ -14,7 +14,7 @@ from utils.db import (
 from .config import RPG_CLASSES
 from . import prompts, tools
 from .utils import RPGLogger, StatusManager, sanitize_age
-from .ui import RPGGameView
+from .ui import RPGGameView, DynamicActionView
 
 class RPGEngine:
     def __init__(self, bot, model, memory_manager, scribe_model):
@@ -217,7 +217,17 @@ class RPGEngine:
                 # Remove thinking msg
                 await status.delete()
 
-                bot_msg_ids = await self._send_narrative(channel, text_content, chat_session, current_turn_id)
+                # Extract proposed actions from the response, if any
+                proposed_actions = []
+                for part in response.parts:
+                    if part.function_call and part.function_call.name == 'propose_actions':
+                        proposed_actions = part.function_call.args.get('actions', [])
+                        break
+
+                bot_msg_ids = await self._send_narrative(
+                    channel, text_content, chat_session, current_turn_id,
+                    proposed_actions=proposed_actions, user=user
+                )
 
                 self.memory_manager.save_turn(
                     channel.id, user.name if user else "System", prompt, text_content, 
@@ -350,7 +360,7 @@ class RPGEngine:
         except Exception as e:
             return f"Tool Error: {e}"
 
-    async def _send_narrative(self, channel, text, session, turn_id):
+    async def _send_narrative(self, channel, text, session, turn_id, proposed_actions=None, user=None):
         # --- CLEANUP: REMOVE EXCESSIVE BREAKS ---
         # Replace 3 or more newlines with 2 (Standard Paragraph spacing)
         clean_text = re.sub(r'\n{3,}', '\n\n', text)
@@ -365,10 +375,30 @@ class RPGEngine:
             embed = discord.Embed(description=chunk, color=discord.Color.from_rgb(47, 49, 54))
             if i == 0: embed.set_author(name="The Dungeon Master", icon_url=self.bot.user.avatar.url)
             
-            view = RPGGameView(self.bot.get_cog("RPGAdventureCog"), channel.id) if is_last else None
-            if is_last: embed.set_footer(text=footer)
+            # Determine which view to use
+            view_to_send = None
+            if is_last:
+                session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
+                ui_mode = session_db.get("ui_mode", "buttons") # Default to buttons if not set
+
+                if ui_mode == "buttons" and proposed_actions and user:
+                    # Use the new dynamic action view
+                    action_view = DynamicActionView(self, channel, user, proposed_actions)
+                    view_to_send = action_view
+                else:
+                    # Fallback to the standard game view (reroll button)
+                    view_to_send = RPGGameView(self.bot.get_cog("RPGAdventureCog"), channel.id)
+
+            if is_last:
+                embed.set_footer(text=footer)
             
-            msg = await channel.send(embed=embed, view=view)
+            msg = await channel.send(embed=embed, view=view_to_send)
+            
+            # If we sent an action view, we need to give it a reference to the message
+            # so it can disable the buttons on timeout.
+            if isinstance(view_to_send, DynamicActionView):
+                view_to_send.message = msg
+
             msg_ids.append(msg.id)
         return msg_ids
 
