@@ -1,21 +1,20 @@
-MIT License
+Custom License - All Rights Reserved
 
 Copyright (c) 2026 Azurakun
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+This software is provided with source code for personal use only, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+**You are granted the following rights:**
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+1.  You are free to download, clone, and run this software for your own personal, non-commercial purposes.
+2.  You are free to modify the source code for your own personal use.
+
+**You are explicitly NOT granted the following rights:**
+
+1.  You may not sell this software, its source code, or any part of it.
+2.  You may not redistribute this software in any form, either in its original or modified state.
+3.  You may not use this software for any commercial purpose whatsoever, including but not limited to use in a business, for-profit enterprise, or as part of a commercial service.
+
+This software is provided "as is", without warranty of any kind, express or implied. In no event shall the authors or copyright holders be liable for any claim, damages or other liability.
+
+All rights not expressly granted herein are reserved by the author.
