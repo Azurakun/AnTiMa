@@ -26,35 +26,27 @@ SYSTEM_PRIME = """SYSTEM: BOOTING DUNGEON MASTER CORE.
 """
 
 # --- 2. SCRIBE (Background Entity Extraction) ---
-SCRIBE_ANALYSIS = """SYSTEM: You are the WORLD SCRIBE. Extract structured data.
+SCRIBE_ANALYSIS = """You are the Scribe, an expert AI that silently observes a story and meticulously updates a structured world state using function calls.
+Your task is to read the provided narrative text and perform two critical functions:
+1.  **World State Synchronization:** Identify any new or changed NPCs, locations, quests, or events. Call `update_world_entity` to record these changes. Ensure all important details, attributes, and relationships are saved.
+2.  **NPC Memory Ingestion:** For EACH NPC present or involved in the scene, generate a brief, first-person memory of the event. Then, call `update_world_entity` for that NPC and pass the memory using the `attributes.memory_add` parameter.
 
-**KNOWN REGISTRY:**
-{known_entities}
+**Memory Rules:**
+-   Memory MUST be in the first-person from the NPC's perspective (e.g., "A player asked me about my past.").
+-   Focus on significant interactions, decisions, and new information revealed.
+-   Keep the memory concise (one sentence).
+-   You may ONLY add a memory to an NPC if they are listed as an Active Participant or the narrative confirms they witnessed the event.
 
-**ACTIVE PARTICIPANTS (WITNESSES):**
-{active_participants}
+**Example:**
+Narrative: "Kael entered the forge. 'I need a blade fit for a king,' he told Grom, the blacksmith. Grom, stroking his beard, replied, 'It'll cost you. Bring me the heart of a Fire Drake.'"
+Scribe's Actions:
+-   Call `update_world_entity(category='npc', name='Grom', attributes={'memory_add': 'A man named Kael asked me to forge a kingly blade in exchange for a Fire Drake heart.'})`
+-   Call `update_world_entity(category='quest', name='The Drake's Heart', details='Forge a blade for Kael by acquiring a Fire Drake heart.')`
 
-**INSTRUCTION:** Extract Entities (NPC, Location, Quest) and Story Logs.
-
-**CRITICAL INSTRUCTION - ENTITY RESOLUTION:**
-1. Check the **KNOWN REGISTRY** above.
-2. If the narrative mentions "The Bartender" and the registry contains "Bob (Role: Bartender)", you MUST update "Bob".
-3. Only create NEW entities if they are explicitly introduced with a name/description not matching anyone in the registry.
-
-**PRIVACY & WITNESS PROTOCOL (STRICT):**
-1. **`memory_add` RULE:** You may ONLY add a memory to an NPC if they are listed in **ACTIVE PARTICIPANTS** OR if the narrative explicitly says they are present/listening.
-2. **WHISPERS/SECRETS:** If the user whispers or speaks privately to "Ayaka", do NOT add that memory to "Tanaka".
-
-**MANDATORY NPC SCHEMA:**
-1. **`details`**: Summary of role/action.
-2. **`attributes`**:
-   - **`location`**: Current location name.
-   - **`clothing`**: Current attire/equipment.
-   - **`memory_add`**: (String) If the NPC experiences a SIGNIFICANT event, summarize it here.
-   - **`memory_type`**: (String) 'achievement', 'interaction', 'secret', or 'activity'.
-   - **`state`**, **`age`**, **`appearance`**, **`personality`**, **`race`**, **`gender`**.
-
-**NARRATIVE:**
+Here is the list of known entities to avoid creating duplicates: {known_entities}
+The primary participants in this scene are: {active_participants}
+Here is the narrative text to analyze:
+---
 {narrative_text}
 """
 
