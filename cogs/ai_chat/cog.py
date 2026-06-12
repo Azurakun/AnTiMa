@@ -7,13 +7,15 @@ import os
 import random
 import asyncio
 from datetime import datetime, timedelta, timezone
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import aiohttp
 import collections
 import functools
-# Updated imports to ensure they match utils/db.py
-from utils.db import ai_config_collection, ai_personal_memories_collection, server_lore_collection, rpg_sessions_collection, web_actions_collection
+
+from utils.db import (
+    ai_config_collection, ai_personal_memories_collection,
+    server_lore_collection, rpg_sessions_collection, web_actions_collection
+)
+from utils.ai_client import get_client  # Ensures client is ready at import time
 
 from .prompts import SYSTEM_PROMPT
 from .response_handler import should_bot_respond_ai_check, process_message_batch, handle_single_user_response
@@ -24,6 +26,7 @@ from .utils import perform_web_search, identify_visual_content
 
 logger = logging.getLogger(__name__)
 
+
 class AIChatCog(commands.Cog, name="AIChat"):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -33,24 +36,17 @@ class AIChatCog(commands.Cog, name="AIChat"):
         self.BATCH_DELAY = 5
         self.ignored_messages = collections.deque(maxlen=500)
 
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-
+        # Verify the API client can be created (raises EnvironmentError if GEMINI_API_KEY is missing)
         try:
-            genai.configure(api_key=os.environ["GEMINI_API_KEY"])
-            self.model = genai.GenerativeModel('gemini-2.5-pro', system_instruction=SYSTEM_PROMPT, safety_settings=safety_settings, tools=[perform_web_search, identify_visual_content])
-            self.summarizer_model = genai.GenerativeModel('gemini-2.5-flash')
-            logger.info("Gemini AI models loaded.")
+            get_client()
+            logger.info("Gemini client initialized successfully.")
+            self._ai_ready = True
         except Exception as e:
-            logger.error(f"Failed to configure Gemini AI: {e}")
-            self.model = None
-        
+            logger.error(f"Failed to initialize Gemini client: {e}")
+            self._ai_ready = False
+
         self.proactive_chat_loop.start()
-        self.server_lore_update_loop.start()
+        # self.server_lore_update_loop.start()  # Disabled to prevent API quota exhaustion
         self.check_reload_requests.start()
 
     def cog_unload(self):
@@ -64,26 +60,33 @@ class AIChatCog(commands.Cog, name="AIChat"):
         return await self.bot.loop.run_in_executor(None, partial_func)
 
     def _calculate_next_chat_time(self, frequency: str = "normal") -> datetime | None:
-        if frequency == "disabled": return None
+        if frequency == "disabled":
+            return None
         now = datetime.now(timezone.utc)
-        if frequency == "active": minutes = random.randint(30, 90)
-        elif frequency == "quiet": minutes = random.randint(360, 720)
-        elif frequency == "testing": minutes = random.randint(1, 2)
-        else: minutes = random.randint(120, 300)
+        if frequency == "active":
+            minutes = random.randint(30, 90)
+        elif frequency == "quiet":
+            minutes = random.randint(360, 720)
+        elif frequency == "testing":
+            minutes = random.randint(1, 2)
+        else:
+            minutes = random.randint(120, 300)
         return now + timedelta(minutes=minutes)
 
     @tasks.loop(seconds=3)
     async def check_reload_requests(self):
         """Watches for restart signals from the dashboard for instant apply."""
         try:
-            req = await self.run_db(web_actions_collection.find_one_and_update, 
+            req = await self.run_db(
+                web_actions_collection.find_one_and_update,
                 {"type": "reload_chat", "status": "pending"},
                 {"$set": {"status": "completed"}}
             )
             if req:
                 logger.info("♻️ Reload signal received. Restarting Proactive Chat Loop...")
                 self.proactive_chat_loop.restart()
-        except Exception: pass
+        except Exception:
+            pass
 
     @check_reload_requests.before_loop
     async def before_check_reload_requests(self):
@@ -94,10 +97,12 @@ class AIChatCog(commands.Cog, name="AIChat"):
         for guild in self.bot.guilds:
             try:
                 config = await self.run_db(ai_config_collection.find_one, {"_id": str(guild.id)})
-                if config and config.get("bot_disabled", False): continue
-                await update_server_lore_summary(self.summarizer_model, guild)
+                if config and config.get("bot_disabled", False):
+                    continue
+                await update_server_lore_summary(None, guild)
                 await asyncio.sleep(5)
-            except Exception as e: logger.error(f"Error updating lore for {guild.id}: {e}")
+            except Exception as e:
+                logger.error(f"Error updating lore for {guild.id}: {e}")
 
     @server_lore_update_loop.before_loop
     async def before_server_lore_update_loop(self):
@@ -106,46 +111,60 @@ class AIChatCog(commands.Cog, name="AIChat"):
     @tasks.loop(minutes=1)
     async def proactive_chat_loop(self):
         try:
-            guild_configs = await self.run_db(lambda: list(ai_config_collection.find({"channel": {"$exists": True, "$ne": None}})))
+            guild_configs = await self.run_db(
+                lambda: list(ai_config_collection.find({"channel": {"$exists": True, "$ne": None}}))
+            )
             now = datetime.now(timezone.utc)
             for config in guild_configs:
                 try:
                     guild_id = config["_id"]
-                    
-                    # 1. Immediate Disabled Check
-                    if config.get("bot_disabled", False): continue
-                    
-                    # 2. Frequency Check
-                    freq = config.get("chat_frequency", "normal")
-                    if freq == "disabled": continue
 
-                    # 3. Time Check
+                    if config.get("bot_disabled", False):
+                        continue
+
+                    freq = config.get("chat_frequency", "normal")
+                    if freq == "disabled":
+                        continue
+
                     next_time = config.get("next_chat_time")
-                    if next_time and next_time.tzinfo is None: next_time = next_time.replace(tzinfo=timezone.utc)
-                    
+                    if next_time and next_time.tzinfo is None:
+                        next_time = next_time.replace(tzinfo=timezone.utc)
+
                     if not next_time:
                         new_next_time = self._calculate_next_chat_time(freq)
                         if new_next_time:
-                            await self.run_db(ai_config_collection.update_one, {"_id": guild_id}, {"$set": {"next_chat_time": new_next_time}})
+                            await self.run_db(
+                                ai_config_collection.update_one,
+                                {"_id": guild_id},
+                                {"$set": {"next_chat_time": new_next_time}}
+                            )
                         continue
 
-                    if now < next_time: continue 
-                    
-                    # 4. Logic Execution
+                    if now < next_time:
+                        continue
+
                     guild = self.bot.get_guild(int(guild_id))
                     channel = self.bot.get_channel(int(config.get('channel')))
-                    if not guild or not channel: continue
+                    if not guild or not channel:
+                        continue
 
                     if channel.last_message_id:
                         try:
                             last_msg = await channel.fetch_message(channel.last_message_id)
                             if (now - last_msg.created_at) < timedelta(minutes=2):
                                 retry_time = now + timedelta(minutes=15)
-                                await self.run_db(ai_config_collection.update_one, {"_id": guild_id}, {"$set": {"next_chat_time": retry_time}})
+                                await self.run_db(
+                                    ai_config_collection.update_one,
+                                    {"_id": guild_id},
+                                    {"$set": {"next_chat_time": retry_time}}
+                                )
                                 continue
-                        except: pass
+                        except Exception:
+                            pass
 
-                    recent_users = await self.run_db(ai_personal_memories_collection.distinct, "user_id", {"guild_id": int(guild_id)})
+                    recent_users = await self.run_db(
+                        ai_personal_memories_collection.distinct, "user_id", {"guild_id": int(guild_id)}
+                    )
                     target_user = None
                     if recent_users:
                         for uid in recent_users:
@@ -154,17 +173,24 @@ class AIChatCog(commands.Cog, name="AIChat"):
                                 target_user = mem
                                 break
                     if not target_user:
-                         online_members = [m for m in guild.members if not m.bot and m.status != discord.Status.offline]
-                         if online_members: target_user = random.choice(online_members)
+                        online_members = [m for m in guild.members if not m.bot and m.status != discord.Status.offline]
+                        if online_members:
+                            target_user = random.choice(online_members)
 
                     if target_user:
                         await _initiate_conversation(self, channel, target_user)
 
                     new_next_time = self._calculate_next_chat_time(freq)
                     if new_next_time:
-                        await self.run_db(ai_config_collection.update_one, {"_id": guild_id}, {"$set": {"next_chat_time": new_next_time}})
-                except: continue
-        except: pass
+                        await self.run_db(
+                            ai_config_collection.update_one,
+                            {"_id": guild_id},
+                            {"$set": {"next_chat_time": new_next_time}}
+                        )
+                except Exception:
+                    continue
+        except Exception:
+            pass
 
     @proactive_chat_loop.before_loop
     async def before_proactive_chat_loop(self):
@@ -181,16 +207,22 @@ class AIChatCog(commands.Cog, name="AIChat"):
     async def ai_forget(self, interaction: discord.Interaction, scope: str):
         if scope == 'guild' and not interaction.user.guild_permissions.manage_guild:
             return await interaction.response.send_message("❌ Admin permission required.", ephemeral=True)
-        
+
         await interaction.response.defer(ephemeral=True)
-        if scope == 'guild': await self.run_db(ai_personal_memories_collection.delete_many, {"guild_id": interaction.guild_id})
-        else: await self.run_db(ai_personal_memories_collection.delete_many, {"user_id": interaction.user.id, "guild_id": interaction.guild_id})
+        if scope == 'guild':
+            await self.run_db(ai_personal_memories_collection.delete_many, {"guild_id": interaction.guild_id})
+        else:
+            await self.run_db(
+                ai_personal_memories_collection.delete_many,
+                {"user_id": interaction.user.id, "guild_id": interaction.guild_id}
+            )
         await interaction.followup.send(f"✅ **Memory Wiped:** {scope.capitalize()}")
 
     @ai_group.command(name="lore", description="View the AI's understanding of this server.")
     async def ai_lore(self, interaction: discord.Interaction):
         data = await self.run_db(server_lore_collection.find_one, {"_id": str(interaction.guild_id)})
-        if not data: return await interaction.response.send_message("🧠 No lore data yet.", ephemeral=True)
+        if not data:
+            return await interaction.response.send_message("🧠 No lore data yet.", ephemeral=True)
         embed = discord.Embed(title=f"🧠 Context: {interaction.guild.name}", color=discord.Color.purple())
         embed.add_field(name="Manual", value=data.get("manual_description", "None"), inline=False)
         embed.add_field(name="Learned", value=data.get("learned_summary", "None"), inline=False)
@@ -200,56 +232,74 @@ class AIChatCog(commands.Cog, name="AIChat"):
     @app_commands.checks.has_permissions(manage_guild=True)
     async def ai_teach(self, interaction: discord.Interaction, description: str):
         await interaction.response.defer(ephemeral=True)
-        await update_server_lore_summary(self.summarizer_model, interaction.guild, manual_description=description)
+        await update_server_lore_summary(None, interaction.guild, manual_description=description)
         await interaction.followup.send(f"✅ **Lore Updated:** \"{description}\"")
 
     @ai_group.command(name="refresh", description="[Admin] Force AI to re-read recent chats.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def ai_refresh(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        await update_guild_personality(self.summarizer_model, interaction.guild)
+        await update_guild_personality(None, interaction.guild)
         await interaction.followup.send("✅ Personality Refreshed.")
 
     @ai_group.command(name="chat", description="[Admin] Trigger a proactive message to a user.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def ai_chat(self, interaction: discord.Interaction, user: discord.Member):
-        if user.bot: return await interaction.response.send_message("❌ Bots only talk to humans.", ephemeral=True)
+        if user.bot:
+            return await interaction.response.send_message("❌ Bots only talk to humans.", ephemeral=True)
         await interaction.response.defer(ephemeral=True)
         await _initiate_conversation(self, interaction.channel, user)
         await interaction.followup.send(f"✅ Triggered chat with {user.mention}.")
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.author.bot or self.model is None or not message.guild: return
-        
+        if message.author.bot or not self._ai_ready or not message.guild:
+            return
+
         if isinstance(message.channel, discord.Thread):
             try:
-                if rpg_sessions_collection.find_one({"thread_id": message.channel.id}): return 
-            except: pass
+                if rpg_sessions_collection.find_one({"thread_id": message.channel.id}):
+                    return
+            except Exception:
+                pass
 
-        is_targeted = self.bot.user in message.mentions or (message.reference and message.reference.resolved and message.reference.resolved.author == self.bot.user)
-        
-        # --- LIMITER CHECK ---
-
+        is_targeted = (
+            self.bot.user in message.mentions
+            or (
+                message.reference
+                and message.reference.resolved
+                and message.reference.resolved.author == self.bot.user
+            )
+        )
 
         guild_id = str(message.guild.id)
         guild_config = await self.run_db(ai_config_collection.find_one, {"_id": guild_id}) or {}
 
         if guild_config.get("bot_disabled", False):
-            if self.bot.user in message.mentions: await message.reply("💤 Disabled.")
+            if self.bot.user in message.mentions:
+                await message.reply("💤 Disabled.")
             return
 
-        if not await should_bot_respond_ai_check(self, self.bot, self.summarizer_model, message):
+        if not await should_bot_respond_ai_check(self, self.bot, None, message):
             self.ignored_messages.append(message.id)
             return
 
         clean = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
-        if not clean and not message.attachments: return
+        if not clean and not message.attachments:
+            return
 
-        if guild_config.get("group_chat_enabled", False) and message.channel.id == guild_config.get("channel") and not is_targeted:
+        if (
+            guild_config.get("group_chat_enabled", False)
+            and message.channel.id == guild_config.get("channel")
+            and not is_targeted
+        ):
             self.message_batches.setdefault(message.channel.id, []).append(message)
-            if message.channel.id in self.batch_timers: self.batch_timers[message.channel.id].cancel()
-            self.batch_timers[message.channel.id] = self.bot.loop.call_later(self.BATCH_DELAY, lambda: self.bot.loop.create_task(process_message_batch(self, message.channel.id)))
+            if message.channel.id in self.batch_timers:
+                self.batch_timers[message.channel.id].cancel()
+            self.batch_timers[message.channel.id] = self.bot.loop.call_later(
+                self.BATCH_DELAY,
+                lambda: self.bot.loop.create_task(process_message_batch(self, message.channel.id))
+            )
         else:
             await handle_single_user_response(self, message, clean, message.author)
 

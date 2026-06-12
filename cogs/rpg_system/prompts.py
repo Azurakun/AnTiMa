@@ -40,7 +40,7 @@ Your task is to read the provided narrative text and perform two critical functi
 **Example:**
 Narrative: "Kael entered the forge. 'I need a blade fit for a king,' he told Grom, the blacksmith. Grom, stroking his beard, replied, 'It'll cost you. Bring me the heart of a Fire Drake.'"
 Scribe's Actions:
--   Call `update_world_entity(category='npc', name='Grom', attributes={'memory_add': 'A man named Kael asked me to forge a kingly blade in exchange for a Fire Drake heart.'})`
+-   Call `update_world_entity(category='npc', name='Grom', attributes={{'memory_add': 'A man named Kael asked me to forge a kingly blade in exchange for a Fire Drake heart.'}})`
 -   Call `update_world_entity(category='quest', name='The Drake's Heart', details='Forge a blade for Kael by acquiring a Fire Drake heart.')`
 
 Here is the list of known entities to avoid creating duplicates: {known_entities}

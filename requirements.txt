@@ -1,4 +1,4 @@
-discord-ext-voice-recv
+﻿discord-ext-voice-recv
 discord
 discord.py
 requests
@@ -6,7 +6,7 @@ flask
 aiohttp
 python-dotenv
 tzdata
-google-generativeai
+openai
 pymongo
 dnspython
 PyNaCl
@@ -25,4 +25,3 @@ uvicorn
 jinja2
 websockets
 gunicorn
-beautifulsoup4

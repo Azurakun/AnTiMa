@@ -366,7 +366,7 @@ def fetch_logs_by_date(date_str: str):
 
 @app.get("/", response_class=HTMLResponse)
 async def get_home(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/api/details/{data_type}")
 async def get_details_api(data_type: str):
@@ -524,7 +524,7 @@ async def manage_log(req: ManageLogRequest):
 
 @app.get("/rpg/inspect/{thread_id}", response_class=HTMLResponse)
 async def inspect_rpg_page(request: Request, thread_id: str):
-    return templates.TemplateResponse("memory_inspector.html", {"request": request, "thread_id": thread_id})
+    return templates.TemplateResponse(request=request, name="memory_inspector.html", context={"thread_id": thread_id})
 
 # --- SSE STREAMING ENDPOINT ---
 # Added to fix the 404 error and provide live updates to the System Debug Terminal
@@ -573,8 +573,8 @@ async def rpg_setup_page(request: Request, token: str):
     user_id = token_doc["user_id"]
     personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
     personas = [serialize_persona(p) for p in personas]
-    return templates.TemplateResponse("rpg_setup.html", {
-        "request": request, "token": token, "scenarios": SCENARIOS, "premades": PREMADE_CHARACTERS, "personas": personas
+    return templates.TemplateResponse(request=request, name="rpg_setup.html", context={
+        "token": token, "scenarios": SCENARIOS, "premades": PREMADE_CHARACTERS, "personas": personas
     })
 
 @app.get("/rpg/personas", response_class=HTMLResponse)
@@ -585,7 +585,7 @@ async def rpg_personas_page(request: Request, token: str):
     user_id = token_doc["user_id"]
     personas = await run_sync_db(lambda: list(user_personas_collection.find({"user_id": user_id}, {"_id": 0})))
     personas = [serialize_persona(p) for p in personas]
-    return templates.TemplateResponse("personas.html", {"request": request, "token": token, "personas": personas})
+    return templates.TemplateResponse(request=request, name="personas.html", context={"token": token, "personas": personas})
 
 @app.post("/api/rpg/persona/save")
 async def save_persona(data: PersonaModel):

@@ -6,7 +6,6 @@ import asyncio
 import re
 from datetime import datetime, timedelta, timezone
 from .memory_handler import load_user_memories
-from .utils import _safe_get_response_text
 
 logger = logging.getLogger(__name__)
 
@@ -96,9 +95,18 @@ async def _initiate_conversation(cog, channel, user):
         )
         
         # 4. Generate
-        response = await cog.summarizer_model.generate_content_async(system_instruction + "\n" + data_block)
-        text = _safe_get_response_text(response).strip()
-        
+        from utils.ai_client import get_client, MAIN_MODEL, throttled_create
+        client = get_client()
+        response = await throttled_create(client.chat.completions.create(
+            model=MAIN_MODEL,
+            messages=[
+                {"role": "system", "content": system_instruction},
+                {"role": "user", "content": data_block},
+            ],
+            max_tokens=200,
+        ))
+        text = (response.choices[0].message.content or "").strip()
+
         if not text:
             logger.warning(f"Proactive chat generation failed for user {user.name}.")
             return False, "Empty AI response"

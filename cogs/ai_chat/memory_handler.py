@@ -46,22 +46,31 @@ async def load_global_memories(limit: int = 5) -> str:
 
 async def summarize_and_save_memory(model, user, guild_id, conversation_history):
     """
-    Analyzes conversation to extract permanent memories using Gemini.
+    Analyzes conversation to extract permanent memories.
+    conversation_history is a list of OpenAI-format dicts: {"role": ..., "content": ...}
     """
     try:
-        # Simplify history for the prompt
-        chat_log = []
-        for msg in conversation_history:
-            role = "AI" if msg.role == "model" else "User"
-            # Handle list of parts or single string safely
-            content = msg.parts[0] if isinstance(msg.parts, list) and msg.parts else ""
-            if hasattr(content, 'text'): # Check if it's a text part object
-                content = content.text
-            chat_log.append(f"{role}: {content}")
-        
-        # Only analyze the last few turns to keep it relevant
-        chat_text = "\n".join(chat_log[-4:])
+        from utils.ai_client import get_client, FAST_MODEL, throttled_create
 
+        # Build a readable chat log from the last few turns
+        chat_log = []
+        for msg in conversation_history[-6:]:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # Handle multi-part content (e.g. text + image)
+                text_parts = [p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text"]
+                content = " ".join(text_parts)
+            if role and content:
+                label = "AI" if role == "assistant" else "User"
+                chat_log.append(f"{label}: {str(content)[:200]}")
+
+        if not chat_log:
+            return
+
+        chat_text = "\n".join(chat_log)
         prompt = (
             "Analyze this short conversation snippet. Extract ONE specific, permanent fact about the User "
             "that is worth remembering (e.g., name, hobbies, favorite games, location). "
@@ -71,21 +80,22 @@ async def summarize_and_save_memory(model, user, guild_id, conversation_history)
             "Format:\nUser Fact: [fact or None]\nGlobal Fact: [fact or None]"
         )
 
-        # The AI generation IS asynchronous, so we keep 'await' here
-        response = await model.generate_content_async(prompt)
-        text = response.text if response.parts else ""
-        
-        lines = text.split('\n')
+        client = get_client()
+        response = await throttled_create(client.chat.completions.create(
+            model=FAST_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=80,
+        ))
+        text = (response.choices[0].message.content or "").strip()
+
         user_fact = None
         global_fact = None
-
-        for line in lines:
+        for line in text.split("\n"):
             if line.startswith("User Fact:") and "None" not in line:
                 user_fact = line.replace("User Fact:", "").strip()
             elif line.startswith("Global Fact:") and "None" not in line:
                 global_fact = line.replace("Global Fact:", "").strip()
 
-        # Database writes are synchronous in PyMongo, so NO 'await' here
         if user_fact:
             ai_personal_memories_collection.insert_one({
                 "user_id": user.id,

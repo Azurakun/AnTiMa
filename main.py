@@ -39,7 +39,8 @@ class AnTiMaBot(commands.Bot):
             'cogs.reminders_cog',
             'cogs.logging_cog',
             'cogs.reaction_roles_cog',
-            'cogs.anime_cog'
+            'cogs.anime_cog',
+            'cogs.ticket_cog'
         ]
 
         for ext in initial_extensions:
@@ -79,7 +80,7 @@ async def run_bot():
         # Windows does not support Gunicorn (no fcntl). Use Uvicorn directly.
         print(f"🖥️  Running on Windows: Using Uvicorn directly on port {port}")
         gunicorn_cmd = [
-            "uvicorn",
+            sys.executable, "-m", "uvicorn",
             "dashboard:app",
             "--host", "0.0.0.0",
             "--port", port,

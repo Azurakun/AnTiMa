@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: antima-mongo
+    restart: unless-stopped
+    volumes:
+      - antima-db:/data/db          # Named volume — persists DB across restarts/rebuilds
+    networks:
+      - antima-net
+    # No ports exposed externally — only the bot container can reach it
+
+  antima-bot:
+    image: antima-bot:latest
+    build: .                         # Build from Dockerfile in current directory
+    container_name: antima-bot
+    restart: unless-stopped
+    depends_on:
+      - mongo                        # Start MongoDB first before the bot
+    ports:
+      - "8000:8000"                  # Dashboard port (host:container)
+    env_file:
+      - .env                         # Load all env vars from .env file
+    environment:
+      MONGO_URI: "mongodb://mongo:27017/antima_db"   # 'mongo' = the service name
+      PORT: "8000"
+    volumes:
+      - antima-logs:/app/logs
+    networks:
+      - antima-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  antima-db:
+  antima-logs:
+
+networks:
+  antima-net:
+    driver: bridge

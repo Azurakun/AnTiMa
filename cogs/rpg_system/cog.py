@@ -2,8 +2,7 @@
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
-import google.generativeai as genai
-from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from utils.ai_client import get_client  # Ensures GEMINI_API_KEY is validated at startup
 import uuid
 from datetime import datetime
 
@@ -11,7 +10,6 @@ from utils.db import (
     ai_config_collection, rpg_sessions_collection, rpg_inventory_collection,
     rpg_world_state_collection, web_actions_collection, rpg_web_tokens_collection, db
 )
-from utils.limiter import limiter
 from .config import RPG_CLASSES
 from .ui import AdventureSetupView, CloseVoteView
 from .memory import RPGContextManager
@@ -19,7 +17,7 @@ from .engine import RPGEngine
 from .utils import RPGLogger
 from . import prompts, tools
 
-WEB_DASHBOARD_URL = "http://0.0.0.0:8000/"
+WEB_DASHBOARD_URL = " https://ray-goniometrical-implausibly.ngrok-free.dev"
 
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -30,40 +28,12 @@ class RPGAdventureCog(commands.Cog):
         self.memory_manager = None
         
         try:
-            safety_settings = {
-                HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-                HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-            }
-            
-            # 1. Main Model (Pro) for Narrative Intelligence
-            self.model = genai.GenerativeModel(
-                'gemini-2.5-pro',
-                tools=[
-                    tools.grant_item_to_player, tools.apply_damage, 
-                    tools.apply_healing, tools.deduct_mana, 
-                    tools.roll_d20, tools.update_journal,
-                    tools.update_world_entity, tools.update_environment,
-                    tools.manage_story_log
-                ],
-                safety_settings=safety_settings
-            )
-
-            # 2. Scribe Model (Flash) for Cheap Background Processing
-            self.scribe_model = genai.GenerativeModel(
-                'gemini-2.5-flash',
-                safety_settings=safety_settings
-            )
-            
-            self.memory_manager = RPGContextManager(self.model)
-            
-            # Pass BOTH models to the engine
-            self.engine = RPGEngine(bot, self.model, self.memory_manager, self.scribe_model)
-            print("✅ RPG System Online (Hybrid Architecture: Pro + Flash).")
-            
+            get_client()  # Validates GEMINI_API_KEY is present
+            self.memory_manager = RPGContextManager()
+            self.engine = RPGEngine(bot, memory_manager=self.memory_manager)
+            print("✅ RPG System Online (Gemini Architecture).")
         except Exception as e:
-            print(f"❌ Failed to load Gemini RPG: {e}")
+            print(f"❌ Failed to load RPG System: {e}")
 
         self.cleanup_tasks.start()
         self.web_poller.start()
