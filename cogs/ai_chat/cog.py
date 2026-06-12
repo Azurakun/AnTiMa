@@ -35,6 +35,9 @@ class AIChatCog(commands.Cog, name="AIChat"):
         self.batch_timers = {}
         self.BATCH_DELAY = 5
         self.ignored_messages = collections.deque(maxlen=500)
+        self.user_cooldowns = {}  # {user_id: last_response_timestamp}
+        self.memory_counters = {}  # {"userid_channelid": count} for throttled memory saving
+        self.USER_COOLDOWN = 5  # seconds between responses per user
 
         # Verify the API client can be created (raises EnvironmentError if GEMINI_API_KEY is missing)
         try:
@@ -51,7 +54,8 @@ class AIChatCog(commands.Cog, name="AIChat"):
 
     def cog_unload(self):
         self.proactive_chat_loop.cancel()
-        self.server_lore_update_loop.cancel()
+        if self.server_lore_update_loop.is_running():
+            self.server_lore_update_loop.cancel()
         self.check_reload_requests.cancel()
         self.bot.loop.create_task(self.http_session.close())
 
@@ -99,7 +103,7 @@ class AIChatCog(commands.Cog, name="AIChat"):
                 config = await self.run_db(ai_config_collection.find_one, {"_id": str(guild.id)})
                 if config and config.get("bot_disabled", False):
                     continue
-                await update_server_lore_summary(None, guild)
+                await update_server_lore_summary(guild)
                 await asyncio.sleep(5)
             except Exception as e:
                 logger.error(f"Error updating lore for {guild.id}: {e}")
@@ -232,14 +236,14 @@ class AIChatCog(commands.Cog, name="AIChat"):
     @app_commands.checks.has_permissions(manage_guild=True)
     async def ai_teach(self, interaction: discord.Interaction, description: str):
         await interaction.response.defer(ephemeral=True)
-        await update_server_lore_summary(None, interaction.guild, manual_description=description)
+        await update_server_lore_summary(interaction.guild, manual_description=description)
         await interaction.followup.send(f"✅ **Lore Updated:** \"{description}\"")
 
     @ai_group.command(name="refresh", description="[Admin] Force AI to re-read recent chats.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def ai_refresh(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        await update_guild_personality(None, interaction.guild)
+        await update_guild_personality(interaction.guild)
         await interaction.followup.send("✅ Personality Refreshed.")
 
     @ai_group.command(name="chat", description="[Admin] Trigger a proactive message to a user.")
@@ -280,13 +284,21 @@ class AIChatCog(commands.Cog, name="AIChat"):
                 await message.reply("💤 Disabled.")
             return
 
-        if not await should_bot_respond_ai_check(self, self.bot, None, message):
+        # Skip expensive AI check for direct interactions (mentions, replies)
+        if not is_targeted and not await should_bot_respond_ai_check(self, self.bot, None, message):
             self.ignored_messages.append(message.id)
             return
 
         clean = message.clean_content.replace(f'@{self.bot.user.name}', '').strip()
         if not clean and not message.attachments:
             return
+
+        # Per-user cooldown to prevent spam-triggering multiple responses
+        now = asyncio.get_event_loop().time()
+        last_time = self.user_cooldowns.get(message.author.id, 0)
+        if not is_targeted and (now - last_time) < self.USER_COOLDOWN:
+            return
+        self.user_cooldowns[message.author.id] = now
 
         if (
             guild_config.get("group_chat_enabled", False)

@@ -31,7 +31,7 @@ _PROVIDERS = {
         "main_model": "gemini-2.0-flash",
         "fast_model": "gemini-2.0-flash-lite",
         "max_retries": 0,
-        "rate_limit": (12, 60.0),  # 12 requests per 60 seconds
+        "rate_limit": (8, 60.0),  # 8 requests per 60 seconds (safety margin below 12)
     },
     "ollama": {
         "base_url": "http://localhost:11434/v1",
@@ -55,7 +55,7 @@ _PROVIDERS = {
         "main_model": "meta-llama/llama-3.3-70b-instruct:free",
         "fast_model": "meta-llama/llama-3.1-8b-instruct:free",
         "max_retries": 0,
-        "rate_limit": (20, 60.0),  # 20 requests per 60 seconds
+        "rate_limit": (15, 60.0),  # 15 requests per 60 seconds (safety margin below 20)
     },
     "deepseek": {
         "base_url": "https://api.deepseek.com/v1",
@@ -96,10 +96,45 @@ class _NoOpLimiter:
         pass
 
 
-async def throttled_create(client_create_coro):
-    """Wrap any client.chat.completions.create() call with the rate limiter."""
+class _GlobalCooldown:
+    """Ensures minimum time between ANY two API calls."""
+    def __init__(self, min_interval: float = 2.0):
+        self._min_interval = min_interval
+        self._last_call: float = 0
+        self._lock = asyncio.Lock()
+
+    async def wait(self):
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_call
+            if elapsed < self._min_interval:
+                await asyncio.sleep(self._min_interval - elapsed)
+            self._last_call = time.monotonic()
+
+
+_global_cooldown = _GlobalCooldown(min_interval=2.0)
+
+
+async def throttled_create(client_create_coro, max_retries: int = 2):
+    """
+    Wrap any client.chat.completions.create() call with the rate limiter.
+    Applies global cooldown + retries with exponential backoff on 429 errors.
+    """
     await _rate_limiter.acquire()
-    return await client_create_coro
+    await _global_cooldown.wait()
+    for attempt in range(max_retries + 1):
+        try:
+            return await client_create_coro
+        except Exception as e:
+            error_str = str(e)
+            if "429" in error_str and attempt < max_retries:
+                wait_time = 2 ** (attempt + 1)  # 2s, 4s
+                logger.warning(f"Rate limited (429). Retrying in {wait_time}s (attempt {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait_time)
+                await _rate_limiter.acquire()
+                await _global_cooldown.wait()
+                continue
+            raise
 
 
 # ---------------------------------------------------------------------------

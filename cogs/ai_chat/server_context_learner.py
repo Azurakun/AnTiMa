@@ -2,7 +2,7 @@
 import logging
 from datetime import datetime, timezone
 from utils.db import server_lore_collection
-from .utils import _safe_get_response_text
+from utils.ai_client import get_client, MAIN_MODEL, throttled_create
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +22,7 @@ async def get_server_lore(guild_id: str) -> dict:
         logger.error(f"Error fetching server lore: {e}")
         return {"manual": None, "learned": None}
 
-async def update_server_lore_summary(model, guild, manual_description=None):
+async def update_server_lore_summary(guild, manual_description=None):
     """
     Analyzes recent chat history to update the 'Learned Summary' of the server.
     It combines the admin's Manual Description with actual user activity.
@@ -78,8 +78,13 @@ async def update_server_lore_summary(model, guild, manual_description=None):
             "**OUTPUT:** (Just the monologue text)"
         )
 
-        response = await model.generate_content_async(prompt)
-        new_learned_summary = _safe_get_response_text(response).strip()
+        client = get_client()
+        response = await throttled_create(client.chat.completions.create(
+            model=MAIN_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=400,
+        ))
+        new_learned_summary = (response.choices[0].message.content or "").strip()
 
         # 4. Save to DB
         server_lore_collection.update_one(

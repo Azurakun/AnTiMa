@@ -3,7 +3,7 @@ import discord
 from discord.ext import tasks
 import logging
 from utils.db import ai_config_collection, ai_personal_memories_collection
-from .utils import _safe_get_response_text
+from utils.ai_client import get_client, MAIN_MODEL, throttled_create
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +17,12 @@ async def personality_update_loop(cog):
             guild_id = int(config["_id"])
             guild = cog.bot.get_guild(guild_id)
             if guild:
-                await update_guild_personality(cog.summarizer_model, guild)
+                await update_guild_personality(guild)
     except Exception as e:
         logger.error(f"Error in personality_update_loop: {e}")
     logger.info("Daily personality adaptation task finished.")
 
-async def update_guild_personality(summarizer_model, guild: discord.Guild):
+async def update_guild_personality(guild: discord.Guild):
     """Fetches recent memories from a guild and generates an updated style guide."""
     logger.info(f"Updating personality for guild: {guild.name} ({guild.id})")
     
@@ -31,10 +31,10 @@ async def update_guild_personality(summarizer_model, guild: discord.Guild):
         {"$match": {"guild_id": guild.id}},
         {"$sort": {"timestamp": -1}},
         {"$limit": 50}, # Use last 50 memories as a sample
-        {"$project": {"summary": 1, "_id": 0}}
+        {"$project": {"memory": 1, "_id": 0}}
     ]
     memories_cursor = ai_personal_memories_collection.aggregate(pipeline)
-    memories = [mem['summary'] for mem in memories_cursor]
+    memories = [mem.get('memory', '') for mem in memories_cursor if mem.get('memory')]
 
     if len(memories) < 10: # Don't update if there's not enough recent interaction
         logger.info(f"Not enough memories for guild {guild.name} ({len(memories)}). Skipping personality update.")
@@ -54,8 +54,13 @@ async def update_guild_personality(summarizer_model, guild: discord.Guild):
     )
 
     try:
-        response = await summarizer_model.generate_content_async(prompt)
-        style_guide = _safe_get_response_text(response)
+        client = get_client()
+        response = await throttled_create(client.chat.completions.create(
+            model=MAIN_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=300,
+        ))
+        style_guide = (response.choices[0].message.content or "").strip()
 
         if style_guide:
             ai_config_collection.update_one(

@@ -8,305 +8,491 @@
     <script>
         tailwind.config = {
             darkMode: 'class',
-            theme: { extend: { colors: { discord: '#5865F2', darkbg: '#202225', card: '#2f3136', hover: '#36393f', term: '#0f0f0f' } } }
+            theme: { extend: { colors: { 
+                discord: '#5865F2', 
+                darkbg: '#1a1b1e', 
+                card: '#2b2d31', 
+                sidebar: '#1e1f22',
+                hover: '#35373c', 
+                term: '#0c0c0c',
+                accent: '#5865F2',
+                success: '#23a559',
+                warning: '#f0b232',
+                danger: '#da373c',
+            } } }
         }
     </script>
     <style>
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-track { background: #202225; }
-        ::-webkit-scrollbar-thumb { background: #5865F2; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #4752c4; }
-        .clickable-card { cursor: pointer; transition: all 0.2s ease; border-left-width: 4px; }
-        .clickable-card:hover { transform: translateY(-3px); filter: brightness(1.1); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3); }
-        .terminal-scroll::-webkit-scrollbar { width: 8px; }
-        .terminal-scroll::-webkit-scrollbar-track { background: #0f0f0f; }
-        .terminal-scroll::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #404249; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #5865F2; }
+        .nav-item { transition: all 0.15s ease; border-radius: 8px; }
+        .nav-item:hover { background: rgba(88,101,242,0.08); }
+        .nav-item.active { background: rgba(88,101,242,0.15); color: #5865F2; border-left: 3px solid #5865F2; }
+        .stat-card { transition: all 0.2s ease; }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px -5px rgba(0,0,0,0.3); }
         .fade-in { animation: fadeIn 0.3s ease-in-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-        .tab-btn.active { background-color: #5865F2; color: white; border-color: #5865F2; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+        .terminal-line { font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace; }
+        .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 9999px; font-size: 11px; font-weight: 600; }
+        .log-ERROR { color: #f87171; }
+        .log-WARNING { color: #fbbf24; }
+        .log-INFO { color: #34d399; }
+        .level-bg-ERROR { background: rgba(248,113,113,0.15); color: #f87171; }
+        .level-bg-WARNING { background: rgba(251,191,36,0.15); color: #fbbf24; }
+        .level-bg-INFO { background: rgba(52,211,153,0.1); color: #34d399; }
     </style>
 </head>
-<body class="bg-darkbg text-gray-100 font-sans antialiased min-h-screen flex flex-col">
+<body class="bg-darkbg text-gray-200 font-sans antialiased min-h-screen flex">
 
-    <nav class="bg-card border-b border-gray-700 p-4 sticky top-0 z-50 shadow-xl backdrop-blur-md bg-opacity-90">
-        <div class="container mx-auto flex justify-between items-center">
-            <div class="flex items-center gap-6">
-                <div class="flex items-center gap-3">
-                    <div class="h-3 w-3 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_#22c55e]"></div>
-                    <h1 class="text-2xl font-bold tracking-wide text-white">AnTiMa <span class="text-discord">Admin</span></h1>
-                </div>
-                <div class="flex bg-gray-900 rounded-lg p-1 border border-gray-700 ml-8">
-                    <button onclick="switchTab('dashboard')" id="tab-dashboard" class="tab-btn active px-4 py-1.5 text-sm font-bold rounded-md transition duration-200">Live Dashboard</button>
-                    <button onclick="switchTab('control')" id="tab-control" class="tab-btn px-4 py-1.5 text-sm font-bold rounded-md text-gray-400 hover:text-white transition duration-200">Control Panel</button>
-                </div>
+    <!-- Sidebar -->
+    <aside class="w-60 bg-sidebar border-r border-gray-800 flex flex-col fixed h-full z-40">
+        <div class="p-5 border-b border-gray-800">
+            <div class="flex items-center gap-3">
+                <div class="h-3 w-3 rounded-full bg-success animate-pulse shadow-[0_0_8px_#23a559]"></div>
+                <h1 class="text-lg font-bold text-white tracking-wide">AnTiMa <span class="text-accent text-sm font-medium">Admin</span></h1>
             </div>
-            <div class="text-xs text-gray-400 font-mono flex items-center gap-2 bg-black/30 px-3 py-1 rounded-full border border-gray-700">
-                <span class="w-2 h-2 rounded-full bg-gray-500" id="ws-dot"></span>
+        </div>
+        <nav class="flex-1 p-3 space-y-1">
+            <button onclick="switchTab('dashboard')" id="tab-dashboard" class="nav-item active w-full text-left px-4 py-2.5 text-sm font-medium flex items-center gap-3">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path></svg>
+                Dashboard
+            </button>
+            <button onclick="switchTab('control')" id="tab-control" class="nav-item w-full text-left px-4 py-2.5 text-sm font-medium text-gray-400 flex items-center gap-3">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                Configuration
+            </button>
+            <button onclick="showHistory()" id="tab-logs" class="nav-item w-full text-left px-4 py-2.5 text-sm font-medium text-gray-400 flex items-center gap-3">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                Log Archives
+            </button>
+        </nav>
+        <div class="p-4 border-t border-gray-800">
+            <div class="flex items-center gap-2 text-xs text-gray-500">
+                <span class="w-2 h-2 rounded-full bg-gray-600" id="ws-dot"></span>
                 <span id="ws-status">Connecting...</span>
             </div>
         </div>
-    </nav>
+    </aside>
 
-    <main class="container mx-auto p-6 flex-1 space-y-8">
-        
-        <div id="dashboard-view" class="fade-in space-y-8">
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                <div class="bg-card p-6 rounded-xl shadow-lg border-discord clickable-card group" onclick="showDetails('guilds')">
-                    <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Messages</h3>
-                    <p class="text-4xl font-bold mt-2 text-white group-hover:text-discord transition" id="stat-messages">0</p>
-                    <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Analytics →</div>
-                </div>
-
-                <div class="bg-card p-6 rounded-xl shadow-lg border-green-500 clickable-card group" onclick="showDetails('rpgs')">
-                    <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Active Campaigns</h3>
-                    <p class="text-4xl font-bold mt-2 text-white group-hover:text-green-400 transition" id="stat-rpg">0</p>
-                    <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">Manage Sessions →</div>
-                </div>
-
-                <div class="bg-card p-6 rounded-xl shadow-lg border-purple-500 clickable-card group" onclick="showDetails('users')">
-                    <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Total Users</h3>
-                    <p class="text-4xl font-bold mt-2 text-white group-hover:text-purple-400 transition" id="stat-users">0</p>
-                    <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Directory →</div>
-                </div>
-
-                <div class="bg-card p-6 rounded-xl shadow-lg border-yellow-500 clickable-card group" onclick="showDetails('commands')">
-                    <h3 class="text-gray-400 text-xs uppercase font-bold tracking-wider">Commands Executed</h3>
-                    <p class="text-4xl font-bold mt-2 text-white group-hover:text-yellow-400 transition" id="stat-commands">0</p>
-                    <div class="mt-4 text-xs text-gray-500 group-hover:text-gray-300">View Logs →</div>
-                </div>
+    <!-- Main Content -->
+    <main class="ml-60 flex-1 min-h-screen">
+        <!-- Top Bar -->
+        <header class="sticky top-0 z-30 bg-darkbg/80 backdrop-blur-md border-b border-gray-800 px-8 py-4 flex justify-between items-center">
+            <h2 id="page-title" class="text-lg font-semibold text-white">Live Dashboard</h2>
+            <div class="flex items-center gap-3">
+                <button onclick="restartBot()" class="px-3 py-1.5 text-xs font-medium bg-danger/10 text-danger rounded-lg hover:bg-danger/20 transition border border-danger/20">Restart Bot</button>
             </div>
+        </header>
 
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                <div class="lg:col-span-1 bg-card rounded-xl shadow-lg overflow-hidden border border-gray-700 flex flex-col h-[500px]">
-                    <div class="p-4 bg-gray-800 border-b border-gray-700 flex justify-between items-center">
-                        <h2 class="text-sm font-bold uppercase tracking-wide text-gray-300 flex items-center gap-2">Live Activity Feed</h2>
-                    </div>
-                    <ul id="activity-feed" class="divide-y divide-gray-700 overflow-y-auto bg-darkbg p-2 custom-scrollbar flex-1"></ul>
-                </div>
-
-                <div class="lg:col-span-2 bg-term rounded-xl shadow-2xl overflow-hidden border border-gray-700 font-mono text-sm relative flex flex-col h-[500px]">
-                    <div class="bg-gray-800 p-3 border-b border-gray-700 flex justify-between items-center select-none sticky top-0 z-10">
-                        <div class="flex gap-2 items-center">
-                             <span class="text-gray-400 text-xs font-bold tracking-wide">root@antima:~/kernel_logs</span>
+        <div class="p-8 space-y-6">
+            <!-- DASHBOARD VIEW -->
+            <div id="dashboard-view" class="fade-in space-y-6">
+                <!-- Stats Grid -->
+                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                    <div class="stat-card bg-card p-5 rounded-xl border border-gray-800 cursor-pointer" onclick="showDetails('guilds')">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Servers</span>
+                            <span class="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            </span>
                         </div>
-                        <div class="flex gap-2">
-                            <button onclick="downloadLogs()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs transition border border-gray-600">📥 Save</button>
-                            <button onclick="clearConsole()" class="bg-gray-700 hover:bg-gray-600 text-white px-3 py-1 rounded text-xs transition border border-gray-600">🧹 Clear</button>
-                            <button onclick="showHistory()" class="bg-discord hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs transition border border-indigo-500 shadow-lg shadow-indigo-500/20">📜 History</button>
-                            <button onclick="restartBot()" class="bg-red-900 hover:bg-red-700 text-red-100 px-3 py-1 rounded text-xs transition border border-red-800 shadow-lg shadow-red-900/20">⚡ Restart</button>
+                        <p class="text-3xl font-bold text-white" id="stat-guilds">0</p>
+                        <p class="text-xs text-gray-500 mt-1">View details &rarr;</p>
+                    </div>
+
+                    <div class="stat-card bg-card p-5 rounded-xl border border-gray-800">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Messages</span>
+                            <span class="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center text-success">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
+                            </span>
+                        </div>
+                        <p class="text-3xl font-bold text-white" id="stat-messages">0</p>
+                        <p class="text-xs text-gray-500 mt-1">Total processed</p>
+                    </div>
+
+                    <div class="stat-card bg-card p-5 rounded-xl border border-gray-800 cursor-pointer" onclick="showDetails('users')">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Users</span>
+                            <span class="w-8 h-8 rounded-lg bg-purple-500/10 flex items-center justify-center text-purple-400">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"></path></svg>
+                            </span>
+                        </div>
+                        <p class="text-3xl font-bold text-white" id="stat-users">0</p>
+                        <p class="text-xs text-gray-500 mt-1">View directory &rarr;</p>
+                    </div>
+
+                    <div class="stat-card bg-card p-5 rounded-xl border border-gray-800 cursor-pointer" onclick="showDetails('commands')">
+                        <div class="flex items-center justify-between mb-3">
+                            <span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Commands</span>
+                            <span class="w-8 h-8 rounded-lg bg-warning/10 flex items-center justify-center text-warning">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path></svg>
+                            </span>
+                        </div>
+                        <p class="text-3xl font-bold text-white" id="stat-commands">0</p>
+                        <p class="text-xs text-gray-500 mt-1">View registry &rarr;</p>
+                    </div>
+                </div>
+
+                <!-- Activity + Terminal Row -->
+                <div class="grid grid-cols-1 xl:grid-cols-5 gap-4">
+                    <!-- Activity Feed -->
+                    <div class="xl:col-span-2 bg-card rounded-xl border border-gray-800 flex flex-col h-[460px]">
+                        <div class="px-5 py-3 border-b border-gray-800 flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+                            <h3 class="text-sm font-semibold text-gray-300">Live Activity</h3>
+                        </div>
+                        <ul id="activity-feed" class="flex-1 overflow-y-auto p-2 space-y-0.5"></ul>
+                    </div>
+
+                    <!-- Terminal -->
+                    <div class="xl:col-span-3 bg-term rounded-xl border border-gray-800 flex flex-col h-[460px]">
+                        <div class="px-4 py-2.5 border-b border-gray-800 flex justify-between items-center">
+                            <div class="flex items-center gap-2">
+                                <div class="flex gap-1.5">
+                                    <span class="w-2.5 h-2.5 rounded-full bg-danger/80"></span>
+                                    <span class="w-2.5 h-2.5 rounded-full bg-warning/80"></span>
+                                    <span class="w-2.5 h-2.5 rounded-full bg-success/80"></span>
+                                </div>
+                                <span class="text-xs text-gray-500 font-mono ml-2">system logs</span>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="downloadLogs()" class="text-xs text-gray-500 hover:text-white px-2 py-1 rounded transition">Save</button>
+                                <button onclick="clearConsole()" class="text-xs text-gray-500 hover:text-white px-2 py-1 rounded transition">Clear</button>
+                            </div>
+                        </div>
+                        <div id="terminal-logs" class="flex-1 p-4 overflow-y-auto text-[13px] space-y-0.5">
+                            <div class="text-success/60 animate-pulse text-sm">Awaiting data stream...</div>
                         </div>
                     </div>
-                    <div id="terminal-logs" class="p-4 overflow-y-auto terminal-scroll text-gray-300 space-y-1 bg-black/90 font-mono text-xs flex-1">
-                        <div class="animate-pulse text-green-500 font-bold">_ Initializing System Link... Awaiting Data stream...</div>
-                    </div>
                 </div>
-            </div>
-        </div>
 
-        <div id="control-view" class="hidden fade-in grid grid-cols-1 xl:grid-cols-3 gap-6">
-            <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
-                <div class="bg-gray-800 p-4 border-b border-gray-700"><h2 class="text-lg font-bold text-white flex items-center gap-2"><span class="text-blue-400">⚙️</span> Server Configuration</h2></div>
-                <div class="p-6 space-y-4">
-                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label><input type="text" id="conf-guild-id" placeholder="1234567890..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Bot Status</label><select id="conf-status" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="on">🟢 Online</option><option value="off">🔴 Offline</option></select></div>
-                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Group Chat</label><select id="conf-group" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="allow">✅ Allow</option><option value="block">🚫 Block</option></select></div>
-                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Proactive Chat</label><select id="conf-freq" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"><option value="">No Change</option><option value="disabled">🚫 Disabled</option><option value="active">🔥 Active (30m - 90m)</option><option value="normal">🙂 Normal (2h - 5h)</option><option value="quiet">🌙 Quiet (6h - 12h)</option><option value="testing">🛠️ Testing (1m - 2m)</option></select></div>
+                <!-- RPG Campaigns -->
+                <div class="bg-card rounded-xl border border-gray-800 overflow-hidden">
+                    <div class="px-5 py-3 border-b border-gray-800 flex justify-between items-center">
+                        <h3 class="text-sm font-semibold text-gray-300">RPG Campaigns</h3>
+                        <div class="flex bg-darkbg rounded-lg p-0.5 border border-gray-700">
+                            <button onclick="filterRPG('active')" id="btn-active" class="px-3 py-1 text-xs font-medium rounded-md text-white bg-accent transition">Active</button>
+                            <button onclick="filterRPG('inactive')" id="btn-inactive" class="px-3 py-1 text-xs font-medium rounded-md text-gray-500 hover:text-white transition">Archived</button>
+                            <button onclick="filterRPG('all')" id="btn-all" class="px-3 py-1 text-xs font-medium rounded-md text-gray-500 hover:text-white transition">All</button>
+                        </div>
                     </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Chat Channel ID</label><input type="text" id="conf-chat-id" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
-                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">RPG Channel ID</label><input type="text" id="conf-rpg-id" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-discord outline-none"></div>
+                    <div id="rpg-table-container" class="overflow-y-auto max-h-[350px]">
+                        <div class="text-center text-gray-600 py-8 text-sm">Loading campaigns...</div>
                     </div>
-                    <div class="flex gap-2 mt-4">
-                        <button onclick="submitConfig()" class="flex-1 bg-discord hover:bg-indigo-500 text-white font-bold py-2 rounded transition shadow-lg">Save Configuration</button>
-                        <button onclick="reloadChat()" class="flex-none bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded transition shadow-lg border border-gray-600" title="Immediately reload chat system">🔄 Reload</button>
-                    </div>
-                    <div id="conf-msg" class="text-xs text-center min-h-[1rem]"></div>
                 </div>
             </div>
-            <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
-                <div class="bg-gray-800 p-4 border-b border-gray-700"><h2 class="text-lg font-bold text-white flex items-center gap-2"><span class="text-red-400">🛡️</span> Moderation Actions</h2></div>
-                <div class="p-6 space-y-4">
-                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target Guild ID <span class="text-red-500">*</span></label><input type="text" id="mod-guild-id" placeholder="Server ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"></div>
-                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Action Type</label><select id="mod-action" onchange="toggleModFields()" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"><option value="kick">👢 Kick User</option><option value="ban">🔨 Ban User</option><option value="purge">🧹 Purge Messages</option></select></div>
-                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1" id="mod-target-label">User ID</label><input type="text" id="mod-target-id" placeholder="User ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"></div>
-                    <div id="mod-extra-field" class="hidden"><label class="block text-xs font-bold text-gray-400 uppercase mb-1" id="mod-extra-label">Delete Days</label><input type="number" id="mod-extra-val" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"></div>
-                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Reason</label><input type="text" id="mod-reason" placeholder="Reason..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-red-500 outline-none"></div>
-                    <button onclick="submitAction()" class="w-full bg-red-900 hover:bg-red-700 text-white font-bold py-2 rounded transition shadow-lg border border-red-800 mt-4">Execute Action</button>
-                    <div id="mod-msg" class="text-xs text-center min-h-[1rem]"></div>
-                </div>
-            </div>
-            <div class="bg-card rounded-xl shadow-xl border border-gray-700 overflow-hidden">
-                <div class="bg-gray-800 p-4 border-b border-gray-700"><h2 class="text-lg font-bold text-white flex items-center gap-2"><span class="text-yellow-400">⚡</span> Creator Tools</h2></div>
-                <div class="p-6 space-y-4">
-                     <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Target ID</label><input type="text" id="limit-target" placeholder="ID..." class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none"></div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Scope</label><select id="limit-scope" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none"><option value="user">User</option><option value="server">Server</option></select></div>
-                        <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Feature</label><select id="limit-feature" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none"><option value="antima_gen">Chat Gen</option><option value="rpg_gen">RPG Gen</option></select></div>
+
+            <!-- CONTROL VIEW -->
+            <div id="control-view" class="hidden fade-in space-y-6">
+                <div class="bg-card rounded-xl border border-gray-800 overflow-hidden max-w-3xl">
+                    <div class="px-6 py-4 border-b border-gray-800">
+                        <h3 class="text-base font-semibold text-white flex items-center gap-2">
+                            <svg class="w-5 h-5 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                            Server Configuration
+                        </h3>
+                        <p class="text-xs text-gray-500 mt-1">Configure AI chat behavior per server</p>
                     </div>
-                    <div><label class="block text-xs font-bold text-gray-400 uppercase mb-1">Limit (Req/Min)</label><input type="number" id="limit-val" placeholder="e.g. 50" class="w-full bg-black/30 border border-gray-600 rounded p-2 text-sm text-white focus:border-yellow-500 outline-none"></div>
-                    <button onclick="submitLimit()" class="w-full bg-yellow-700 hover:bg-yellow-600 text-white font-bold py-2 rounded transition shadow-lg border border-yellow-800 mt-auto">Set Override</button>
-                    <div id="limit-msg" class="text-xs text-center min-h-[1rem]"></div>
+                    <div class="p-6 space-y-5">
+                        <div>
+                            <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Guild ID <span class="text-danger">*</span></label>
+                            <input type="text" id="conf-guild-id" placeholder="e.g. 123456789012345678" class="w-full bg-darkbg border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:border-accent focus:ring-1 focus:ring-accent/30 outline-none transition">
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Bot Status</label>
+                                <select id="conf-status" class="w-full bg-darkbg border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white focus:border-accent outline-none transition">
+                                    <option value="">No Change</option>
+                                    <option value="on">Online</option>
+                                    <option value="off">Offline</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Group Chat</label>
+                                <select id="conf-group" class="w-full bg-darkbg border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white focus:border-accent outline-none transition">
+                                    <option value="">No Change</option>
+                                    <option value="allow">Allow</option>
+                                    <option value="block">Block</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Chat Frequency</label>
+                                <select id="conf-freq" class="w-full bg-darkbg border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white focus:border-accent outline-none transition">
+                                    <option value="">No Change</option>
+                                    <option value="disabled">Disabled</option>
+                                    <option value="active">Active (30-90m)</option>
+                                    <option value="normal">Normal (2-5h)</option>
+                                    <option value="quiet">Quiet (6-12h)</option>
+                                    <option value="testing">Testing (1-2m)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">Chat Channel ID</label>
+                                <input type="text" id="conf-chat-id" placeholder="Channel ID" class="w-full bg-darkbg border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:border-accent outline-none transition">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">RPG Channel ID</label>
+                                <input type="text" id="conf-rpg-id" placeholder="Channel ID" class="w-full bg-darkbg border border-gray-700 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-600 focus:border-accent outline-none transition">
+                            </div>
+                        </div>
+                        <div class="flex gap-3 pt-2">
+                            <button onclick="submitConfig()" class="flex-1 bg-accent hover:bg-accent/80 text-white font-semibold py-2.5 rounded-lg transition text-sm">Save Configuration</button>
+                            <button onclick="reloadChat()" class="bg-gray-700 hover:bg-gray-600 text-white font-medium py-2.5 px-5 rounded-lg transition text-sm border border-gray-600">Reload Chat</button>
+                        </div>
+                        <div id="conf-msg" class="text-xs text-center min-h-[1.25rem]"></div>
+                    </div>
                 </div>
             </div>
         </div>
     </main>
 
-    <div id="modal-overlay" class="fixed inset-0 bg-black/90 hidden z-[100] flex justify-center items-center backdrop-blur-sm p-4 transition-opacity duration-200" onclick="closeModal(event)">
-        <div class="bg-card w-full max-w-7xl rounded-xl shadow-2xl border border-gray-700 flex flex-col max-h-[90vh] transform transition-transform duration-200" onclick="event.stopPropagation()">
-            <div class="p-5 border-b border-gray-700 flex justify-between items-center bg-gray-800 rounded-t-xl">
-                <div class="flex items-center gap-4">
-                    <h2 id="modal-title" class="text-xl font-bold text-white">Details</h2>
-                    <div id="rpg-filters" class="hidden flex bg-black/30 rounded-lg p-1 border border-gray-700">
-                        <button onclick="filterRPG('active')" id="btn-active" class="px-3 py-1 text-xs font-bold rounded text-white bg-discord transition">Active</button>
-                        <button onclick="filterRPG('inactive')" id="btn-inactive" class="px-3 py-1 text-xs font-bold rounded text-gray-400 hover:text-white transition">History</button>
-                        <button onclick="filterRPG('all')" id="btn-all" class="px-3 py-1 text-xs font-bold rounded text-gray-400 hover:text-white transition">All</button>
-                    </div>
-                </div>
-                <button onclick="closeModal()" class="text-gray-400 hover:text-white transition bg-gray-700 hover:bg-gray-600 rounded-full p-1.5"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg></button>
+    <!-- Modal -->
+    <div id="modal-overlay" class="fixed inset-0 bg-black/80 hidden z-50 flex justify-center items-center backdrop-blur-sm p-6" onclick="closeModal(event)">
+        <div class="bg-card w-full max-w-5xl rounded-xl border border-gray-800 flex flex-col max-h-[85vh]" onclick="event.stopPropagation()">
+            <div class="px-6 py-4 border-b border-gray-800 flex justify-between items-center">
+                <h2 id="modal-title" class="text-lg font-semibold text-white">Details</h2>
+                <button onclick="closeModal()" class="text-gray-500 hover:text-white transition p-1 rounded-lg hover:bg-gray-700">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
             </div>
-            <div id="modal-content" class="p-6 overflow-y-auto flex-1 bg-darkbg custom-scrollbar relative"></div>
+            <div id="modal-content" class="p-6 overflow-y-auto flex-1"></div>
         </div>
     </div>
 
     <script>
-        // --- JS LOGIC ---
+        // --- NAVIGATION ---
         function switchTab(tab) {
-            document.getElementById('dashboard-view').classList.add('hidden'); document.getElementById('control-view').classList.add('hidden');
-            document.getElementById('tab-dashboard').classList.remove('active', 'text-white', 'bg-discord', 'text-gray-400');
-            document.getElementById('tab-control').classList.remove('active', 'text-white', 'bg-discord', 'text-gray-400');
+            document.getElementById('dashboard-view').classList.add('hidden');
+            document.getElementById('control-view').classList.add('hidden');
+            document.querySelectorAll('.nav-item').forEach(el => {
+                el.classList.remove('active');
+                el.classList.add('text-gray-400');
+            });
             document.getElementById(`tab-${tab}`).classList.add('active');
-            if(tab==='dashboard') { document.getElementById('dashboard-view').classList.remove('hidden'); document.getElementById('tab-control').classList.add('text-gray-400'); }
-            else { document.getElementById('control-view').classList.remove('hidden'); document.getElementById('tab-dashboard').classList.add('text-gray-400'); }
+            document.getElementById(`tab-${tab}`).classList.remove('text-gray-400');
+            
+            if (tab === 'dashboard') {
+                document.getElementById('dashboard-view').classList.remove('hidden');
+                document.getElementById('page-title').innerText = 'Live Dashboard';
+            } else {
+                document.getElementById('control-view').classList.remove('hidden');
+                document.getElementById('page-title').innerText = 'Configuration';
+            }
         }
 
-        function toggleModFields() {
-            const action = document.getElementById('mod-action').value;
-            const extraField = document.getElementById('mod-extra-field');
-            if (action === 'purge' || action === 'ban') extraField.classList.remove('hidden'); else extraField.classList.add('hidden');
-            if (action === 'purge') { document.getElementById('mod-target-label').innerText="Channel ID"; document.getElementById('mod-extra-label').innerText="Amount"; }
-            else { document.getElementById('mod-target-label').innerText="User ID"; if(action==='ban') document.getElementById('mod-extra-label').innerText="Delete Days"; }
-        }
-
+        // --- API ACTIONS ---
         async function submitConfig() {
-            const payload = { guild_id: document.getElementById('conf-guild-id').value, channel_id: document.getElementById('conf-chat-id').value || null, frequency: document.getElementById('conf-freq').value || null, bot_status: document.getElementById('conf-status').value || null, group_chat: document.getElementById('conf-group').value || null, rpg_channel_id: document.getElementById('conf-rpg-id').value || null };
+            const payload = {
+                guild_id: document.getElementById('conf-guild-id').value,
+                channel_id: document.getElementById('conf-chat-id').value || null,
+                frequency: document.getElementById('conf-freq').value || null,
+                bot_status: document.getElementById('conf-status').value || null,
+                group_chat: document.getElementById('conf-group').value || null,
+                rpg_channel_id: document.getElementById('conf-rpg-id').value || null
+            };
             await sendControlRequest('/api/control/config/update', payload, 'conf-msg');
         }
         async function reloadChat() {
             await sendControlRequest('/api/control/reload_chat', {}, 'conf-msg');
         }
-        async function submitAction() {
-            const payload = { guild_id: document.getElementById('mod-guild-id').value, action_type: document.getElementById('mod-action').value, target_id: document.getElementById('mod-target-id').value, reason: document.getElementById('mod-reason').value, setting_value: document.getElementById('mod-extra-val').value };
-            await sendControlRequest('/api/control/action/queue', payload, 'mod-msg');
-        }
-        async function submitLimit() {
-            const payload = { guild_id: "global", action_type: "set_limit", target_id: document.getElementById('limit-target').value, reason: `${document.getElementById('limit-scope').value}/${document.getElementById('limit-feature').value}`, setting_value: parseInt(document.getElementById('limit-val').value) };
-            await sendControlRequest('/api/control/action/queue', payload, 'limit-msg');
-        }
         async function sendControlRequest(url, payload, msgId) {
-            document.getElementById(msgId).innerHTML = '<span class="animate-pulse text-gray-400">Processing...</span>';
-            try { const res = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+            const el = document.getElementById(msgId);
+            el.innerHTML = '<span class="text-gray-500 animate-pulse">Processing...</span>';
+            try {
+                const res = await fetch(url, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
                 const data = await res.json();
-                document.getElementById(msgId).className = res.ok ? 'text-xs text-center min-h-[1rem] text-green-400' : 'text-xs text-center min-h-[1rem] text-red-400';
-                document.getElementById(msgId).innerText = res.ok ? `✅ ${data.status}` : `❌ ${data.error||'Failed'}`;
-            } catch(e) { document.getElementById(msgId).innerText = "❌ Connection Error"; }
+                el.className = res.ok ? 'text-xs text-center min-h-[1.25rem] text-success' : 'text-xs text-center min-h-[1.25rem] text-danger';
+                el.innerText = res.ok ? data.status : (data.error || 'Failed');
+            } catch(e) { el.innerHTML = '<span class="text-danger">Connection error</span>'; }
         }
 
-        // --- EXISTING RPG & WS LOGIC ---
-        let currentRPGData = [], currentRPGFilter = 'active';
+        // --- WEBSOCKET ---
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const socket = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
-        socket.onopen = () => { document.getElementById('ws-status').innerText="System Online"; document.getElementById('ws-status').className="text-green-400 font-bold"; document.getElementById('ws-dot').className="w-2 h-2 rounded-full bg-green-500 animate-pulse"; };
+        socket.onopen = () => {
+            document.getElementById('ws-status').innerText = 'Online';
+            document.getElementById('ws-status').className = 'text-success font-medium text-xs';
+            document.getElementById('ws-dot').className = 'w-2 h-2 rounded-full bg-success animate-pulse';
+        };
         socket.onmessage = (event) => {
             const data = JSON.parse(event.data);
-            if(data.overview) {
-                document.getElementById('stat-messages').innerText=data.overview.messages.toLocaleString();
-                document.getElementById('stat-rpg').innerText=data.overview.active_rpgs.toLocaleString();
-                document.getElementById('stat-users').innerText=data.overview.users.toLocaleString();
-                document.getElementById('stat-commands').innerText=data.overview.commands.toLocaleString();
+            if (data.overview) {
+                document.getElementById('stat-guilds').innerText = data.overview.guilds.toLocaleString();
+                document.getElementById('stat-messages').innerText = data.overview.messages.toLocaleString();
+                document.getElementById('stat-users').innerText = data.overview.users.toLocaleString();
+                document.getElementById('stat-commands').innerText = data.overview.commands.toLocaleString();
+                // Update RPG table if on dashboard
+                if (data.overview.active_rpgs !== undefined) loadRPGTable();
             }
-            if(data.activities) {
-                document.getElementById('activity-feed').innerHTML = data.activities.map(a => `<li class="px-4 py-3 flex justify-between items-center hover:bg-hover transition border-l-2 border-transparent hover:border-discord"><div class="flex flex-col"><div class="flex items-center gap-2"><span class="text-white font-bold">${a.user}</span><span class="text-gray-500 text-xs bg-black/30 px-1.5 rounded">${a.guild}</span></div><span class="text-discord text-sm">${a.action}</span></div><span class="text-xs text-gray-500 font-mono bg-gray-800 px-2 py-1 rounded border border-gray-700">${a.timestamp}</span></li>`).join('');
+            if (data.activities) {
+                const feed = document.getElementById('activity-feed');
+                if (data.activities.length === 0) {
+                    feed.innerHTML = '<li class="text-center text-gray-600 py-8 text-sm">No recent activity</li>';
+                } else {
+                    feed.innerHTML = data.activities.map(a => `
+                        <li class="px-3 py-2 rounded-lg hover:bg-hover/50 transition flex items-center justify-between">
+                            <div class="flex flex-col min-w-0">
+                                <span class="text-sm font-medium text-white truncate">${a.user}</span>
+                                <span class="text-xs text-gray-500 truncate">${a.action} &middot; ${a.guild}</span>
+                            </div>
+                            <span class="text-[10px] text-gray-600 font-mono whitespace-nowrap ml-3">${a.timestamp}</span>
+                        </li>`).join('');
+                }
             }
-            if(data.logs) {
-                 const term = document.getElementById('terminal-logs');
-                 term.innerHTML = data.logs.map(l => {
-                    let c="text-gray-300", b="bg-gray-800 text-gray-300";
-                    if(l.level==="ERROR"){c="text-red-300";b="bg-red-900 text-red-100";} else if(l.level==="WARNING"){c="text-yellow-300";b="bg-yellow-900 text-yellow-100";} else if(l.level==="INFO"){c="text-green-300";b="bg-green-900/50 text-green-100";}
-                    return `<div class="flex gap-3 hover:bg-white/5 p-0.5 rounded transition"><span class="text-gray-500 select-none text-[10px] w-14 font-mono pt-0.5 opacity-60">${l.time}</span><span class="${b} text-[10px] px-1 rounded font-bold w-10 text-center h-fit mt-0.5 select-none">${l.level}</span><div class="flex-1 break-all"><span class="text-purple-400 font-bold text-xs mr-1">[${l.logger}]</span><span class="${c} font-mono text-xs">${l.message}</span></div></div>`;
-                 }).join('');
-                 term.scrollTop = term.scrollHeight;
+            if (data.logs) {
+                const term = document.getElementById('terminal-logs');
+                term.innerHTML = data.logs.map(l => {
+                    return `<div class="terminal-line flex gap-2 py-0.5 px-1 rounded hover:bg-white/[0.02]">
+                        <span class="text-gray-600 select-none text-[11px] w-16 shrink-0">${l.time}</span>
+                        <span class="level-bg-${l.level} text-[10px] px-1.5 py-0.5 rounded font-bold w-14 text-center shrink-0 select-none">${l.level}</span>
+                        <span class="text-accent/70 text-[12px] font-medium shrink-0">[${l.logger}]</span>
+                        <span class="text-gray-300 text-[12px] break-all">${l.message}</span>
+                    </div>`;
+                }).join('');
+                term.scrollTop = term.scrollHeight;
             }
         };
 
-        async function showDetails(type) {
-            const modal=document.getElementById('modal-overlay'), content=document.getElementById('modal-content'), title=document.getElementById('modal-title'), filters=document.getElementById('rpg-filters');
-            modal.classList.remove('hidden'); content.innerHTML='<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
-            if(type==='rpgs') filters.classList.remove('hidden'); else filters.classList.add('hidden');
-            title.innerText = {'users':'User Directory','guilds':'Server Statistics','rpgs':'RPG Campaigns','commands':'Command Registry'}[type] || 'Details';
+        // --- RPG TABLE ---
+        let currentRPGData = [], currentRPGFilter = 'active';
+        async function loadRPGTable() {
             try {
-                const res = await fetch(`/api/details/${type}`); const data = await res.json();
-                if(type==='rpgs') { currentRPGData=data; renderRPGTable(); } else renderGenericTable(type, data);
-            } catch(e) { content.innerHTML='<div class="text-red-400 p-10 text-center">Failed to load data.</div>'; }
+                const res = await fetch('/api/details/rpgs');
+                currentRPGData = await res.json();
+                renderRPGTable();
+            } catch(e) {}
         }
-
         function renderRPGTable() {
-            const content = document.getElementById('modal-content');
+            const container = document.getElementById('rpg-table-container');
             let filtered = currentRPGData;
-            if(currentRPGFilter==='active') filtered=currentRPGData.filter(r=>r.is_active);
-            if(currentRPGFilter==='inactive') filtered=currentRPGData.filter(r=>!r.is_active);
-            if(filtered.length===0) { content.innerHTML=`<div class="text-center py-20 text-gray-500 fade-in">No ${currentRPGFilter} sessions found.</div>`; return; }
-            content.innerHTML = `<div class="overflow-hidden rounded-lg border border-gray-700 shadow-xl fade-in"><table class="w-full text-left border-collapse"><thead class="bg-gray-900 text-gray-400 text-xs uppercase tracking-wider"><tr><th class="p-4 border-b border-gray-800">Title</th><th class="p-4 border-b border-gray-800">Host</th><th class="p-4 border-b border-gray-800">Scenario</th><th class="p-4 border-b border-gray-800">Status</th><th class="p-4 border-b border-gray-800 text-right">Actions</th></tr></thead><tbody class="divide-y divide-gray-800 bg-card">` + filtered.map(r => `
-                <tr class="hover:bg-discord/5 transition group">
-                    <td class="p-4 font-bold text-white">${r.title}</td><td class="p-4 text-gray-300">${r.host}</td><td class="p-4 text-sm text-discord">${r.scenario}</td>
-                    <td class="p-4">${r.is_active ? '<span class="bg-green-900/30 text-green-400 px-2 py-0.5 rounded text-xs border border-green-900">Active</span>' : '<span class="bg-gray-700/50 text-gray-400 px-2 py-0.5 rounded text-xs border border-gray-600">Archived</span>'}</td>
-                    <td class="p-4 text-right flex justify-end gap-2">
-                        <a href="/rpg/inspect/${r.thread_id}" target="_blank" class="bg-purple-900/20 hover:bg-purple-600 text-purple-300 hover:text-white px-3 py-1.5 rounded text-xs border border-purple-900/50 transition flex items-center gap-2">
-                             🧠 Inspector
-                        </a>
-                        <button onclick="deleteRPG('${r.thread_id}')" class="bg-red-900/20 hover:bg-red-600 text-red-300 hover:text-white px-3 py-1.5 rounded text-xs border border-red-900/50 transition flex items-center gap-2">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-                        </button>
-                    </td>
-                </tr>`).join('') + `</tbody></table></div>`;
+            if (currentRPGFilter === 'active') filtered = currentRPGData.filter(r => r.is_active);
+            if (currentRPGFilter === 'inactive') filtered = currentRPGData.filter(r => !r.is_active);
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="text-center text-gray-600 py-12 text-sm">No campaigns found</div>';
+                return;
+            }
+            container.innerHTML = `<table class="w-full text-sm">
+                <thead class="bg-darkbg/50 text-gray-500 text-xs uppercase tracking-wider">
+                    <tr><th class="px-5 py-3 text-left font-semibold">Title</th><th class="px-5 py-3 text-left font-semibold">Host</th><th class="px-5 py-3 text-left font-semibold">Scenario</th><th class="px-5 py-3 text-left font-semibold">Status</th><th class="px-5 py-3 text-right font-semibold">Actions</th></tr>
+                </thead>
+                <tbody class="divide-y divide-gray-800/50">${filtered.map(r => `
+                    <tr class="hover:bg-hover/30 transition">
+                        <td class="px-5 py-3 font-medium text-white">${r.title}</td>
+                        <td class="px-5 py-3 text-gray-400">${r.host}</td>
+                        <td class="px-5 py-3 text-gray-400">${r.scenario}</td>
+                        <td class="px-5 py-3">${r.is_active ? '<span class="badge bg-success/15 text-success">Active</span>' : '<span class="badge bg-gray-700 text-gray-500">Archived</span>'}</td>
+                        <td class="px-5 py-3 text-right space-x-2">
+                            <a href="/rpg/inspect/${r.thread_id}" target="_blank" class="text-xs text-accent hover:text-accent/80 transition font-medium">Inspect</a>
+                            <button onclick="deleteRPG('${r.thread_id}')" class="text-xs text-danger hover:text-danger/80 transition font-medium">Delete</button>
+                        </td>
+                    </tr>`).join('')}
+                </tbody></table>`;
+        }
+        function filterRPG(filter) {
+            currentRPGFilter = filter;
+            document.querySelectorAll('[id^="btn-"]').forEach(b => { b.className = 'px-3 py-1 text-xs font-medium rounded-md text-gray-500 hover:text-white transition'; });
+            document.getElementById(`btn-${filter}`).className = 'px-3 py-1 text-xs font-medium rounded-md text-white bg-accent transition';
+            renderRPGTable();
+        }
+        async function deleteRPG(threadId) {
+            if (!confirm('Delete this campaign permanently?')) return;
+            try {
+                const res = await fetch(`/api/rpg/delete/${threadId}`, { method: 'POST' });
+                const json = await res.json();
+                if (json.error) alert('Error: ' + json.error);
+                else { currentRPGData = currentRPGData.filter(r => r.thread_id !== threadId); renderRPGTable(); }
+            } catch(e) { alert('Failed to delete.'); }
         }
 
+        // --- MODAL & DETAILS ---
+        async function showDetails(type) {
+            const modal = document.getElementById('modal-overlay'), content = document.getElementById('modal-content'), title = document.getElementById('modal-title');
+            modal.classList.remove('hidden');
+            content.innerHTML = '<div class="flex justify-center p-16"><div class="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent"></div></div>';
+            title.innerText = { users: 'User Directory', guilds: 'Server Statistics', rpgs: 'RPG Campaigns', commands: 'Command Registry' }[type] || 'Details';
+            try {
+                const res = await fetch(`/api/details/${type}`);
+                const data = await res.json();
+                renderGenericTable(type, data);
+            } catch(e) { content.innerHTML = '<div class="text-danger text-center py-8">Failed to load data.</div>'; }
+        }
         function renderGenericTable(type, data) {
             const content = document.getElementById('modal-content');
-            if(data.length===0) { content.innerHTML='<div class="text-center text-gray-500 py-10">No records found.</div>'; return; }
-            let headers = type==='users'?['Name','ID','Msgs']: type==='guilds'?['Server','ID','Msgs']:['Command','Uses'];
-            let html = '<div class="overflow-hidden rounded-lg border border-gray-700 shadow-xl fade-in"><table class="w-full text-left"><thead class="bg-gray-900 text-gray-400 text-xs uppercase tracking-wider"><tr>';
-            headers.forEach(h => html += `<th class="p-4 border-b border-gray-800">${h}</th>`);
-            html += '</tr></thead><tbody class="divide-y divide-gray-800 bg-card">';
-            data.forEach(r => { html += '<tr class="hover:bg-white/5 transition">'; Object.values(r).forEach(v => html += `<td class="p-4 text-gray-300 font-mono text-sm select-all">${v}</td>`); html += '</tr>'; });
+            if (data.length === 0) { content.innerHTML = '<div class="text-center text-gray-600 py-12">No records found.</div>'; return; }
+            let headers = type === 'users' ? ['Name', 'ID', 'Messages'] : type === 'guilds' ? ['Server', 'ID', 'Messages'] : ['Command', 'Uses'];
+            let html = '<div class="overflow-hidden rounded-lg border border-gray-800"><table class="w-full text-sm"><thead class="bg-darkbg text-gray-500 text-xs uppercase tracking-wider"><tr>';
+            headers.forEach(h => html += `<th class="px-5 py-3 text-left font-semibold">${h}</th>`);
+            html += '</tr></thead><tbody class="divide-y divide-gray-800/50">';
+            data.forEach(r => {
+                html += '<tr class="hover:bg-hover/30 transition">';
+                Object.values(r).forEach(v => html += `<td class="px-5 py-3 text-gray-300 font-mono text-sm">${v}</td>`);
+                html += '</tr>';
+            });
             html += '</tbody></table></div>';
             content.innerHTML = html;
         }
 
-        async function deleteRPG(threadId) {
-            if(!confirm("🛑 WARNING: PERMANENT DELETION.\nProceed?")) return;
-            try { const res=await fetch(`/api/rpg/delete/${threadId}`, {method:'POST'}); const json=await res.json();
-                if(json.error) alert("Error: "+json.error); else { currentRPGData=currentRPGData.filter(r=>r.thread_id!==threadId); renderRPGTable(); }
-            } catch(e) { alert("Failed."); }
-        }
-        function closeModal(e) { if(e && e.target.id!=='modal-overlay') return; document.getElementById('modal-overlay').classList.add('hidden'); }
-        document.addEventListener('keydown', (e) => { if(e.key==='Escape') closeModal(); });
-        function clearConsole() { document.getElementById('terminal-logs').innerHTML = '<div class="text-gray-500 italic p-2">>> Buffer cleared.</div>'; }
-        function downloadLogs() { const blob=new Blob([document.getElementById('terminal-logs').innerText], {type:'text/plain'}); const a=document.createElement('a'); a.href=window.URL.createObjectURL(blob); a.download='antima.log'; a.click(); }
-        async function restartBot() { if(!confirm("Restart bot?")) return; await fetch('/api/action/restart', {method:'POST'}); location.reload(); }
-        
+        // --- LOG ARCHIVES ---
         async function showHistory() {
-             const modal=document.getElementById('modal-overlay'), content=document.getElementById('modal-content');
-             document.getElementById('modal-title').innerText = "System Archives"; document.getElementById('rpg-filters').classList.add('hidden'); modal.classList.remove('hidden');
-             content.innerHTML='<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
-             const res=await fetch('/api/history/dates'); const dates=await res.json();
-             content.innerHTML = '<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4 fade-in">' + dates.map(d => `<div onclick="loadLogDate('${d.date}')" class="bg-card hover:bg-gray-700 p-4 rounded-xl cursor-pointer border border-gray-700 text-center group transition shadow-lg hover:shadow-discord/20 hover:border-discord"><div class="text-3xl mb-2">📁</div><div class="text-lg font-bold text-white group-hover:text-discord">${d.date}</div><div class="text-xs text-gray-500 bg-black/40 rounded-full px-2 py-1 inline-block mt-2">${d.count} entries</div></div>`).join('') + '</div>';
+            switchTab('dashboard'); // Reset active nav
+            document.querySelectorAll('.nav-item').forEach(el => { el.classList.remove('active'); el.classList.add('text-gray-400'); });
+            document.getElementById('tab-logs').classList.add('active');
+            document.getElementById('tab-logs').classList.remove('text-gray-400');
+            document.getElementById('page-title').innerText = 'Log Archives';
+
+            const modal = document.getElementById('modal-overlay'), content = document.getElementById('modal-content');
+            document.getElementById('modal-title').innerText = 'Log Archives';
+            modal.classList.remove('hidden');
+            content.innerHTML = '<div class="flex justify-center p-16"><div class="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent"></div></div>';
+            try {
+                const res = await fetch('/api/history/dates');
+                const dates = await res.json();
+                if (dates.length === 0) { content.innerHTML = '<div class="text-center text-gray-600 py-12">No log archives found.</div>'; return; }
+                content.innerHTML = '<div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 fade-in">' + dates.map(d => `
+                    <div onclick="loadLogDate('${d.date}')" class="bg-darkbg hover:bg-hover p-4 rounded-xl cursor-pointer border border-gray-800 text-center transition hover:border-accent/40">
+                        <div class="text-lg font-semibold text-white">${d.date}</div>
+                        <div class="text-xs text-gray-500 mt-1">${d.count} entries</div>
+                    </div>`).join('') + '</div>';
+            } catch(e) { content.innerHTML = '<div class="text-danger text-center py-8">Failed to load archives.</div>'; }
         }
         async function loadLogDate(d) {
-             const content=document.getElementById('modal-content'); content.innerHTML='<div class="flex justify-center p-20"><div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-discord"></div></div>';
-             const res=await fetch(`/api/history/view/${d}`); const logs=await res.json();
-             content.innerHTML = `<div class="mb-4 flex items-center justify-between fade-in"><button onclick="showHistory()" class="text-gray-400 hover:text-white flex items-center gap-2 px-3 py-1 rounded bg-gray-800 hover:bg-gray-700 transition"><span>←</span> Back</button><span class="text-discord font-mono font-bold">${d}</span></div><div class="bg-black p-4 rounded-xl h-[65vh] overflow-y-auto font-mono text-xs text-gray-300 border border-gray-800 shadow-inner fade-in custom-scrollbar">` + logs.map(l => `<div class="mb-1 border-b border-gray-900/50 pb-0.5 hover:bg-white/5 px-1"><span class="text-gray-600 select-none mr-2">[${l.time}]</span><span class="${l.level==='ERROR'?'text-red-500 font-bold':l.level==='WARNING'?'text-yellow-400':'text-green-400'} w-16 inline-block">${l.level}</span> ${l.message}</div>`).join('') + `</div>`;
+            const content = document.getElementById('modal-content');
+            content.innerHTML = '<div class="flex justify-center p-16"><div class="animate-spin rounded-full h-8 w-8 border-2 border-accent border-t-transparent"></div></div>';
+            const res = await fetch(`/api/history/view/${d}`);
+            const logs = await res.json();
+            content.innerHTML = `
+                <div class="mb-4 flex items-center gap-3">
+                    <button onclick="showHistory()" class="text-sm text-gray-400 hover:text-white flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-darkbg hover:bg-hover transition border border-gray-800">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                        Back
+                    </button>
+                    <span class="text-accent font-mono text-sm font-medium">${d}</span>
+                </div>
+                <div class="bg-term p-4 rounded-xl h-[60vh] overflow-y-auto font-mono text-sm border border-gray-800 space-y-0.5">
+                    ${logs.map(l => `<div class="terminal-line flex gap-2 py-0.5 px-1 rounded hover:bg-white/[0.02]">
+                        <span class="text-gray-600 select-none text-[11px] w-16 shrink-0">${l.time}</span>
+                        <span class="level-bg-${l.level} text-[10px] px-1.5 py-0.5 rounded font-bold w-14 text-center shrink-0 select-none">${l.level}</span>
+                        <span class="text-gray-300 text-[12px] break-all">${l.message}</span>
+                    </div>`).join('')}
+                </div>`;
         }
+
+        // --- UTILITY ---
+        function closeModal(e) {
+            if (e && e.target.id !== 'modal-overlay') return;
+            document.getElementById('modal-overlay').classList.add('hidden');
+        }
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+        function clearConsole() { document.getElementById('terminal-logs').innerHTML = '<div class="text-gray-600 text-sm">Buffer cleared.</div>'; }
+        function downloadLogs() { const blob = new Blob([document.getElementById('terminal-logs').innerText], { type: 'text/plain' }); const a = document.createElement('a'); a.href = window.URL.createObjectURL(blob); a.download = 'antima.log'; a.click(); }
+        async function restartBot() { if (!confirm('Restart the bot?')) return; await fetch('/api/action/restart', { method: 'POST' }); location.reload(); }
+
+        // Initial RPG load
+        loadRPGTable();
     </script>
 </body>
 </html>

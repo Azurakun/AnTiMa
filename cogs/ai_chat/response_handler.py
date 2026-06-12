@@ -7,12 +7,13 @@ import base64
 from PIL import Image
 import re
 import asyncio
+import random
 import json
 
 from .memory_handler import summarize_and_save_memory
 from .utils import (
     _find_member, _safe_get_response_text, get_gif_url,
-    should_send_gif, perform_web_search, identify_visual_content,
+    perform_web_search, identify_visual_content,
     AI_CHAT_TOOLS,
 )
 from utils.db import ai_config_collection
@@ -44,24 +45,13 @@ async def _encode_attachment(attachment: discord.Attachment) -> dict | None:
     return None
 
 
-async def detect_conversation_topic(channel) -> str | None:
-    try:
-        history = [msg async for msg in channel.history(limit=6)]
-        history.reverse()
-        chat_text = "\n".join([f"{msg.author.display_name}: {msg.clean_content}" for msg in history])
-        prompt = f"Analyze chat. Identify the MAIN Subject or subjects (if multiple). Keep it very concise.\nChat:\n{chat_text}"
-        client = get_client()
-        response = await throttled_create(client.chat.completions.create(
-            model=FAST_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=30,
-        ))
-        topic = (response.choices[0].message.content or "").strip()
-        if "None" in topic or len(topic) > 50:
-            return None
-        return topic
-    except Exception:
-        return None
+def _extract_topic_keywords(prompt: str) -> str | None:
+    """Extract potential topic keywords from the user message without AI."""
+    # Simple keyword extraction: take meaningful nouns/proper nouns from the message
+    words = [w for w in prompt.split() if len(w) > 3 and w.isalpha()]
+    if words:
+        return " ".join(words[:5])  # Up to 5 keywords
+    return None
 
 
 def is_server_context_needed(prompt, topic) -> bool:
@@ -187,7 +177,7 @@ async def handle_single_user_response(cog, message, prompt, author):
 
             messages.append({"role": "user", "content": user_content})
 
-            current_topic = await detect_conversation_topic(message.channel)
+            current_topic = _extract_topic_keywords(prompt)
             final_text, updated_messages = await _send_and_handle_tool_loop(
                 messages, message.channel, current_topic=current_topic
             )
@@ -214,7 +204,8 @@ async def handle_single_user_response(cog, message, prompt, author):
                 if gif_match:
                     search_term = gif_match.group(1).strip()
                     part = part.replace(gif_match.group(0), "").strip()
-                    if await should_send_gif(None, message.channel, part, search_term):
+                    # Simple probability gate instead of AI check (saves 1 API call per part)
+                    if random.random() < 0.3:
                         gif_url = await get_gif_url(cog.http_session, search_term)
 
                 if part:
@@ -224,9 +215,13 @@ async def handle_single_user_response(cog, message, prompt, author):
                 if gif_url:
                     await message.channel.send(gif_url)
 
-            cog.bot.loop.create_task(
-                summarize_and_save_memory(None, author, message.guild.id, updated_messages)
-            )
+            # Throttle memory saving: only every 5th message per user per channel
+            memory_key = f"{author.id}_{message.channel.id}"
+            cog.memory_counters[memory_key] = cog.memory_counters.get(memory_key, 0) + 1
+            if cog.memory_counters[memory_key] % 5 == 0:
+                cog.bot.loop.create_task(
+                    summarize_and_save_memory(None, author, message.guild.id, updated_messages)
+                )
 
     except Exception as e:
         logger.error(f"Error in handle_single_user_response: {e}")
@@ -296,7 +291,7 @@ async def process_message_batch(cog, channel_id):
                 if gif_match:
                     search_term = gif_match.group(1).strip()
                     part = part.replace(gif_match.group(0), "").strip()
-                    if await should_send_gif(None, last_message.channel, part, search_term):
+                    if random.random() < 0.3:
                         gif_url = await get_gif_url(cog.http_session, search_term)
 
                 if part:

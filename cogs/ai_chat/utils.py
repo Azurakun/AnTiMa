@@ -188,23 +188,30 @@ async def perform_web_search(query: str) -> str:
     try:
         client = get_client()
         context_blob = ""
+        total_content_length = 0
         for i, (data, content) in enumerate(zip(search_data, scraped_contents)):
             context_blob += f"SOURCE {i+1} [{data['title']}]:\n{content}\n---\n"
+            total_content_length += len(content)
 
-        verify_prompt = (
-            f"You are the Ultimate Truth Engine. Analyze the data below to answer: '{query}'.\n\n"
-            "INSTRUCTIONS:\n"
-            "1. CROSS-REFERENCE: Use all available sources. Prioritize official wikis and news.\n"
-            "2. MAXIMUM DETAIL: Provide a deep, comprehensive answer. Do not skip nuances.\n"
-            "3. NO UNCERTAINTY: Do not say 'I don't know' if any source has info. Be confident.\n"
-            f"DATA:\n{context_blob}"
-        )
+        # Skip AI synthesis for short contexts — return raw snippets instead (saves 1 API call)
+        if total_content_length < 800:
+            raw_snippets = [f"**{d['title']}**: {d['snippet']}" for d in search_data if d.get('snippet')]
+            final_info = "\n".join(raw_snippets)
+        else:
+            verify_prompt = (
+                f"You are the Ultimate Truth Engine. Analyze the data below to answer: '{query}'.\n\n"
+                "INSTRUCTIONS:\n"
+                "1. CROSS-REFERENCE: Use all available sources. Prioritize official wikis and news.\n"
+                "2. MAXIMUM DETAIL: Provide a deep, comprehensive answer. Do not skip nuances.\n"
+                "3. NO UNCERTAINTY: Do not say 'I don't know' if any source has info. Be confident.\n"
+                f"DATA:\n{context_blob}"
+            )
 
-        resp = await throttled_create(client.chat.completions.create(
-            model=FAST_MODEL,
-            messages=[{"role": "user", "content": verify_prompt}],
-        ))
-        final_info = _safe_get_response_text(resp)
+            resp = await throttled_create(client.chat.completions.create(
+                model=FAST_MODEL,
+                messages=[{"role": "user", "content": verify_prompt}],
+            ))
+            final_info = _safe_get_response_text(resp)
 
         debug_entry = {
             "query": query,
@@ -230,26 +237,6 @@ async def perform_web_search(query: str) -> str:
 
 async def identify_visual_content(visual_description: str) -> str:
     return await perform_web_search(f"exact name and series origin of {visual_description} wiki")
-
-
-async def should_send_gif(summarizer_model_unused, channel, bot_response_text, gif_search_term) -> bool:
-    try:
-        client = get_client()
-        history = [msg async for msg in channel.history(limit=5)]
-        prompt = (
-            f"Context: {[m.clean_content for m in history]}\n"
-            f"Response: {bot_response_text}\n"
-            f"GIF: {gif_search_term}\n"
-            "Is sending this GIF appropriate here? Answer 'yes' or 'no'."
-        )
-        resp = await throttled_create(client.chat.completions.create(
-            model=FAST_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=5,
-        ))
-        return "yes" in _safe_get_response_text(resp).lower()
-    except Exception:
-        return False
 
 
 async def get_gif_url(http_session: aiohttp.ClientSession, search_term: str) -> str | None:

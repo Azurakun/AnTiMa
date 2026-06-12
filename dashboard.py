@@ -67,13 +67,6 @@ class ConfigRequest(BaseModel):
     group_chat: str | None = None 
     rpg_channel_id: str | None = None
 
-class ActionRequest(BaseModel):
-    guild_id: str
-    action_type: str 
-    target_id: str 
-    reason: str | None = "Action requested via Dashboard"
-    setting_value: int | str | None = None 
-
 class ManageEntityRequest(BaseModel):
     thread_id: str
     category: str # 'npc', 'quest', 'location', 'event'
@@ -679,21 +672,6 @@ async def reload_chat_module():
             "user": "Dashboard Admin", "guild": "Global", "action": "Triggered Reload", "timestamp": datetime.utcnow()
         })
         return JSONResponse({"status": "Reload signal sent."})
-    except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
-
-@app.post("/api/control/action/queue")
-async def queue_admin_action(data: ActionRequest):
-    try:
-        action_doc = {
-            "guild_id": data.guild_id, "type": data.action_type, "target_id": data.target_id,
-            "reason": data.reason, "setting_value": data.setting_value,
-            "status": "pending", "created_at": datetime.utcnow(), "source": "dashboard"
-        }
-        web_actions_collection.insert_one(action_doc)
-        live_activity_collection.insert_one({
-            "user": "Dashboard Admin", "guild": f"ID: {data.guild_id}", "action": f"Queued {data.action_type.upper()}", "timestamp": datetime.utcnow()
-        })
-        return JSONResponse({"status": f"Action '{data.action_type}' queued."})
     except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.websocket("/ws")
