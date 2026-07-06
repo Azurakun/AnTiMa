@@ -42,48 +42,32 @@ RPG_MAIN_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "apply_damage",
-            "description": "Applies damage to a player, reducing their HP.",
+            "name": "modify_player_stats",
+            "description": "Modifies player HP/MP stats (e.g., applying damage, healing, or deducting mana).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "thread_id": {"type": "string"},
                     "user_id": {"type": "string"},
-                    "damage_amount": {"type": "integer", "description": "Amount of HP to remove."}
+                    "hp_change": {"type": "integer", "description": "Change in HP (negative for damage, positive for healing). Default 0."},
+                    "mp_change": {"type": "integer", "description": "Change in MP (negative for spell cost, positive for restore). Default 0."}
                 },
-                "required": ["thread_id", "user_id", "damage_amount"]
+                "required": ["thread_id", "user_id"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "apply_healing",
-            "description": "Applies healing to a player, increasing their HP.",
+            "name": "recall_memory",
+            "description": "Searches the AI's deep memory banks to recall historical facts, nostalgic memories, or background information about a specific query.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "thread_id": {"type": "string"},
-                    "user_id": {"type": "string"},
-                    "heal_amount": {"type": "integer", "description": "Amount of HP to restore."}
+                    "query": {"type": "string", "description": "The specific subject, person, or event to remember."}
                 },
-                "required": ["thread_id", "user_id", "heal_amount"]
-            }
-        }
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "deduct_mana",
-            "description": "Deducts mana from a player for spell/ability use.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "thread_id": {"type": "string"},
-                    "user_id": {"type": "string"},
-                    "mana_cost": {"type": "integer", "description": "Amount of MP to deduct."}
-                },
-                "required": ["thread_id", "user_id", "mana_cost"]
+                "required": ["thread_id", "query"]
             }
         }
     },
@@ -334,6 +318,11 @@ class RPGEngine:
             await RPGLogger.broadcast(channel.id, "PROMPTING", "Sending Prompt to Model", {"length": len(full_prompt)})
 
             async with channel.typing():
+                # Prevent token buildup by keeping only the system prompt + last 6 messages (approx. 3 turns)
+                if len(messages) > 7:
+                    messages = [messages[0]] + messages[-6:]
+                    session_data['messages'] = messages
+
                 # Append user turn to messages
                 messages.append({"role": "user", "content": full_prompt})
 
@@ -372,6 +361,7 @@ class RPGEngine:
                         if fn_name == "roll_d20": await status.set("🎲 Rolling Dice...")
                         elif fn_name == "update_world_entity": await status.set("📝 Updating World...")
                         elif fn_name == "grant_item_to_player": await status.set("🎒 Managing Inventory...")
+                        elif fn_name == "recall_memory": await status.set("🧠 Searching Memory...")
                         else: await status.set(f"🔧 Executing {fn_name}...")
 
                         await RPGLogger.broadcast(channel.id, "TOOL_CALL", f"Executing {fn_name}", {"args": args})
@@ -558,9 +548,15 @@ class RPGEngine:
                 return result
 
             if fn_name == "grant_item_to_player": return tools.grant_item_to_player(**args)
-            if fn_name == "apply_damage": return "Story Mode" if story_mode else tools.apply_damage(str(channel.id), **args)
-            if fn_name == "apply_healing": return "Story Mode" if story_mode else tools.apply_healing(str(channel.id), **args)
-            if fn_name == "deduct_mana": return "Story Mode" if story_mode else tools.deduct_mana(str(channel.id), **args)
+            if fn_name == "modify_player_stats":
+                args.pop('thread_id', None)
+                return "Story Mode" if story_mode else tools.modify_player_stats(str(channel.id), **args)
+            if fn_name == "recall_memory":
+                q = args.get("query", "")
+                res = await self.memory_manager.retrieve_relevant_memories(str(channel.id), q, limit=3)
+                if not res:
+                    return f"Memory Recall Failed: No records found regarding '{q}'."
+                return f"Memory Recall Results for '{q}':\n" + "\n".join([f"- {m}" for m in res])
             if fn_name == "update_journal": return tools.update_journal(str(channel.id), **args)
             if fn_name == "update_environment": return tools.update_environment(str(channel.id), **args)
             if fn_name == "manage_story_log":

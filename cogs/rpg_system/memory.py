@@ -301,12 +301,15 @@ class RPGContextManager:
                 if is_active_forced: npc["_temp_score"] += 1
                 visible_npcs.append(npc)
 
-        if len(visible_npcs) > 15:
-            visible_npcs.sort(key=lambda x: x.get("_temp_score", 0), reverse=True)
-            visible_npcs = visible_npcs[:15]
+        visible_npcs.sort(key=lambda x: x.get("_temp_score", 0), reverse=True)
+        # Separate into active vs recalled
+        active_npcs = [n for n in visible_npcs if n.get("_temp_score", 0) >= 10][:4]
+        
+        active_names_set = {n['name'] for n in active_npcs}
+        recalled_npcs = [n for n in visible_npcs if n['name'] not in active_names_set][:3]
 
         npc_list = []
-        for npc in visible_npcs:
+        for npc in active_npcs:
             attrs = npc.get("attributes", {})
             alias_str = " ".join([f"`{a}`" for a in attrs.get("aliases", [])]) if attrs.get("aliases") else ""
             rel = attrs.get("relationships") or "Neutral"
@@ -326,8 +329,15 @@ class RPGContextManager:
                 f"{history_txt}"
             )
             debug_snapshot["active_npcs"].append(npc['name'])
+            
+        for npc in recalled_npcs:
+            attrs = npc.get("attributes", {})
+            rel = attrs.get("relationships") or "Neutral"
+            if isinstance(rel, list): rel = ", ".join(rel)
+            npc_list.append(f"> 👥 **{npc['name']}** (Background/Recalled): [{rel}] {npc['details']}")
+            debug_snapshot["recalled_npcs"].append(npc['name'])
 
-        active_names = [n['name'].lower() for n in visible_npcs]
+        active_names = [n['name'].lower() for n in active_npcs + recalled_npcs]
         for key, npc in npcs.items():
             if npc['name'].lower() not in active_names and npc['name'].lower() in input_lower:
                 npc_list.append(f"> 🧠 **{npc['name']}** (Recalled Memory): {npc['details']}")
@@ -376,7 +386,12 @@ class RPGContextManager:
         recent_history = "\n\n".join(text_log_reversed)
 
         if logger: logger(thread_id, "system", "Retrieving Vector Memories...")
-        rag_memories = await self.retrieve_relevant_memories(thread_id, current_user_input)
+        active_loc_list = world_debug.get("active_locs", [])
+        loc_str = active_loc_list[0] if active_loc_list else ""
+        active_npc_list = world_debug.get("active_npcs", [])
+        npc_str = " ".join(active_npc_list)
+        rag_query = f"{loc_str} {npc_str} {current_user_input}"
+        rag_memories = await self.retrieve_relevant_memories(thread_id, rag_query)
         memory_text = "\n".join([f"- {m}" for m in rag_memories]) if rag_memories else "No deep archives found."
 
         if logger and rag_memories:

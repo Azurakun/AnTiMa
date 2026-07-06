@@ -41,17 +41,9 @@ def update_player_stats(thread_id: str, user_id: str, hp_change: int, mp_change:
     except Exception as e:
         return f"System Error: {e}"
 
-def apply_damage(thread_id: str, user_id: str, damage_amount: int):
-    """Applies damage to a player, reducing their HP."""
-    return update_player_stats(thread_id, user_id, hp_change=-int(damage_amount), mp_change=0)
-
-def apply_healing(thread_id: str, user_id: str, heal_amount: int):
-    """Applies healing to a player, increasing their HP."""
-    return update_player_stats(thread_id, user_id, hp_change=int(heal_amount), mp_change=0)
-
-def deduct_mana(thread_id: str, user_id: str, mana_cost: int):
-    """Deducts mana from a player."""
-    return update_player_stats(thread_id, user_id, hp_change=0, mp_change=-int(mana_cost))
+def modify_player_stats(thread_id: str, user_id: str, hp_change: int = 0, mp_change: int = 0):
+    """Modifies player HP/MP stats."""
+    return update_player_stats(thread_id, user_id, hp_change=int(hp_change), mp_change=int(mp_change))
 
 def roll_d20(check_type: str, difficulty: int, modifier: int = 0, stat_label: str = None):
     """Simulates rolling a 20-sided die for skill checks."""

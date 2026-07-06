@@ -112,7 +112,7 @@ class _GlobalCooldown:
             self._last_call = time.monotonic()
 
 
-_global_cooldown = _GlobalCooldown(min_interval=2.0)
+_global_cooldown = _GlobalCooldown(min_interval=5.0)
 
 
 async def throttled_create(client_create_coro, max_retries: int = 2):
