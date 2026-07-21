@@ -1,0 +1,1281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AnTiMa RPG · Tabletop</title>
+    <meta name="description" content="Play an AI-powered tabletop RPG with AnTiMa as your Dungeon Master.">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* ── Tokens ── */
+        :root {
+            --bg: #050309;
+            --surface: rgba(12, 8, 24, 0.9);
+            --surface-2: rgba(18, 12, 36, 0.55);
+            --border: rgba(139, 92, 246, 0.15);
+            --border-hover: rgba(139, 92, 246, 0.35);
+            --accent: #a78bfa;
+            --accent-dark: #7c3aed;
+            --accent-glow: rgba(167, 139, 250, 0.2);
+            --gold: #fbbf24;
+            --hp: #10b981;
+            --mp: #3b82f6;
+            --danger: #ef4444;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --text-dim: #4b5563;
+            --radius: 14px;
+            --radius-sm: 8px;
+            --sidebar-w: 280px;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: radial-gradient(ellipse at 40% 15%, #170d30 0%, #020108 65%);
+            color: var(--text);
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #2b1f4f; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+        /* ── LOBBY ── */
+        #lobby {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 28px 20px 48px;
+        }
+        .lobby-header {
+            display: flex; align-items: center; justify-content: space-between;
+            margin-bottom: 32px;
+        }
+        .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+        .brand-icon {
+            width: 42px; height: 42px;
+            background: linear-gradient(135deg, var(--accent), #6366f1);
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+        .brand-icon svg { width: 20px; height: 20px; color: white; }
+        .brand-text h1 { font-size: 22px; font-weight: 700; color: white; }
+        .brand-text p { font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; }
+        .back-btn {
+            display: inline-flex; align-items: center; gap: 6px;
+            background: var(--surface-2); border: 1px solid var(--border);
+            color: var(--text-muted); border-radius: var(--radius-sm);
+            padding: 7px 14px; font-size: 12px; font-weight: 500;
+            text-decoration: none; transition: color .2s, border-color .2s;
+        }
+        .back-btn:hover { color: white; border-color: var(--border-hover); }
+        .back-btn svg { width: 14px; height: 14px; }
+
+        .lobby-grid {
+            display: grid;
+            grid-template-columns: 1fr 1.5fr;
+            gap: 24px;
+            align-items: start;
+        }
+
+        .glass-card {
+            background: rgba(10, 7, 22, 0.8);
+            backdrop-filter: blur(18px);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            overflow: hidden;
+        }
+        .card-head {
+            padding: 18px 20px;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px; font-weight: 700; color: white;
+            display: flex; align-items: center; gap: 8px;
+        }
+        .card-head svg { width: 16px; height: 16px; color: var(--accent); }
+        .card-body { padding: 20px; }
+
+        /* Campaign list */
+        .campaign-list { display: flex; flex-direction: column; gap: 10px; max-height: 380px; overflow-y: auto; padding-right: 2px; }
+        .campaign-item {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 14px 16px;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            cursor: pointer; transition: background .2s, border-color .2s;
+        }
+        .campaign-item:hover { background: rgba(167,139,250,0.07); border-color: var(--border-hover); }
+        .campaign-title { font-weight: 600; font-size: 13px; color: white; }
+        .campaign-meta { font-size: 10px; color: var(--text-muted); margin-top: 3px; }
+        .badge {
+            font-size: 9px; font-weight: 700; text-transform: uppercase;
+            padding: 2px 8px; border-radius: 20px;
+        }
+        .badge-active { background: rgba(16,185,129,0.15); color: var(--hp); border: 1px solid rgba(16,185,129,0.3); }
+        .badge-archived { background: rgba(75,85,99,0.2); color: var(--text-dim); border: 1px solid rgba(75,85,99,0.3); }
+        .empty-state { text-align: center; color: var(--text-dim); font-size: 12px; padding: 28px; line-height: 1.7; }
+
+        /* Create Form */
+        .form-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); margin-bottom: 6px; display: block; }
+        .form-input, .form-select, .form-textarea {
+            width: 100%;
+            background: rgba(16, 12, 32, 0.5);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 10px 13px;
+            font-size: 13px; color: var(--text);
+            font-family: inherit; outline: none;
+            transition: border-color .2s;
+        }
+        .form-input:focus, .form-select:focus, .form-textarea:focus { border-color: var(--accent); }
+        .form-select option { background: #0d0920; color: var(--text); }
+        .form-textarea { resize: none; }
+        .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+        .form-grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+        .form-group { display: flex; flex-direction: column; }
+
+        .toggle-row {
+            display: flex; align-items: center; justify-content: space-between;
+            background: rgba(16, 12, 32, 0.4); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 12px 14px;
+        }
+        .toggle-info { }
+        .toggle-info strong { font-size: 13px; color: white; }
+        .toggle-info p { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+        .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .switch-track {
+            position: absolute; inset: 0;
+            background: rgba(139,92,246,0.15); border-radius: 12px;
+            cursor: pointer; border: 1px solid var(--border);
+            transition: background .2s;
+        }
+        .switch-track::before {
+            content: ''; position: absolute;
+            width: 18px; height: 18px; left: 2px; top: 2px;
+            background: var(--text-muted); border-radius: 50%;
+            transition: transform .2s, background .2s;
+        }
+        .switch input:checked + .switch-track { background: rgba(139,92,246,0.3); border-color: var(--accent); }
+        .switch input:checked + .switch-track::before { transform: translateX(20px); background: var(--accent); }
+
+        .divider { border: none; border-top: 1px solid var(--border); margin: 20px 0; }
+
+        .section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); margin-bottom: 14px; }
+
+        /* Stats grid */
+        .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+        .stat-box {
+            background: rgba(167,139,250,0.06); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 8px; text-align: center;
+        }
+        .stat-label { font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--text-muted); }
+        .stat-val { font-size: 18px; font-weight: 700; color: white; margin-top: 2px; }
+
+        .btn-primary {
+            width: 100%; background: var(--accent); border: none;
+            border-radius: var(--radius-sm); color: #05030c;
+            font-family: inherit; font-size: 14px; font-weight: 700;
+            padding: 13px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            box-shadow: 0 4px 18px rgba(167,139,250,0.25);
+            transition: background .2s, transform .1s;
+        }
+        .btn-primary:hover { background: #c4b5fd; transform: scale(1.01); }
+        .btn-primary:active { transform: scale(0.98); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-primary svg { width: 16px; height: 16px; }
+
+        /* ── GAME BOARD ── */
+        #game {
+            display: none;
+            height: 100vh;
+            flex-direction: column;
+        }
+        #game.active { display: flex; }
+
+        /* Game topbar */
+        #game-topbar {
+            height: 52px; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 0 18px;
+            background: rgba(4, 2, 12, 0.9);
+            backdrop-filter: blur(18px);
+            border-bottom: 1px solid var(--border);
+            font-size: 12px; color: var(--text-muted);
+        }
+        .hud-chip {
+            display: flex; align-items: center; gap: 6px;
+            background: rgba(167,139,250,0.06); border: 1px solid var(--border);
+            border-radius: 20px; padding: 4px 12px;
+        }
+        .hud-chip svg { width: 13px; height: 13px; }
+        .hud-chip-val { color: white; font-weight: 600; }
+        .topbar-hud-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+        .exit-btn {
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); color: var(--text-muted);
+            display: flex; align-items: center; gap: 5px;
+            padding: 5px 12px; font-size: 12px; font-weight: 500;
+            cursor: pointer; font-family: inherit;
+            transition: color .2s; flex-shrink: 0;
+        }
+        .exit-btn:hover { color: white; }
+        .exit-btn svg { width: 13px; height: 13px; }
+
+        /* ── GAME INNER ── */
+        .game-inner {
+            flex: 1; display: flex; overflow: hidden;
+        }
+
+        /* Game Sidebar / Almanac */
+        #almanac {
+            width: var(--sidebar-w);
+            flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+            background: rgba(4, 2, 12, 0.95);
+            border-right: 1px solid var(--border);
+            height: 100%;
+            overflow: hidden;
+        }
+
+        /* HP/MP bars */
+        .stat-bars { padding: 18px 16px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; }
+        .bar-row { display: flex; flex-direction: column; gap: 6px; }
+        .bar-label { display: flex; justify-content: space-between; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+        .bar-track {
+            height: 12px; background: rgba(13, 8, 30, 0.6);
+            border-radius: 6px; overflow: hidden; border: 1px solid rgba(139, 92, 246, 0.2);
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.6);
+            position: relative;
+        }
+        .bar-fill { height: 100%; border-radius: 6px; transition: width .6s cubic-bezier(0.19, 1, 0.22, 1); position: relative; }
+        .bar-hp {
+            background: linear-gradient(90deg, #059669, #10b981);
+            box-shadow: 0 0 10px rgba(16, 185, 129, 0.4);
+        }
+        .bar-mp {
+            background: linear-gradient(90deg, #1d4ed8, #3b82f6);
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+        }
+        /* Add a shining animation to the bar fills */
+        .bar-fill::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; bottom: 0; right: 0;
+            background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0) 100%);
+            animation: bar-shine 3s infinite;
+        }
+        @keyframes bar-shine {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        /* Almanac tabs */
+        .almanac-tabs { display: flex; padding: 8px; gap: 4px; border-bottom: 1px solid var(--border); background: rgba(0,0,0,0.2); }
+        .atab {
+            flex: 1; text-align: center; padding: 7px 4px;
+            font-size: 11px; font-weight: 600; border-radius: 7px;
+            cursor: pointer; color: var(--text-muted);
+            background: none; border: none; font-family: inherit;
+            transition: color .2s, background .2s;
+        }
+        .atab.active { background: rgba(167,139,250,0.12); color: var(--accent); }
+        .atab:hover:not(.active) { color: white; }
+
+        .almanac-body { flex: 1; overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+        .almanac-item {
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 12px;
+        }
+        .almanac-item-title { font-weight: 700; font-size: 13px; color: white; }
+        .almanac-item-sub { font-size: 11px; color: var(--text-muted); margin-top: 4px; line-height: 1.5; }
+        .memory-quote {
+            font-size: 10px; color: var(--accent); font-style: italic;
+            background: rgba(167,139,250,0.05); border: 1px solid var(--border);
+            border-radius: 5px; padding: 6px 8px; margin-top: 6px; line-height: 1.5;
+        }
+        .almanac-rel-badge {
+            display: inline-block; font-size: 9px; font-weight: 700; text-transform: uppercase;
+            background: rgba(167,139,250,0.1); color: var(--accent); border: 1px solid var(--border);
+            border-radius: 12px; padding: 1px 7px; margin-left: 6px;
+        }
+        .almanac-empty { text-align: center; color: var(--text-dim); font-size: 11px; padding: 24px; line-height: 1.7; }
+
+        /* ── CHRONICLE ── */
+        #chronicle-panel {
+            flex: 1; display: flex; flex-direction: column; overflow: hidden;
+        }
+
+        #chronicle {
+            flex: 1; overflow-y: auto;
+            padding: 24px 28px;
+            display: flex; flex-direction: column; gap: 24px;
+        }
+
+        .turn-block { display: flex; flex-direction: column; gap: 12px; }
+        .player-prompt {
+            display: flex; justify-content: flex-end;
+        }
+        .player-prompt-bubble {
+            background: rgba(30, 22, 55, 0.7); border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 14px; border-bottom-right-radius: 3px;
+            padding: 9px 14px; font-size: 12px; color: #c4b5fd; max-width: 70%;
+        }
+        .player-prompt-bubble strong { color: var(--accent); }
+
+        .dm-block { display: flex; gap: 12px; align-items: flex-start; }
+        .dm-icon {
+            width: 36px; height: 36px; border-radius: 10px;
+            background: rgba(167,139,250,0.08); border: 1px solid var(--border);
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0; color: var(--accent);
+        }
+        .dm-icon svg { width: 16px; height: 16px; }
+        .dm-content { flex: 1; min-width: 0; }
+        .dm-label {
+            font-size: 10px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: .08em; color: var(--text-dim);
+            margin-bottom: 8px; display: flex; align-items: center; gap: 8px;
+        }
+        .turn-badge {
+            font-size: 9px; background: rgba(167,139,250,0.08); border: 1px solid var(--border);
+            color: var(--accent); padding: 1px 7px; border-radius: 10px;
+            font-family: 'JetBrains Mono', monospace; font-weight: 500; text-transform: lowercase;
+        }
+        .dm-narrative {
+            font-size: 14px; line-height: 1.8; color: var(--text);
+        }
+        .dm-narrative p { margin-bottom: 10px; }
+        .dm-narrative p:last-child { margin-bottom: 0; }
+        .dm-narrative strong { color: white; }
+        .dm-narrative em { color: #c4b5fd; }
+        .rewind-btn {
+            display: inline-flex; align-items: center; gap: 4px; margin-top: 10px;
+            font-size: 10px; font-weight: 600; color: var(--text-dim);
+            background: none; border: none; cursor: pointer; font-family: inherit;
+            transition: color .2s; padding: 0;
+        }
+        .rewind-btn:hover { color: var(--accent); }
+        .rewind-btn svg { width: 12px; height: 12px; }
+
+        /* suggestions */
+        #suggestions {
+            padding: 10px 18px;
+            border-top: 1px solid var(--border);
+            display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+            background: rgba(0,0,0,0.15);
+        }
+        .sugg-btn {
+            background: rgba(167,139,250,0.07); border: 1px solid var(--border);
+            border-radius: 20px; color: var(--accent);
+            font-size: 11.5px; font-weight: 500; font-family: inherit;
+            padding: 6px 16px; cursor: pointer; white-space: nowrap;
+            transition: background .2s, color .2s, border-color .2s;
+        }
+        .sugg-btn:hover { background: rgba(167,139,250,0.15); color: white; border-color: var(--border-hover); }
+
+        /* game input */
+        #game-input-bar {
+            padding: 14px 18px;
+            border-top: 1px solid var(--border);
+            background: rgba(4, 2, 12, 0.7);
+            backdrop-filter: blur(18px);
+            flex-shrink: 0;
+        }
+        .game-form {
+            display: flex; gap: 10px; align-items: center;
+            max-width: 900px; margin: 0 auto;
+        }
+        .reroll-btn {
+            background: var(--surface-2); border: 1px solid var(--border);
+            color: var(--text-muted); border-radius: var(--radius-sm);
+            display: flex; align-items: center; gap: 5px;
+            padding: 9px 13px; font-size: 12px; font-weight: 600;
+            cursor: pointer; font-family: inherit; flex-shrink: 0;
+            transition: color .2s;
+        }
+        .reroll-btn:hover { color: white; }
+        .reroll-btn svg { width: 14px; height: 14px; }
+        #action-input {
+            flex: 1; background: rgba(12, 8, 26, 0.6);
+            border: 1px solid var(--border); border-radius: var(--radius-sm);
+            color: var(--text); font-family: inherit; font-size: 13px;
+            padding: 10px 14px; outline: none; transition: border-color .2s;
+        }
+        #action-input:focus { border-color: var(--accent); }
+        #action-input::placeholder { color: var(--text-dim); }
+        .go-btn {
+            width: 42px; height: 42px; background: var(--accent); border: none;
+            border-radius: var(--radius-sm); color: #05030c;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; flex-shrink: 0;
+            box-shadow: 0 4px 16px rgba(139,92,246,0.25);
+            transition: background .2s, transform .1s;
+        }
+        .go-btn:hover { background: #c4b5fd; transform: scale(1.05); }
+        .go-btn:active { transform: scale(0.95); }
+        .go-btn svg { width: 16px; height: 16px; }
+
+        /* ── DICE OVERLAY ── */
+        #dice-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(4, 2, 14, 0.88); backdrop-filter: blur(12px);
+            z-index: 100; align-items: center; justify-content: center;
+        }
+        #dice-overlay.show { display: flex; }
+        .dice-card {
+            background: rgba(12, 8, 24, 0.95);
+            border: 1px solid rgba(167, 139, 250, 0.4);
+            box-shadow: 0 0 35px rgba(167, 139, 250, 0.25), inset 0 0 15px rgba(167, 139, 250, 0.1);
+            border-radius: 24px; padding: 36px 32px;
+            text-align: center; max-width: 340px; width: 90%;
+            display: flex; flex-direction: column; gap: 20px;
+            backdrop-filter: blur(25px);
+        }
+        .dice-type { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--accent); }
+        .dice-svg-wrap {
+            perspective: 800px;
+            display: flex;
+            justify-content: center;
+            padding: 12px 0;
+        }
+        .dice-svg-wrap svg {
+            width: 100px; height: 100px; color: var(--accent);
+            filter: drop-shadow(0 0 15px rgba(167,139,250,0.5));
+            transform-style: preserve-3d;
+        }
+        @keyframes roll3d {
+            0% { transform: scale(0.3) rotateX(0deg) rotateY(0deg) rotateZ(0deg); opacity: 0; filter: blur(3px); }
+            30% { transform: scale(1.2) rotateX(360deg) rotateY(180deg) rotateZ(90deg); filter: blur(1px); }
+            60% { transform: scale(0.9) rotateX(720deg) rotateY(540deg) rotateZ(270deg); filter: blur(0px); }
+            85% { transform: scale(1.05) rotateX(900deg) rotateY(720deg) rotateZ(450deg); }
+            100% { transform: scale(1) rotateX(1080deg) rotateY(900deg) rotateZ(720deg); opacity: 1; }
+        }
+        .dice-rolling { animation: roll3d 0.8s cubic-bezier(0.25, 1, 0.5, 1) forwards; }
+        .dice-outcome { font-size: 20px; font-weight: 700; color: white; }
+        .dice-math { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+        .dice-close {
+            background: rgba(167,139,250,0.1); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--accent); font-family: inherit;
+            font-size: 13px; font-weight: 600; padding: 9px; cursor: pointer;
+            transition: background .2s;
+        }
+        .dice-close:hover { background: rgba(167,139,250,0.2); }
+
+        /* Almanac mobile toggle */
+        #almanac-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.65); z-index: 45;
+        }
+        #almanac-overlay.show { display: block; }
+        .almanac-toggle-btn {
+            display: none;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); color: var(--text-muted);
+            padding: 5px 10px; font-size: 11px; font-weight: 600; font-family: inherit;
+            gap: 5px; cursor: pointer; align-items: center; flex-shrink: 0;
+            transition: color .2s;
+        }
+        .almanac-toggle-btn:hover { color: white; }
+        .almanac-toggle-btn svg { width: 14px; height: 14px; }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 860px) {
+            .lobby-grid { grid-template-columns: 1fr; }
+            .form-grid-2 { grid-template-columns: 1fr; }
+            .form-grid-3 { grid-template-columns: 1fr 1fr; }
+            .stats-grid { grid-template-columns: repeat(4, 1fr); }
+        }
+        @media (max-width: 640px) {
+            #lobby { padding: 16px 12px 40px; }
+            .lobby-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+            .form-grid-3 { grid-template-columns: 1fr 1fr; }
+            .stats-grid { grid-template-columns: repeat(4, 1fr); }
+
+            /* Mobile game board — almanac becomes a drawer */
+            #almanac {
+                position: fixed;
+                top: 0; left: 0; bottom: 0;
+                transform: translateX(-100%);
+                box-shadow: 4px 0 24px rgba(0,0,0,0.6);
+                z-index: 50;
+                transition: transform .28s ease;
+            }
+            #almanac.open { transform: translateX(0); }
+            #almanac-overlay.show { display: block; }
+            .almanac-toggle-btn { display: inline-flex; }
+
+            #chronicle { padding: 14px 12px; }
+            #game-input-bar { padding: 10px 12px; }
+            .game-form { gap: 7px; }
+            .reroll-btn { padding: 8px; }
+            .reroll-btn span { display: none; }
+            #game-topbar { padding: 0 12px; flex-wrap: wrap; height: auto; min-height: 52px; }
+            .topbar-hud-row { gap: 6px; padding: 4px 0; }
+            .hud-chip { padding: 3px 8px; font-size: 11px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- ══ LOBBY ══ -->
+<div id="lobby">
+    <div class="lobby-header">
+        <a href="/" class="brand">
+            <div class="brand-icon"><i data-lucide="swords"></i></div>
+            <div class="brand-text">
+                <h1>AnTiMa RPG</h1>
+                <p>Tabletop DM Matrix</p>
+            </div>
+        </a>
+        <a href="/" class="back-btn"><i data-lucide="home"></i> Dashboard</a>
+    </div>
+
+    <div class="lobby-grid">
+
+        <!-- Left: campaigns -->
+        <div class="glass-card">
+            <div class="card-head"><i data-lucide="compass"></i> Active Campaigns</div>
+            <div class="card-body">
+                <div class="campaign-list" id="campaign-list">
+                    <div class="empty-state">Loading campaigns…</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: create form -->
+        <div class="glass-card">
+            <div class="card-head"><i data-lucide="plus-circle"></i> New Adventure</div>
+            <div class="card-body" style="display:flex;flex-direction:column;gap:16px;">
+
+                <div class="form-grid-2">
+                    <div class="form-group">
+                        <label class="form-label">Adventure Title</label>
+                        <input id="f-title" class="form-input" type="text" placeholder="Chronicles of the Void">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Scenario</label>
+                        <select id="f-scenario" class="form-select" onchange="onScenarioChange()"></select>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Custom Lore / Setting Notes</label>
+                    <textarea id="f-lore" class="form-textarea" rows="2" placeholder="Leave blank to use default scenario lore…"></textarea>
+                </div>
+
+                <div class="toggle-row">
+                    <div class="toggle-info">
+                        <strong>Story Mode</strong>
+                        <p>Narrative focus — no dice checks.</p>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="f-storymode">
+                        <span class="switch-track"></span>
+                    </label>
+                </div>
+
+                <hr class="divider">
+                <div class="section-title">Create Your Character</div>
+
+                <div class="form-grid-3">
+                    <div class="form-group">
+                        <label class="form-label">Name</label>
+                        <input id="c-name" class="form-input" type="text" placeholder="Hero">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Class</label>
+                        <select id="c-class" class="form-select" onchange="onClassChange()"></select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Pronouns</label>
+                        <input id="c-pronouns" class="form-input" type="text" placeholder="They/Them">
+                    </div>
+                </div>
+
+                <div class="form-grid-2">
+                    <div class="form-group">
+                        <label class="form-label">Age</label>
+                        <input id="c-age" class="form-input" type="number" placeholder="20" min="14" max="999">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Appearance</label>
+                        <input id="c-appearance" class="form-input" type="text" placeholder="Worn leather armor…">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Backstory</label>
+                    <input id="c-backstory" class="form-input" type="text" placeholder="A former soldier seeking redemption…">
+                </div>
+
+                <!-- Dynamic class stats display -->
+                <div class="stats-grid" id="stats-display"></div>
+
+                <button class="btn-primary" id="launch-btn" onclick="launchCampaign()">
+                    <i data-lucide="play"></i> Launch Campaign
+                </button>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<!-- ══ GAME BOARD ══ -->
+<div id="game">
+    <!-- Top HUD bar -->
+    <div id="game-topbar">
+        <div class="topbar-hud-row">
+            <button class="almanac-toggle-btn" onclick="openAlmanac()">
+                <i data-lucide="panel-left"></i> <span>Almanac</span>
+            </button>
+            <div class="hud-chip"><i data-lucide="clock" style="color:var(--gold)"></i> <span class="hud-chip-val" id="hud-time">08:00</span></div>
+            <div class="hud-chip"><i data-lucide="cloud-sun"></i> <span class="hud-chip-val" id="hud-weather">Clear</span></div>
+            <div class="hud-chip"><i data-lucide="map-pin" style="color:var(--accent)"></i> <span class="hud-chip-val" id="hud-location">…</span></div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+            <span style="font-size:12px;font-weight:700;color:white;" id="hud-title"></span>
+            <button class="exit-btn" onclick="exitToLobby()"><i data-lucide="log-out"></i> Exit</button>
+        </div>
+    </div>
+
+    <div class="game-inner">
+        <!-- Almanac Sidebar -->
+        <aside id="almanac">
+            <div style="padding:14px 16px;border-bottom:1px solid var(--border);font-weight:700;font-size:13px;color:white;display:flex;justify-content:space-between;align-items:center;">
+                <span id="almanac-campaign-name">Adventure</span>
+                <span style="font-size:10px;color:var(--accent);background:rgba(167,139,250,0.08);border:1px solid var(--border);border-radius:10px;padding:2px 8px;" id="almanac-scenario"></span>
+            </div>
+
+            <!-- HP / MP -->
+            <div class="stat-bars">
+                <div class="bar-row">
+                    <div class="bar-label">
+                        <span style="color:var(--hp);display:flex;align-items:center;gap:4px;"><i data-lucide="heart" style="width:12px;height:12px;"></i> HP</span>
+                        <span id="hp-text" style="font-family:'JetBrains Mono',monospace;font-size:11px;">100/100</span>
+                    </div>
+                    <div class="bar-track"><div class="bar-fill bar-hp" id="hp-bar" style="width:100%"></div></div>
+                </div>
+                <div class="bar-row">
+                    <div class="bar-label">
+                        <span style="color:var(--mp);display:flex;align-items:center;gap:4px;"><i data-lucide="droplet" style="width:12px;height:12px;"></i> MP</span>
+                        <span id="mp-text" style="font-family:'JetBrains Mono',monospace;font-size:11px;">50/50</span>
+                    </div>
+                    <div class="bar-track"><div class="bar-fill bar-mp" id="mp-bar" style="width:100%"></div></div>
+                </div>
+            </div>
+
+            <!-- Tabs -->
+            <div class="almanac-tabs">
+                <button class="atab active" id="atab-npcs" onclick="switchTab('npcs')">NPCs</button>
+                <button class="atab" id="atab-bag" onclick="switchTab('bag')">Bag</button>
+                <button class="atab" id="atab-quests" onclick="switchTab('quests')">Quests</button>
+            </div>
+
+            <div class="almanac-body" id="almanac-body">
+                <div class="almanac-empty">No data yet.</div>
+            </div>
+        </aside>
+
+        <!-- Chronicle + input -->
+        <div id="chronicle-panel">
+            <div id="chronicle"></div>
+
+            <!-- Suggestions -->
+            <div id="suggestions"></div>
+
+            <!-- Input -->
+            <div id="game-input-bar">
+                <form class="game-form" onsubmit="submitAction(event)">
+                    <button type="button" class="reroll-btn" onclick="rerollLast()">
+                        <i data-lucide="rotate-ccw"></i> <span>Reroll</span>
+                    </button>
+                    <input type="text" id="action-input" placeholder="What do you do?" autocomplete="off">
+                    <button type="submit" class="go-btn"><i data-lucide="play"></i></button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Almanac mobile overlay -->
+<div id="almanac-overlay" onclick="closeAlmanac()"></div>
+
+<!-- ══ DICE OVERLAY ══ -->
+<div id="dice-overlay">
+    <div class="dice-card">
+        <div class="dice-type" id="dice-type">Perception Check</div>
+        <div class="dice-svg-wrap">
+            <svg id="dice-svg" viewBox="0 0 100 100" fill="rgba(167,139,250,0.06)" stroke="currentColor" stroke-width="2.5">
+                <polygon points="50,5 90,25 90,75 50,95 10,75 10,25"/>
+                <line x1="50" y1="5" x2="50" y2="95"/>
+                <line x1="10" y1="25" x2="90" y2="25"/>
+                <line x1="10" y1="75" x2="90" y2="75"/>
+                <line x1="10" y1="25" x2="50" y2="95"/>
+                <line x1="90" y1="25" x2="50" y2="95"/>
+                <line x1="10" y1="75" x2="50" y2="5"/>
+                <line x1="90" y1="75" x2="50" y2="5"/>
+                <text id="dice-number" x="50" y="58" font-family="Outfit" font-size="22" font-weight="700" fill="white" text-anchor="middle" class="hidden">20</text>
+            </svg>
+        </div>
+        <div class="dice-outcome" id="dice-outcome">Rolling…</div>
+        <div class="dice-math" id="dice-math"></div>
+        <button class="dice-close" onclick="closeDice()">Continue</button>
+    </div>
+</div>
+
+<!-- ══ NPC DETAILS MODAL ══ -->
+<div id="npc-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); z-index: 100; align-items: center; justify-content: center;">
+    <div class="dice-card" style="max-width: 480px; width: 90%; text-align: left; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 10px; margin-bottom: 4px;">
+            <h3 id="npc-modal-name" style="font-size: 16px; font-weight: 700; color: white;">NPC Name</h3>
+            <span class="almanac-rel-badge" id="npc-modal-rel" style="margin-left: 0;">Neutral</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+            <div>
+                <div class="form-label" style="margin-bottom: 4px;">Description</div>
+                <p id="npc-modal-details" style="font-size: 12.5px; line-height: 1.6; color: var(--text);"></p>
+            </div>
+            <div style="display: flex; gap: 14px;">
+                <div style="flex: 1;">
+                    <div class="form-label" style="margin-bottom: 4px;">Age</div>
+                    <p id="npc-modal-age" style="font-size: 12.5px; color: white; font-weight: 600;"></p>
+                </div>
+                <div style="flex: 1;">
+                    <div class="form-label" style="margin-bottom: 4px;">Status</div>
+                    <p id="npc-modal-status" style="font-size: 12.5px; color: white; font-weight: 600; text-transform: capitalize;"></p>
+                </div>
+            </div>
+            <div>
+                <div class="form-label" style="margin-bottom: 4px;">Attributes</div>
+                <div id="npc-modal-attributes" style="display: flex; flex-wrap: wrap; gap: 6px;"></div>
+            </div>
+            <div>
+                <div class="form-label" style="margin-bottom: 4px;">Recollection Logs (NPC Memory)</div>
+                <div id="npc-modal-history" style="display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; padding-right: 4px;"></div>
+            </div>
+            <button class="dice-close" style="width: 100%; margin-top: 10px;" onclick="closeNPCModal()">Close Sheet</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────
+let userId = localStorage.getItem('atm_uid');
+if (!userId) {
+    userId = Math.floor(1e14 + Math.random() * 9e14).toString();
+    localStorage.setItem('atm_uid', userId);
+}
+let config = null;
+let sessionData = null;
+let currentThread = null;
+let activeTab = 'npcs';
+
+// ── Load Config ────────────────────────────────────────────────────────
+async function loadConfig() {
+    try {
+        const res = await fetch('/api/web_rpg/config');
+        config = await res.json();
+
+        // Populate scenarios (SCENARIOS is a list of objects)
+        const sel = document.getElementById('f-scenario');
+        sel.innerHTML = config.scenarios.map(s =>
+            `<option value="${s.value}">${s.label} <small>${s.genre}</small></option>`
+        ).join('');
+
+        // Populate classes
+        const csel = document.getElementById('c-class');
+        csel.innerHTML = Object.keys(config.classes).map(c =>
+            `<option value="${c}">${c}</option>`
+        ).join('');
+
+        onClassChange();
+        onScenarioChange();
+    } catch(e) { console.error('Config load failed', e); }
+}
+
+function onScenarioChange() {
+    if (!config) return;
+    const val = document.getElementById('f-scenario').value;
+    const s = config.scenarios.find(x => x.value === val);
+    if (s) document.getElementById('f-lore').placeholder = s.desc || 'Custom lore…';
+}
+
+function onClassChange() {
+    if (!config) return;
+    const cls = document.getElementById('c-class').value;
+    const c = config.classes[cls];
+    if (!c) return;
+    const grid = document.getElementById('stats-display');
+    const stats = c.stats || {};
+    grid.innerHTML = Object.entries(stats).map(([k,v]) => `
+        <div class="stat-box">
+            <div class="stat-label">${k}</div>
+            <div class="stat-val">${v}</div>
+        </div>`).join('');
+    // Add HP/MP boxes
+    grid.innerHTML += `
+        <div class="stat-box"><div class="stat-label" style="color:var(--hp)">HP</div><div class="stat-val" style="color:var(--hp)">${c.hp||100}</div></div>
+        <div class="stat-box"><div class="stat-label" style="color:var(--mp)">MP</div><div class="stat-val" style="color:var(--mp)">${c.mp||50}</div></div>`;
+}
+
+// ── Load Campaigns ─────────────────────────────────────────────────────
+async function loadCampaigns() {
+    try {
+        const res = await fetch(`/api/web_rpg/campaigns?user_id=${userId}`);
+        const data = await res.json();
+        const list = document.getElementById('campaign-list');
+        if (!data.length) {
+            list.innerHTML = '<div class="empty-state">No campaigns yet.<br>Create your first adventure →</div>';
+            return;
+        }
+        list.innerHTML = data.map(c => `
+            <div class="campaign-item" onclick="resumeCampaign('${c.thread_id}')">
+                <div>
+                    <div class="campaign-title">${c.title}</div>
+                    <div class="campaign-meta">${c.scenario} · Turn ${c.turn_count} · ${c.last_active}</div>
+                </div>
+                <span class="badge ${c.is_active ? 'badge-active' : 'badge-archived'}">${c.is_active ? 'Active' : 'Archived'}</span>
+            </div>`).join('');
+    } catch(e) { console.error(e); }
+}
+
+// ── Launch ─────────────────────────────────────────────────────────────
+async function launchCampaign() {
+    const cls = document.getElementById('c-class').value;
+    const classData = config?.classes[cls] || {};
+    const btn = document.getElementById('launch-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span style="animation:pulse 1s infinite">Opening world…</span>';
+
+    const payload = {
+        user_id: userId,
+        user_name: document.getElementById('c-name').value.trim() || 'Hero',
+        title: document.getElementById('f-title').value.trim() || 'Untitled Adventure',
+        scenario: document.getElementById('f-scenario').value,
+        lore: document.getElementById('f-lore').value.trim(),
+        story_mode: document.getElementById('f-storymode').checked,
+        character: {
+            name: document.getElementById('c-name').value.trim() || 'Hero',
+            class: cls,
+            age: parseInt(document.getElementById('c-age').value) || 20,
+            pronouns: document.getElementById('c-pronouns').value.trim() || 'They/Them',
+            appearance: document.getElementById('c-appearance').value.trim() || 'Standard adventurer.',
+            backstory: document.getElementById('c-backstory').value.trim() || 'A wanderer seeking fortune.',
+            stats: classData.stats || {}
+        }
+    };
+
+    try {
+        const res = await fetch('/api/web_rpg/create', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.error) { alert('Error: ' + data.error); return; }
+        currentThread = data.thread_id;
+        sessionData = { title: payload.title, scenario: payload.scenario, player_stats: data.player_stats, world_state: data.world_state, inventory: data.inventory };
+        mountGame(data, true);
+    } catch(e) { alert('Launch failed: ' + e); }
+    finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i data-lucide="play"></i> Launch Campaign';
+        lucide.createIcons();
+    }
+}
+
+async function resumeCampaign(threadId) {
+    try {
+        const res = await fetch(`/api/web_rpg/session/${threadId}?user_id=${userId}`);
+        const data = await res.json();
+        if (data.error) { alert(data.error); return; }
+        currentThread = threadId;
+        sessionData = data;
+        mountGame(data, false);
+    } catch(e) { alert('Connection failed.'); }
+}
+
+// ── Mount Game Screen ──────────────────────────────────────────────────
+function mountGame(data, isNew) {
+    document.getElementById('lobby').style.display = 'none';
+    document.getElementById('game').classList.add('active');
+
+    document.getElementById('hud-title').textContent = data.title || 'Adventure';
+    document.getElementById('almanac-campaign-name').textContent = data.title || 'Adventure';
+    document.getElementById('almanac-scenario').textContent = data.scenario || '';
+
+    const chr = document.getElementById('chronicle');
+    chr.innerHTML = '';
+
+    if (isNew && data.narrative) {
+        appendTurn('System', 'Opening Scene', data.narrative, data.turn_id || 1);
+    } else if (data.turn_history) {
+        data.turn_history.forEach(t => appendTurn(t.user_name, t.input, t.output, t.turn_id));
+    }
+
+    updateHUD(data);
+    renderSuggestions(data.suggested_actions);
+    renderAlmanac();
+
+    chr.scrollTop = chr.scrollHeight;
+    lucide.createIcons();
+}
+
+function exitToLobby() {
+    document.getElementById('game').classList.remove('active');
+    document.getElementById('lobby').style.display = '';
+    currentThread = null; sessionData = null;
+    loadCampaigns();
+    lucide.createIcons();
+}
+
+// ── Chronicle rendering ────────────────────────────────────────────────
+function appendTurn(author, input, output, turnId) {
+    const chr = document.getElementById('chronicle');
+    const block = document.createElement('div');
+    block.className = 'turn-block';
+    block.id = `turn-${turnId}`;
+    const playerPart = (author !== 'System') ? `
+        <div class="player-prompt">
+            <div class="player-prompt-bubble">
+                <strong>${author}</strong>: ${input}
+            </div>
+        </div>` : '';
+    block.innerHTML = `
+        ${playerPart}
+        <div class="dm-block">
+            <div class="dm-icon"><i data-lucide="shield"></i></div>
+            <div class="dm-content">
+                <div class="dm-label">
+                    Dungeon Master
+                    <span class="turn-badge">turn ${turnId}</span>
+                </div>
+                <div class="dm-narrative">${marked.parse(output)}</div>
+                <button class="rewind-btn" onclick="doRewind(${turnId})">
+                    <i data-lucide="undo-2"></i> Rewind to here
+                </button>
+            </div>
+        </div>`;
+    chr.appendChild(block);
+    chr.scrollTop = chr.scrollHeight;
+    lucide.createIcons();
+    return block;
+}
+
+// ── HUD ────────────────────────────────────────────────────────────────
+function updateHUD(data) {
+    // Find player stats
+    const stats = data.player_stats ? (data.player_stats[userId] || Object.values(data.player_stats)[0]) : null;
+    if (stats) {
+        const hp = stats.hp ?? 0, maxHp = stats.max_hp ?? 100;
+        const mp = stats.mp ?? 0, maxMp = stats.max_mp ?? 50;
+        const hpPct = Math.max(0, Math.min(100, (hp/maxHp)*100));
+        const mpPct = Math.max(0, Math.min(100, (mp/maxMp)*100));
+        document.getElementById('hp-text').textContent = `${hp}/${maxHp}`;
+        document.getElementById('mp-text').textContent = `${mp}/${maxMp}`;
+        document.getElementById('hp-bar').style.width = hpPct + '%';
+        document.getElementById('mp-bar').style.width = mpPct + '%';
+        // Color shift on low HP
+        const hpBar = document.getElementById('hp-bar');
+        if (hpPct <= 25) hpBar.style.background = 'linear-gradient(90deg,#dc2626,#ef4444)';
+        else if (hpPct <= 55) hpBar.style.background = 'linear-gradient(90deg,#d97706,#fbbf24)';
+        else hpBar.style.background = '';
+    }
+    // World state
+    if (data.world_state) {
+        const env = data.world_state.environment || {};
+        document.getElementById('hud-time').textContent = env.time || '08:00';
+        document.getElementById('hud-weather').textContent = env.weather || 'Clear';
+        const locs = data.world_state.locations || [];
+        const active = locs.find(l => l.status === 'active');
+        document.getElementById('hud-location').textContent = active ? active.name : '—';
+    }
+}
+
+// ── Almanac ────────────────────────────────────────────────────────────
+function switchTab(tab) {
+    activeTab = tab;
+    document.querySelectorAll('.atab').forEach(b => b.classList.remove('active'));
+    document.getElementById('atab-' + tab).classList.add('active');
+    renderAlmanac();
+}
+
+function renderAlmanac() {
+    const body = document.getElementById('almanac-body');
+    if (!sessionData) { body.innerHTML = '<div class="almanac-empty">No data.</div>'; return; }
+    const ws = sessionData.world_state || {};
+
+    if (activeTab === 'npcs') {
+        const npcs = (ws.npcs || []).filter(n => n.status !== 'dead');
+        if (!npcs.length) { body.innerHTML = '<div class="almanac-empty">No NPCs nearby.</div>'; return; }
+        body.innerHTML = npcs.map(n => {
+            const rel = (n.attributes || {}).relationships || 'Neutral';
+            const hist = ((n.attributes || {}).history || []);
+            const last = hist.length ? hist[hist.length-1].text : null;
+            return `<div class="almanac-item" style="cursor: pointer; border: 1px solid var(--border); transition: border-color 0.2s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'" onclick="inspectNPC('${n.name.replace(/'/g, "\\'")}')">
+                <div class="almanac-item-title">${n.name}<span class="almanac-rel-badge">${rel}</span></div>
+                <div class="almanac-item-sub">${n.details || ''}</div>
+                ${last ? `<div class="memory-quote">"${last}"</div>` : ''}
+            </div>`;
+        }).join('');
+    } else if (activeTab === 'bag') {
+        const items = sessionData.inventory || [];
+        if (!items.length) { body.innerHTML = '<div class="almanac-empty">Backpack is empty.</div>'; return; }
+        body.innerHTML = items.map(i => `<div class="almanac-item">
+            <div class="almanac-item-title">${i.name}</div>
+            <div class="almanac-item-sub">${i.description || ''}</div>
+        </div>`).join('');
+    } else if (activeTab === 'quests') {
+        const quests = (ws.quests || []).filter(q => q.status === 'active');
+        if (!quests.length) { body.innerHTML = '<div class="almanac-empty">No active quests.</div>'; return; }
+        body.innerHTML = quests.map(q => `<div class="almanac-item">
+            <div class="almanac-item-title">🛡️ ${q.name}</div>
+            <div class="almanac-item-sub">${q.details || ''}</div>
+        </div>`).join('');
+    }
+}
+
+function openAlmanac()  { document.getElementById('almanac').classList.add('open'); document.getElementById('almanac-overlay').classList.add('show'); }
+function closeAlmanac() { document.getElementById('almanac').classList.remove('open'); document.getElementById('almanac-overlay').classList.remove('show'); }
+
+function inspectNPC(name) {
+    console.log("inspectNPC triggered for:", name);
+    try {
+        if (!sessionData) {
+            alert("Error: sessionData is null. Please refresh the page.");
+            return;
+        }
+        if (!sessionData.world_state) {
+            alert("Error: sessionData.world_state is null.");
+            return;
+        }
+        
+        let npcs = sessionData.world_state.npcs || [];
+        // Support both arrays and key-value maps
+        if (!Array.isArray(npcs)) {
+            npcs = Object.values(npcs);
+        }
+        
+        const npc = npcs.find(n => n.name === name);
+        if (!npc) {
+            alert("Error: NPC '" + name + "' not found in world state: " + JSON.stringify(npcs));
+            return;
+        }
+
+        document.getElementById('npc-modal-name').textContent = npc.name;
+        const rel = (npc.attributes || {}).relationships || 'Neutral';
+        document.getElementById('npc-modal-rel').textContent = rel;
+        document.getElementById('npc-modal-details').textContent = npc.details || 'No description available.';
+        document.getElementById('npc-modal-age').textContent = (npc.attributes || {}).age || npc.age || 'Unknown';
+        document.getElementById('npc-modal-status').textContent = npc.status || 'Active';
+
+        // Render attributes
+        const attrsBox = document.getElementById('npc-modal-attributes');
+        attrsBox.innerHTML = '';
+        const ignoreKeys = ['relationships', 'history', 'memory_add', 'age'];
+        const attrs = Object.entries(npc.attributes || {}).filter(([k]) => !ignoreKeys.includes(k));
+        if (attrs.length > 0) {
+            attrsBox.innerHTML = attrs.map(([k, v]) => `
+                <div style="background: rgba(167,139,250,0.08); border: 1px solid var(--border); padding: 4px 8px; border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--accent);">
+                    <strong>${k}:</strong> ${v}
+                </div>`).join('');
+        } else {
+            attrsBox.innerHTML = '<span style="color: var(--text-dim); font-style: italic; font-size: 12px;">None</span>';
+        }
+
+        // Render recollection history
+        const histBox = document.getElementById('npc-modal-history');
+        histBox.innerHTML = '';
+        const hist = (npc.attributes || {}).history || [];
+        if (hist.length > 0) {
+            histBox.innerHTML = hist.map(m => `
+                <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border); padding: 8px 10px; border-radius: 8px; font-size: 12px;">
+                    <p style="font-style: italic; line-height: 1.5; color: #c4b5fd;">"${m.text}"</p>
+                    <div style="font-size: 9px; color: var(--text-dim); margin-top: 4px; font-family: 'JetBrains Mono', monospace; text-align: right;">Memory Log</div>
+                </div>`).join('');
+        } else {
+            histBox.innerHTML = '<div style="text-align: center; color: var(--text-dim); font-size: 11px; padding: 12px; width: 100%;">No memories logged yet.</div>';
+        }
+
+        document.getElementById('npc-modal').style.display = 'flex';
+    } catch (err) {
+        alert("inspectNPC Exception: " + err.message + "\nStack: " + err.stack);
+    }
+}
+
+function closeNPCModal() {
+    document.getElementById('npc-modal').style.display = 'none';
+}
+
+// ── Suggestions ────────────────────────────────────────────────────────
+function renderSuggestions(actions) {
+    const box = document.getElementById('suggestions');
+    if (!actions || !actions.length) { box.innerHTML = ''; return; }
+    box.innerHTML = actions.map(a =>
+        `<button class="sugg-btn" type="button" onclick="pickSuggestion('${a.replace(/'/g,"\\'")}')">${a}</button>`
+    ).join('');
+}
+function pickSuggestion(text) {
+    document.getElementById('action-input').value = text;
+    document.querySelector('.game-form').dispatchEvent(new Event('submit'));
+}
+
+// ── Turn submission ────────────────────────────────────────────────────
+async function submitAction(e) {
+    e.preventDefault();
+    const inp = document.getElementById('action-input');
+    const text = inp.value.trim();
+    if (!text) return;
+    inp.value = '';
+    inp.disabled = true;
+    inp.placeholder = 'Dungeon Master is writing…';
+
+    const playerName = getPlayerName();
+    const chr = document.getElementById('chronicle');
+
+    // Add player line immediately
+    const playerLine = document.createElement('div');
+    playerLine.className = 'player-prompt';
+    playerLine.innerHTML = `<div class="player-prompt-bubble"><strong>${playerName}</strong>: ${text}</div>`;
+    chr.appendChild(playerLine);
+
+    // Add DM typing
+    const typingEl = document.createElement('div');
+    typingEl.className = 'dm-block'; typingEl.id = 'dm-typing';
+    typingEl.innerHTML = `<div class="dm-icon"><i data-lucide="shield"></i></div>
+        <div style="padding:12px 16px;background:rgba(88,56,178,0.2);border:1px solid rgba(139,92,246,0.2);border-radius:14px;display:flex;gap:5px;align-items:center;">
+            <div class="typing-dot" style="width:7px;height:7px;background:rgba(167,139,250,0.7);border-radius:50%;animation:dotBounce 1.4s infinite ease-in-out both;animation-delay:-0.32s;"></div>
+            <div class="typing-dot" style="width:7px;height:7px;background:rgba(167,139,250,0.7);border-radius:50%;animation:dotBounce 1.4s infinite ease-in-out both;animation-delay:-0.16s;"></div>
+            <div class="typing-dot" style="width:7px;height:7px;background:rgba(167,139,250,0.7);border-radius:50%;animation:dotBounce 1.4s infinite ease-in-out both;"></div>
+        </div>`;
+    chr.appendChild(typingEl);
+    chr.scrollTop = chr.scrollHeight;
+    lucide.createIcons();
+
+    try {
+        const res = await fetch('/api/web_rpg/turn', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ thread_id: currentThread, user_id: userId, user_name: playerName, prompt: text })
+        });
+        const data = await res.json();
+        typingEl.remove(); playerLine.remove();
+
+        if (data.error) { alert('Error: ' + data.error); return; }
+
+        if (data.roll_events && data.roll_events.length > 0) {
+            await showDice(data.roll_events[0]);
+        }
+
+        // Merge session data
+        sessionData.player_stats = data.player_stats;
+        sessionData.world_state  = data.world_state;
+        sessionData.inventory    = data.inventory;
+
+        appendTurn(playerName, text, data.narrative, data.turn_id);
+        updateHUD(data);
+        renderSuggestions(data.suggested_actions);
+        renderAlmanac();
+    } catch(err) {
+        typingEl.remove();
+        appendTurn('System', '', '⚠️ **Connection error** — could not reach the server.', 0);
+    } finally {
+        inp.disabled = false;
+        inp.placeholder = 'What do you do?';
+        inp.focus();
+    }
+}
+
+function getPlayerName() {
+    if (sessionData && sessionData.player_stats) {
+        const s = sessionData.player_stats[userId] || Object.values(sessionData.player_stats)[0];
+        return s?.name || 'Hero';
+    }
+    return 'Hero';
+}
+
+// ── Reroll ─────────────────────────────────────────────────────────────
+async function rerollLast() {
+    if (!confirm('Reroll the last scene? Your previous action will be replayed with a new outcome.')) return;
+    const inp = document.getElementById('action-input');
+    inp.disabled = true; inp.placeholder = 'Rewriting…';
+    try {
+        const res = await fetch('/api/web_rpg/turn', {
+            method: 'POST', headers: {'Content-Type':'application/json'},
+            body: JSON.stringify({ thread_id: currentThread, user_id: userId, user_name: getPlayerName(), prompt: 'Reroll', is_reroll: true })
+        });
+        const data = await res.json();
+        if (data.error) { alert(data.error); return; }
+        if (data.roll_events && data.roll_events.length) await showDice(data.roll_events[0]);
+        sessionData.player_stats = data.player_stats;
+        sessionData.world_state  = data.world_state;
+        sessionData.inventory    = data.inventory;
+        appendTurn(getPlayerName(), '[Reroll]', data.narrative, data.turn_id);
+        updateHUD(data); renderSuggestions(data.suggested_actions); renderAlmanac();
+    } catch(e) { alert('Reroll failed.'); }
+    finally { inp.disabled = false; inp.placeholder = 'What do you do?'; }
+}
+
+// ── Rewind ─────────────────────────────────────────────────────────────
+async function doRewind(turnId) {
+    if (!confirm(`Rewind to Turn ${turnId}? All turns after this will be lost.`)) return;
+    try {
+        const res = await fetch(`/api/web_rpg/rewind?thread_id=${currentThread}&turn_id=${turnId}`, {method:'POST'});
+        const data = await res.json();
+        if (data.status === 'success') resumeCampaign(currentThread);
+        else alert('Rewind failed.');
+    } catch(e) { alert('Rewind failed.'); }
+}
+
+// ── Dice ───────────────────────────────────────────────────────────────
+let diceResolve = null;
+function showDice(roll) {
+    return new Promise(resolve => {
+        diceResolve = resolve;
+        const overlay = document.getElementById('dice-overlay');
+        const svgEl = document.getElementById('dice-svg');
+        const numEl = document.getElementById('dice-number');
+        overlay.classList.add('show');
+        document.getElementById('dice-type').textContent = `${roll.check_type} Check`;
+        document.getElementById('dice-outcome').textContent = 'Rolling…';
+        document.getElementById('dice-outcome').style.color = 'white';
+        document.getElementById('dice-math').textContent = '';
+        numEl.style.display = 'none';
+        svgEl.classList.remove('dice-rolling');
+        void svgEl.offsetWidth;
+        svgEl.classList.add('dice-rolling');
+        setTimeout(() => {
+            numEl.style.display = '';
+            numEl.textContent = roll.roll;
+            const ok = roll.success;
+            document.getElementById('dice-outcome').textContent = ok ? 'SUCCESS!' : 'FAILURE';
+            document.getElementById('dice-outcome').style.color = ok ? 'var(--hp)' : 'var(--danger)';
+            document.getElementById('dice-math').textContent =
+                `${roll.roll} (d20) ${roll.modifier >= 0 ? '+' : '-'} ${Math.abs(roll.modifier)} = ${roll.total} vs DC ${roll.difficulty}`;
+        }, 750);
+    });
+}
+function closeDice() {
+    document.getElementById('dice-overlay').classList.remove('show');
+    if (diceResolve) { diceResolve(); diceResolve = null; }
+}
+
+// ── CSS for typing dots (added to style at runtime) ──
+const dotStyle = document.createElement('style');
+dotStyle.textContent = `@keyframes dotBounce { 0%,80%,100%{transform:scale(0)} 40%{transform:scale(1)} }`;
+document.head.appendChild(dotStyle);
+
+// ── Boot ───────────────────────────────────────────────────────────────
+lucide.createIcons();
+loadConfig();
+loadCampaigns();
+</script>
+</body>
+</html>

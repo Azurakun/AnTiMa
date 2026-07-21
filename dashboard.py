@@ -1,8 +1,9 @@
 # dashboard.py
 from fastapi import FastAPI, WebSocket, Request, HTTPException, Response
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse # <--- Added StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
+from fastapi.encoders import jsonable_encoder
 import uvicorn
 import asyncio
 import json
@@ -11,7 +12,11 @@ import os
 import functools
 import uuid
 import random
+import re
+import traceback
 from datetime import datetime
+from collections import namedtuple
+
 from utils.db import (
     stats_collection, 
     live_activity_collection, 
@@ -23,9 +28,45 @@ from utils.db import (
     web_actions_collection,
     rpg_world_state_collection,
     rpg_vector_memory_collection,
+    ai_personal_memories_collection,
+    ai_global_memories_collection,
+    rpg_inventory_collection,
     db 
 )
-from cogs.rpg_system.config import SCENARIOS, PREMADE_CHARACTERS
+from cogs.rpg_system.config import SCENARIOS, PREMADE_CHARACTERS, RPG_CLASSES
+from cogs.ai_chat.prompts import SYSTEM_PROMPT
+from cogs.ai_chat.memory_handler import load_user_memories, load_global_memories, summarize_and_save_memory
+from cogs.rpg_system.web_engine import WebRPGEngine
+from cogs.rpg_system import prompts, tools
+
+web_chat_sessions_collection = db["web_chat_sessions"]
+WebUserMock = namedtuple("WebUserMock", ["id", "name"])
+web_rpg_engine = WebRPGEngine()
+
+# --- WEB DATA MODELS ---
+
+class WebChatMessageRequest(BaseModel):
+    user_id: str
+    user_name: str
+    message: str
+    image_base64: str | None = None
+    mime_type: str | None = None
+
+class WebRPGCreateRequest(BaseModel):
+    user_id: str
+    user_name: str
+    title: str
+    scenario: str
+    lore: str
+    story_mode: bool
+    character: dict
+
+class WebRPGTurnRequest(BaseModel):
+    thread_id: str
+    user_id: str
+    user_name: str
+    prompt: str
+    is_reroll: bool = False
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -628,15 +669,374 @@ async def submit_rpg_setup(data: RPGSetupData):
         }
         await run_sync_db(lambda: user_personas_collection.insert_one(persona_doc))
     action_doc = {
-        "type": "create_rpg_web", "guild_id": token_doc["guild_id"], "user_id": token_doc["user_id"],
-        "status": "pending", "timestamp": datetime.utcnow(),
+        "type": "create_rpg_web",
+        "status": "pending",
+        "guild_id": token_doc["guild_id"],
+        "user_id": token_doc["user_id"],
+        "created_at": datetime.utcnow(),
         "data": {
-            "title": data.title, "scenario": data.scenario, "lore": data.lore,
-            "story_mode": data.story_mode, "character": data.character
+            "title": data.title,
+            "scenario": data.scenario,
+            "lore": data.lore,
+            "story_mode": data.story_mode,
+            "character": data.character
         }
     }
     await run_sync_db(lambda: web_actions_collection.insert_one(action_doc))
     return JSONResponse({"status": "success", "message": "Adventure queued."})
+
+
+# --- WEB CHATBOT ROUTES ---
+
+@app.get("/chat", response_class=HTMLResponse)
+async def get_chat_page(request: Request):
+    return templates.TemplateResponse(request=request, name="chat.html")
+
+@app.get("/api/chat/history")
+async def get_chat_history(user_id: str):
+    try:
+        uid = int(user_id)
+        session = await run_sync_db(lambda: web_chat_sessions_collection.find_one({"user_id": uid}))
+        if not session:
+            return JSONResponse([])
+        messages = session.get("messages", [])
+        clean_messages = [
+            {"role": m["role"], "content": m["content"], "timestamp": m.get("timestamp"), "gif_url": m.get("gif_url")}
+            for m in messages if m["role"] != "system"
+        ]
+        return JSONResponse(clean_messages)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/chat/clear")
+async def clear_chat(user_id: str):
+    try:
+        uid = int(user_id)
+        await run_sync_db(lambda: web_chat_sessions_collection.delete_one({"user_id": uid}))
+        await run_sync_db(lambda: ai_personal_memories_collection.delete_many({"user_id": uid, "guild_id": 999999}))
+        return JSONResponse({"status": "cleared"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/chat/message")
+async def send_chat_message(req: WebChatMessageRequest):
+    try:
+        uid = int(req.user_id)
+        session = await run_sync_db(lambda: web_chat_sessions_collection.find_one({"user_id": uid}))
+        if not session:
+            session = {
+                "user_id": uid,
+                "user_name": req.user_name,
+                "messages": [],
+                "created_at": datetime.utcnow()
+            }
+            await run_sync_db(lambda: web_chat_sessions_collection.insert_one(session))
+
+        personal_mem = await load_user_memories(uid, 999999, limit=5)
+        global_mem = await load_global_memories(limit=5)
+
+        context_text = ""
+        if personal_mem:
+            context_text += f"\n\n### YOUR MEMORIES OF THE USER:\n{personal_mem}"
+        if global_mem:
+            context_text += f"\n\n### GLOBAL MEMORIES / WORLD FACTS:\n{global_mem}"
+
+        system_content = SYSTEM_PROMPT + context_text
+        messages = [{"role": "system", "content": system_content}]
+
+        history_msgs = session.get("messages", [])[-10:]
+        for m in history_msgs:
+            messages.append({"role": m["role"], "content": m["content"]})
+
+        user_content = [{"type": "text", "text": f"User {req.user_name} says: \"{req.message}\"."}]
+
+        if req.image_base64 and req.mime_type:
+            b64_str = req.image_base64
+            if "," in b64_str:
+                b64_str = b64_str.split(",")[1]
+            user_content.append({
+                "type": "image_url",
+                "image_url": {"url": f"data:{req.mime_type};base64,{b64_str}"}
+            })
+
+        messages.append({"role": "user", "content": user_content})
+
+        current_topic = None
+        words = [w for w in req.message.split() if len(w) > 3 and w.isalpha()]
+        if words:
+            current_topic = " ".join(words[:5])
+
+        from cogs.ai_chat.response_handler import _send_and_handle_tool_loop
+        final_text, updated_messages = await _send_and_handle_tool_loop(
+            messages, message_channel=None, current_topic=current_topic
+        )
+
+        processed_text = re.sub(
+            r"\[MENTION: (.+?)\]",
+            lambda m: m.group(1).strip(),
+            final_text
+        )
+
+        gif_url = None
+        gif_match = re.search(r"\[GIF: (.+?)\]", processed_text)
+        if gif_match:
+            search_term = gif_match.group(1).strip()
+            processed_text = processed_text.replace(gif_match.group(0), "").strip()
+            if random.random() < 0.5:
+                import aiohttp
+                async with aiohttp.ClientSession() as client_session:
+                    from cogs.ai_chat.utils import get_gif_url
+                    gif_url = await get_gif_url(client_session, search_term)
+
+        timestamp = datetime.utcnow().isoformat()
+        await run_sync_db(lambda: web_chat_sessions_collection.update_one(
+            {"user_id": uid},
+            {"$push": {
+                "messages": {
+                    "$each": [
+                        {"role": "user", "content": req.message, "timestamp": timestamp},
+                        {"role": "assistant", "content": processed_text, "timestamp": timestamp, "gif_url": gif_url}
+                    ]
+                }
+            }}
+        ))
+
+        msg_count = len(session.get("messages", [])) + 2
+        if msg_count % 5 == 0:
+            user_mock = WebUserMock(id=uid, name=req.user_name)
+            asyncio.create_task(summarize_and_save_memory(None, user_mock, 999999, updated_messages))
+
+        return JSONResponse({
+            "role": "assistant",
+            "content": processed_text,
+            "gif_url": gif_url,
+            "timestamp": timestamp
+        })
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# --- WEB RPG ROUTES ---
+
+@app.get("/play", response_class=HTMLResponse)
+async def get_rpg_play_page(request: Request):
+    return templates.TemplateResponse(request=request, name="rpg_play.html")
+
+@app.get("/api/web_rpg/campaigns")
+async def get_web_campaigns(user_id: str):
+    try:
+        uid = int(user_id)
+        cursor = await run_sync_db(lambda: list(rpg_sessions_collection.find({"players": uid, "is_web": True}).sort("last_active", -1)))
+        campaigns = []
+        for doc in cursor:
+            campaigns.append({
+                "thread_id": str(doc.get("thread_id")),
+                "title": doc.get("title"),
+                "scenario": doc.get("scenario_type"),
+                "last_active": doc.get("last_active", datetime.utcnow()).strftime("%Y-%m-%d %H:%M"),
+                "is_active": doc.get("active", True),
+                "turn_count": len(doc.get("turn_history", []))
+            })
+        return JSONResponse(campaigns)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/web_rpg/config")
+async def get_rpg_config():
+    try:
+        return JSONResponse({
+            "scenarios": SCENARIOS,
+            "premades": PREMADE_CHARACTERS,
+            "classes": RPG_CLASSES
+        })
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/web_rpg/create")
+async def create_web_campaign(req: WebRPGCreateRequest):
+    try:
+        uid = int(req.user_id)
+        thread_id = random.randint(10**17, 9 * 10**17)
+        c = req.character
+        profile = {
+            "name": c.get("name", req.user_name),
+            "class": c.get("class", "Freelancer"),
+            "hp": 100, "max_hp": 100,
+            "mp": 50, "max_mp": 50,
+            "stats": c.get("stats", {"STR": 10, "DEX": 10, "CON": 10, "INT": 10, "WIS": 10, "CHA": 10}),
+            "skills": ["Custom Action"],
+            "alignment": c.get("alignment", "Neutral Good"),
+            "backstory": c.get("backstory", "An adventurer seeking glory."),
+            "age": c.get("age", "20"),
+            "pronouns": c.get("pronouns", "They/Them"),
+            "appearance": c.get("appearance", "Standard adventurer clothing."),
+            "personality": c.get("personality", "Curious and brave."),
+            "hobbies": c.get("hobbies", "None")
+        }
+        session_data = {
+            "thread_id": thread_id,
+            "guild_id": 999999,
+            "owner_id": uid,
+            "owner_name": req.user_name,
+            "title": req.title,
+            "players": [uid],
+            "player_stats": {str(uid): profile},
+            "scenario_type": req.scenario,
+            "lore": req.lore,
+            "campaign_log": [],
+            "turn_history": [],
+            "created_at": datetime.utcnow(),
+            "last_active": datetime.utcnow(),
+            "active": True,
+            "delete_requested": False,
+            "story_mode": req.story_mode,
+            "total_turns": 0,
+            "is_web": True
+        }
+        await run_sync_db(lambda: rpg_sessions_collection.insert_one(session_data))
+        
+        world_state = {
+            "thread_id": thread_id,
+            "environment": {
+                "time": "08:00",
+                "weather": "Clear sky with mild breeze"
+            },
+            "story_log": [],
+            "quests": {},
+            "npcs": {},
+            "locations": {
+                "starting_point": {
+                    "name": "Starting Area",
+                    "details": "Where the adventure begins.",
+                    "status": "active"
+                }
+            },
+            "events": {}
+        }
+        await run_sync_db(lambda: rpg_world_state_collection.insert_one(world_state))
+        
+        await web_rpg_engine.get_or_create_session(thread_id, session_data, "Start")
+        
+        mechanics = "2. **Story Mode Active:** NO DICE." if req.story_mode else "2. **Standard Mode:** Use `roll_d20` for risks."
+        sys_prompt = prompts.ADVENTURE_START.format(
+            scenario_name=req.scenario,
+            lore=req.lore,
+            mechanics=mechanics
+        )
+        
+        turn_result = await web_rpg_engine.process_web_turn(
+            thread_id=thread_id,
+            prompt=sys_prompt,
+            user_id=uid,
+            user_name="System"
+        )
+        
+        turn_result["thread_id"] = str(thread_id)
+        turn_result["title"] = req.title
+        
+        return JSONResponse(jsonable_encoder(turn_result))
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.get("/api/web_rpg/session/{thread_id}")
+async def get_web_rpg_session(thread_id: str, user_id: str):
+    try:
+        tid = int(thread_id)
+        uid = int(user_id)
+        session = await run_sync_db(lambda: rpg_sessions_collection.find_one({"thread_id": tid}))
+        if not session:
+            return JSONResponse({"error": "Campaign not found."}, status_code=404)
+            
+        world = await run_sync_db(lambda: rpg_world_state_collection.find_one({"thread_id": tid})) or {}
+        inv = await run_sync_db(lambda: rpg_inventory_collection.find_one({"user_id": uid}))
+        
+        clean_turns = []
+        for t in session.get("turn_history", []):
+            clean_turns.append({
+                "turn_id": t.get("turn_id"),
+                "user_name": t.get("user_name"),
+                "input": t.get("input"),
+                "output": t.get("output"),
+                "timestamp": t.get("timestamp").isoformat() if isinstance(t.get("timestamp"), datetime) else t.get("timestamp")
+            })
+            
+        suggested_actions = []
+        if clean_turns:
+            suggested_actions = await web_rpg_engine._generate_suggested_options(clean_turns[-1]["output"])
+        else:
+            suggested_actions = ["Begin the journey", "Check stats", "Observe surroundings"]
+            
+        return JSONResponse(jsonable_encoder({
+            "thread_id": str(tid),
+            "title": session.get("title"),
+            "scenario": session.get("scenario_type"),
+            "lore": session.get("lore"),
+            "active": session.get("active", True),
+            "story_mode": session.get("story_mode", False),
+            "player_stats": session.get("player_stats", {}),
+            "suggested_actions": suggested_actions,
+            "turn_history": clean_turns,
+            "world_state": {
+                "environment": world.get("environment", {}),
+                "quests": list(world.get("quests", {}).values()),
+                "npcs": list(world.get("npcs", {}).values()),
+                "locations": list(world.get("locations", {}).values()),
+                "events": list(world.get("events", {}).values()),
+                "story_log": world.get("story_log", [])
+            },
+            "inventory": inv.get("items", []) if inv else []
+        }))
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/web_rpg/turn")
+async def send_web_rpg_turn(req: WebRPGTurnRequest):
+    try:
+        tid = int(req.thread_id)
+        uid = int(req.user_id)
+        
+        turn_result = await web_rpg_engine.process_web_turn(
+            thread_id=tid,
+            prompt=req.prompt,
+            user_id=uid,
+            user_name=req.user_name,
+            is_reroll=req.is_reroll
+        )
+        
+        await run_sync_db(lambda: rpg_sessions_collection.update_one(
+            {"thread_id": tid},
+            {"$set": {"last_active": datetime.utcnow()}}
+        ))
+        
+        return JSONResponse(jsonable_encoder(turn_result))
+    except Exception as e:
+        traceback.print_exc()
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/web_rpg/rewind")
+async def rewind_web_campaign(thread_id: str, turn_id: int):
+    try:
+        tid = int(thread_id)
+        deleted_turns, rewind_ts = await run_sync_db(web_rpg_engine.memory_manager.trim_history, tid, int(turn_id))
+        
+        if rewind_ts:
+            await web_rpg_engine.memory_manager.purge_memories(tid, rewind_ts, from_turn_id=int(turn_id))
+            
+        return JSONResponse({"status": "success", "turn_id": turn_id})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+@app.post("/api/web_rpg/end")
+async def end_web_campaign(thread_id: str):
+    try:
+        tid = int(thread_id)
+        await run_sync_db(lambda: rpg_sessions_collection.update_one({"thread_id": tid}, {"$set": {"active": False}}))
+        return JSONResponse({"status": "archived"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 # --- CONTROL ROUTES ---
 

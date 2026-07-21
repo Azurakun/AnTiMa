@@ -16,8 +16,9 @@ from .memory import RPGContextManager
 from .engine import RPGEngine
 from .utils import RPGLogger
 from . import prompts, tools
+import os
 
-WEB_DASHBOARD_URL = " https://ray-goniometrical-implausibly.ngrok-free.dev"
+WEB_DASHBOARD_URL = os.environ.get("WEB_DASHBOARD_URL", "http://localhost:8000").strip()
 
 class RPGAdventureCog(commands.Cog):
     def __init__(self, bot: commands.Bot):

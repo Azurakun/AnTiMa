@@ -15,7 +15,7 @@ from utils.ai_client import get_client, MAIN_MODEL, FAST_MODEL, throttled_create
 
 from .config import RPG_CLASSES
 from . import prompts, tools
-from .utils import RPGLogger, StatusManager, sanitize_age
+from .utils import RPGLogger, StatusManager, sanitize_age, parse_narrative_response
 from .ui import RPGGameView, DynamicActionView
 
 # ---------------------------------------------------------------------------
@@ -160,9 +160,18 @@ RPG_MAIN_TOOLS = [
     },
 ]
 
-RPG_SCRIBE_TOOLS = [
-    t for t in RPG_MAIN_TOOLS if t["function"]["name"] in ("update_world_entity", "manage_story_log")
-]
+import copy
+
+RPG_SCRIBE_TOOLS = []
+for t in RPG_MAIN_TOOLS:
+    if t["function"]["name"] in ("update_world_entity", "manage_story_log"):
+        t_copy = copy.deepcopy(t)
+        params = t_copy["function"]["parameters"]
+        if "thread_id" in params.get("properties", {}):
+            del params["properties"]["thread_id"]
+        if "thread_id" in params.get("required", []):
+            params["required"].remove("thread_id")
+        RPG_SCRIBE_TOOLS.append(t_copy)
 
 
 class RPGEngine:
@@ -203,11 +212,11 @@ class RPGEngine:
         # Send the prime to "warm up" the context (the response is acknowledged but discarded)
         try:
             client = get_client()
-            prime_resp = await throttled_create(client.chat.completions.create(
+            prime_resp = await throttled_create(lambda: client.chat.completions.create(
                 model=MAIN_MODEL,
                 messages=messages,
                 tools=RPG_MAIN_TOOLS,
-                tool_choice="none",  # Don't call tools on prime
+                tool_choice="none",
                 max_tokens=50,
             ))
             prime_ack = prime_resp.choices[0].message.content or "Acknowledged."
@@ -332,7 +341,7 @@ class RPGEngine:
                 proposed_actions = []
 
                 while turns < 10:
-                    response = await throttled_create(client.chat.completions.create(
+                    response = await throttled_create(lambda: client.chat.completions.create(
                         model=MAIN_MODEL,
                         messages=messages,
                         tools=RPG_MAIN_TOOLS,
@@ -381,17 +390,30 @@ class RPGEngine:
                 # Fallback if no text generated
                 if not text_content and turns >= 10:
                     await status.set("⚠️ Model Error. Retrying...")
-                    fallback_resp = await throttled_create(client.chat.completions.create(
+                    fallback_msgs = messages + [{"role": "user", "content": "SYSTEM: Tool execution finished. You MUST now provide the narrative description. Do not call any more tools."}]
+                    fallback_resp = await throttled_create(lambda: client.chat.completions.create(
                         model=MAIN_MODEL,
-                        messages=messages + [{"role": "user", "content": "SYSTEM: Tool execution finished. You MUST now provide the narrative description. Do not call any more tools."}],
+                        messages=fallback_msgs,
                     ))
                     text_content = fallback_resp.choices[0].message.content or "**[System]** Narrative generation failed."
 
                 if not text_content:
                     text_content = "**[System]** Narrative generation failed (Empty Response)."
 
+                # Extract narrative and suggested actions from structured XML response
+                text_content, choices_parsed = parse_narrative_response(text_content)
+
                 await status.set("✍️ Finalizing...")
                 await RPGLogger.broadcast(channel.id, "NARRATIVE_GEN", "Generating Final Response", {"length": len(text_content)})
+
+                # Populate proposed actions for buttons mode
+                ui_mode = session_db.get("ui_mode", "buttons") if session_db else "buttons"
+                if ui_mode == "buttons" and user:
+                    if choices_parsed:
+                        proposed_actions = choices_parsed
+                    else:
+                        await status.set("🧠 Generating choices...")
+                        proposed_actions = await self._generate_suggested_options(text_content)
 
                 await status.delete()
 
@@ -406,7 +428,8 @@ class RPGEngine:
                 )
 
                 active_list = session_data.get('active_npcs', [])
-                self.bot.loop.create_task(self._run_scribe(channel.id, text_content, active_list))
+                p_name = user.name if user else "Player"
+                self.bot.loop.create_task(self._run_scribe(channel.id, text_content, p_name, active_list))
 
                 await self.memory_manager.snapshot_world_state(channel.id, current_turn_id)
 
@@ -496,10 +519,15 @@ class RPGEngine:
             if current_chunk:
                 scan_tasks.append(current_chunk)
 
+            player_name = "Player"
+            session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
+            if session_db and session_db.get("player_stats"):
+                player_name = list(session_db["player_stats"].values())[0].get("name", "Player")
+
             total_chunks = len(scan_tasks)
             for i, text_chunk in enumerate(scan_tasks):
                 await status_msg.edit(content=f"🔄 **Syncing...** [3/4] 🌍 Analyzing Segment {i+1}/{total_chunks}...")
-                await self._run_scribe(channel.id, text_chunk)
+                await self._run_scribe(channel.id, text_chunk, player_name)
                 await asyncio.sleep(2)  # Pace API calls
 
             await status_msg.edit(content=f"🔄 **Syncing...** [4/4] ✅ Sync Complete!")
@@ -602,7 +630,7 @@ class RPGEngine:
             msg_ids.append(msg.id)
         return msg_ids
 
-    async def _run_scribe(self, thread_id, text, active_npcs=None):
+    async def _run_scribe(self, thread_id, text, player_name, active_npcs=None):
         try:
             client = get_client()
             world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}) or {}
@@ -611,6 +639,7 @@ class RPGEngine:
             active_str = ", ".join(active_npcs) if active_npcs else "Unknown (Infer from text)"
 
             scribe_prompt = prompts.SCRIBE_ANALYSIS.format(
+                player_name=player_name,
                 narrative_text=text[:10000],
                 known_entities=known_str,
                 active_participants=active_str
@@ -656,6 +685,9 @@ class RPGEngine:
             error_trace = traceback.format_exc()
             print(f"CRITICAL Scribe Exception Details:\n{error_trace}")
             RPGLogger.log(thread_id, "error", f"Scribe Error: {e}")
+
+    async def _generate_suggested_options(self, narrative_text: str) -> list[str]:
+        return await self.memory_manager.generate_suggested_options(narrative_text)
 
     async def create_adventure_thread(self, interaction, lore, players, profiles, scenario_name,
                                        story_mode=False, custom_title=None, manual_guild_id=None, manual_user=None):

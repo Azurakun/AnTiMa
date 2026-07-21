@@ -10,7 +10,7 @@ import asyncio
 import random
 import json
 
-from .memory_handler import summarize_and_save_memory
+from .memory_handler import summarize_and_save_memory, load_user_memories, load_global_memories
 from .utils import (
     _find_member, _safe_get_response_text, get_gif_url,
     perform_web_search, identify_visual_content,
@@ -34,6 +34,10 @@ def _build_history_messages(raw_history: list, bot_user) -> list[dict]:
         label = "" if m.author == bot_user else f"{m.author.display_name}: "
         messages.append({"role": role, "content": f"{label}{m.clean_content}"})
     return messages
+
+
+def _encode_attachment_sync(attachment: discord.Attachment) -> dict | None:
+    pass
 
 
 async def _encode_attachment(attachment: discord.Attachment) -> dict | None:
@@ -81,7 +85,7 @@ async def _send_and_handle_tool_loop(
     loop_count = 0
 
     while loop_count < max_loops:
-        response = await throttled_create(client.chat.completions.create(
+        response = await throttled_create(lambda: client.chat.completions.create(
             model=MAIN_MODEL,
             messages=messages,
             tools=AI_CHAT_TOOLS,
@@ -113,7 +117,7 @@ async def _send_and_handle_tool_loop(
         for tc, result in zip(msg.tool_calls, results):
             messages.append({"role": "tool", "tool_call_id": tc.id, "content": str(result)})
 
-    response = await throttled_create(client.chat.completions.create(model=MAIN_MODEL, messages=messages))
+    response = await throttled_create(lambda: client.chat.completions.create(model=MAIN_MODEL, messages=messages))
     final = response.choices[0].message.content or ""
     messages.append({"role": "assistant", "content": final})
     return final, messages
@@ -145,7 +149,7 @@ async def should_bot_respond_ai_check(cog, bot, summarizer_model_unused, message
 
     try:
         client = get_client()
-        response = await throttled_create(client.chat.completions.create(
+        response = await throttled_create(lambda: client.chat.completions.create(
             model=FAST_MODEL,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=5,
@@ -164,7 +168,18 @@ async def handle_single_user_response(cog, message, prompt, author):
             history_msgs = _build_history_messages(raw_history, cog.bot.user)
 
             from .prompts import SYSTEM_PROMPT
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history_msgs
+            
+            # Retrieve hybrid memory context
+            user_mems = await load_user_memories(author.id, message.guild.id, query_text=prompt)
+            global_mems = await load_global_memories()
+            
+            system_prompt = SYSTEM_PROMPT
+            if user_mems:
+                system_prompt += f"\n\n[User Profile & Context Memories]:\n{user_mems}"
+            if global_mems:
+                system_prompt += f"\n\n[Global Server Memories]:\n{global_mems}"
+
+            messages = [{"role": "system", "content": system_prompt}] + history_msgs
 
             user_content = [{"type": "text", "text": f"User {author.display_name} says: \"{prompt}\"."}]
             if message.attachments:
@@ -220,7 +235,7 @@ async def handle_single_user_response(cog, message, prompt, author):
             cog.memory_counters[memory_key] = cog.memory_counters.get(memory_key, 0) + 1
             if cog.memory_counters[memory_key] % 5 == 0:
                 cog.bot.loop.create_task(
-                    summarize_and_save_memory(None, author, message.guild.id, updated_messages)
+                    summarize_and_save_memory(None, author, message.guild.id, updated_messages, channel_id=message.channel.id)
                 )
 
     except Exception as e:
@@ -251,7 +266,19 @@ async def process_message_batch(cog, channel_id):
             history_msgs = _build_history_messages(raw_history, cog.bot.user)
 
             from .prompts import SYSTEM_PROMPT
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history_msgs
+            
+            # Retrieve hybrid memory context for primary author
+            batch_query = "\n".join([m.clean_content for m in batch])
+            user_mems = await load_user_memories(unique_authors[0].id, last_message.guild.id, query_text=batch_query)
+            global_mems = await load_global_memories()
+            
+            system_prompt = SYSTEM_PROMPT
+            if user_mems:
+                system_prompt += f"\n\n[User Profile & Context Memories]:\n{user_mems}"
+            if global_mems:
+                system_prompt += f"\n\n[Global Server Memories]:\n{global_mems}"
+
+            messages = [{"role": "system", "content": system_prompt}] + history_msgs
 
             messages_str_parts = []
             image_parts = []
@@ -303,7 +330,7 @@ async def process_message_batch(cog, channel_id):
 
             for author in unique_authors:
                 cog.bot.loop.create_task(
-                    summarize_and_save_memory(None, author, last_message.guild.id, updated_messages)
+                    summarize_and_save_memory(None, author, last_message.guild.id, updated_messages, channel_id=channel_id)
                 )
 
     except Exception as e:

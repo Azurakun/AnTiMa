@@ -28,8 +28,8 @@ _PROVIDERS = {
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
         "env_key": "GEMINI_API_KEY",
-        "main_model": "gemini-2.0-flash",
-        "fast_model": "gemini-2.0-flash-lite",
+        "main_model": "gemini-2.5-flash",
+        "fast_model": "gemini-2.5-flash-lite",
         "max_retries": 0,
         "rate_limit": (8, 60.0),  # 8 requests per 60 seconds (safety margin below 12)
     },
@@ -104,27 +104,50 @@ class _GlobalCooldown:
         self._lock = asyncio.Lock()
 
     async def wait(self):
+        # Adaptive cooldown based on provider type to prevent sluggishness
+        provider = AI_PROVIDER.lower() if AI_PROVIDER else "gemini"
+        if provider in ("ollama", "groq", "deepseek"):
+            interval = 0.1  # Fast/local: no cooldown needed
+        else:
+            interval = 1.5  # Gemini/OpenRouter free tiers: safety margin to avoid burst errors
+
         async with self._lock:
             now = time.monotonic()
             elapsed = now - self._last_call
-            if elapsed < self._min_interval:
-                await asyncio.sleep(self._min_interval - elapsed)
+            if elapsed < interval:
+                await asyncio.sleep(interval - elapsed)
             self._last_call = time.monotonic()
 
 
-_global_cooldown = _GlobalCooldown(min_interval=5.0)
+_global_cooldown = _GlobalCooldown()
 
 
-async def throttled_create(client_create_coro, max_retries: int = 2):
+async def throttled_create(create_fn, max_retries: int = 2):
     """
     Wrap any client.chat.completions.create() call with the rate limiter.
-    Applies global cooldown + retries with exponential backoff on 429 errors.
+
+    Pass a CALLABLE (e.g. a lambda or functools.partial) that returns the
+    coroutine when called, so each retry gets a fresh coroutine object.
+
+    Example:
+        await throttled_create(lambda: client.chat.completions.create(...))
+
+    For backward-compat, if a pre-built coroutine is passed instead of a
+    callable, it is awaited once with no retry.
     """
+    import inspect
+    # Legacy path: caller already evaluated the coroutine — no retry possible
+    if inspect.iscoroutine(create_fn):
+        await _rate_limiter.acquire()
+        await _global_cooldown.wait()
+        return await create_fn
+
+    # Preferred path: callable factory — fresh coroutine per attempt
     await _rate_limiter.acquire()
     await _global_cooldown.wait()
     for attempt in range(max_retries + 1):
         try:
-            return await client_create_coro
+            return await create_fn()
         except Exception as e:
             error_str = str(e)
             if "429" in error_str and attempt < max_retries:
@@ -135,6 +158,7 @@ async def throttled_create(client_create_coro, max_retries: int = 2):
                 await _global_cooldown.wait()
                 continue
             raise
+
 
 
 # ---------------------------------------------------------------------------
@@ -225,3 +249,71 @@ def get_client() -> AsyncOpenAI:
         )
         logger.info(f"AI Client created: {AI_PROVIDER.upper()} | Main: {MAIN_MODEL} | Fast: {FAST_MODEL}")
     return _client
+
+
+# ---------------------------------------------------------------------------
+# Embedding Helper
+# ---------------------------------------------------------------------------
+FALLBACK_EMBED_DIM = 256
+
+def fallback_embed_text_sync(text: str) -> list[float]:
+    """Pure-Python n-gram hash embedding fallback."""
+    import hashlib, math
+    text = text.lower()[:2000]
+    vec = [0.0] * FALLBACK_EMBED_DIM
+    for i in range(len(text) - 2):
+        gram = text[i:i+3]
+        h = int(hashlib.md5(gram.encode()).hexdigest(), 16) % FALLBACK_EMBED_DIM
+        vec[h] += 1.0
+    magnitude = math.sqrt(sum(x * x for x in vec))
+    if magnitude > 0:
+        vec = [x / magnitude for x in vec]
+    return vec
+
+
+async def get_embedding(text: str) -> list[float]:
+    """
+    Retrieves vector embedding for given text using Gemini / OpenAI API,
+    falling back to local n-gram hash vector if API calls fail or offline.
+    """
+    if not text or not text.strip():
+        return [0.0] * FALLBACK_EMBED_DIM
+
+    try:
+        gemini_key = os.environ.get("GEMINI_API_KEY")
+        if gemini_key and not gemini_key.startswith("YOUR_"):
+            embed_client = AsyncOpenAI(
+                api_key=gemini_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                max_retries=1
+            )
+            response = await embed_client.embeddings.create(
+                model="text-embedding-004",
+                input=text[:2000]
+            )
+            if response and response.data:
+                return response.data[0].embedding
+
+        openai_key = os.environ.get("OPENAI_API_KEY")
+        if openai_key and not openai_key.startswith("YOUR_"):
+            embed_client = AsyncOpenAI(api_key=openai_key, max_retries=1)
+            response = await embed_client.embeddings.create(
+                model="text-embedding-3-small",
+                input=text[:2000]
+            )
+            if response and response.data:
+                return response.data[0].embedding
+
+        client = get_client()
+        response = await client.embeddings.create(
+            model="text-embedding-004",
+            input=text[:2000]
+        )
+        if response and response.data:
+            return response.data[0].embedding
+
+    except Exception as e:
+        logger.debug(f"[Embedding Fallback] {e}")
+
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, fallback_embed_text_sync, text)

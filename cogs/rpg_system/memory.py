@@ -46,6 +46,8 @@ class RPGContextManager:
         self.HISTORY_TOKEN_BUDGET = 2500
 
     def _cosine_similarity(self, v1, v2):
+        if not v1 or not v2 or len(v1) != len(v2):
+            return 0.0
         dot_product = sum(a * b for a, b in zip(v1, v2))
         magnitude1 = math.sqrt(sum(a * a for a in v1))
         magnitude2 = math.sqrt(sum(b * b for b in v2))
@@ -54,13 +56,15 @@ class RPGContextManager:
         return dot_product / (magnitude1 * magnitude2)
 
     async def _get_embedding(self, text: str) -> list[float] | None:
-        """Gets embedding via local sentence-transformers (run in thread pool)."""
+        """Gets semantic embedding via utils.ai_client (with fallback to local n-gram)."""
         try:
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _embed_text_sync, text)
+            from utils.ai_client import get_embedding
+            return await get_embedding(text)
         except Exception as e:
             print(f"[RPG Embed Error] {e}")
-            return None
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, _embed_text_sync, text)
+
 
     async def store_memory(self, thread_id, text, metadata=None):
         vector = await self._get_embedding(text)
@@ -203,15 +207,68 @@ class RPGContextManager:
             for turn in to_archive:
                 archive_text += f"[{turn['user_name']}]: {turn['input']}\n[DM]: {turn['output']}\n"
 
+            # Dynamic Chronological Summarization to prevent character-trigram saturation
+            summary = archive_text
+            try:
+                from utils.ai_client import get_client, FAST_MODEL, throttled_create
+                client = get_client()
+                summary_prompt = (
+                    "Summarize the following chronological RPG turn history into a single, cohesive, highly descriptive paragraph.\n"
+                    "Focus on the main player character's actions, locations visited, quests advanced, and key NPCs encountered.\n"
+                    "Write it as a seamless narrative chronicle. Return ONLY the summary, no comments or chat filler.\n\n"
+                    f"{archive_text}"
+                )
+                resp = await throttled_create(lambda: client.chat.completions.create(
+                    model=FAST_MODEL,
+                    messages=[{"role": "user", "content": summary_prompt}],
+                    max_tokens=250,
+                ))
+                summary_res = (resp.choices[0].message.content or "").strip()
+                if summary_res:
+                    summary = f"[Chronicle Summary (Turns {to_archive[0].get('turn_id', 1)}-{max_turn})]: {summary_res}"
+            except Exception as e:
+                print(f"[Archive Memory Summarization Error] {e}. Falling back to raw text.")
+
             await self.store_memory(
                 thread_id,
-                archive_text,
+                summary,
                 metadata={"type": "archived_history", "max_turn_id": max_turn}
             )
             rpg_sessions_collection.update_one(
                 {"thread_id": int(thread_id)},
                 {"$set": {"turn_history": remaining}}
             )
+
+    async def generate_suggested_options(self, narrative_text: str) -> list[str]:
+        try:
+            from utils.ai_client import get_client, FAST_MODEL, throttled_create
+            import json
+            prompt = (
+                "Based on the following RPG story scene, suggest 3 or 4 short, contextual, action-oriented choices the player can make next.\n"
+                "Keep choices concise and starting with a verb (e.g., 'Examine the chest', 'Talk to the merchant', 'Draw your sword').\n"
+                "Format your output as a raw JSON list of strings, e.g. [\"Action 1\", \"Action 2\", \"Action 3\"]. Return ONLY the JSON array, no markdown formatting, backticks, or comments."
+            )
+            client = get_client()
+            sugg_msgs = [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": narrative_text}
+            ]
+            resp = await throttled_create(lambda: client.chat.completions.create(
+                model=FAST_MODEL,
+                messages=sugg_msgs,
+                max_tokens=150,
+            ))
+            content = (resp.choices[0].message.content or "").strip()
+            
+            if content.startswith("```"):
+                content = content.split("```")[1]
+                if content.startswith("json"):
+                    content = content[4:]
+            
+            return json.loads(content.strip())
+        except Exception as e:
+            print(f"[RPG suggested actions error] {e}")
+            return ["Explore the surroundings", "Inspect your inventory", "Look for danger"]
 
     def _format_player_profiles(self, session_data):
         profiles = session_data.get("player_stats", {})

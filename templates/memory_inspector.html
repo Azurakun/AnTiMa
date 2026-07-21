@@ -12,11 +12,12 @@
                 extend: { 
                     colors: { 
                         discord: '#5865F2', 
-                        darkbg: '#202225', 
-                        card: '#2f3136', 
-                        hover: '#36393f', 
-                        sidebar: '#18191c',
-                        terminal: '#0c0c0c'
+                        darkbg: '#05030a', 
+                        card: '#0f0b1c', 
+                        hover: '#170f2b', 
+                        sidebar: '#07040d',
+                        terminal: '#030206',
+                        accent: '#a78bfa'
                     },
                     fontFamily: {
                         mono: ['"Fira Code"', '"Courier New"', 'Courier', 'monospace']
@@ -28,9 +29,9 @@
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;700&display=swap" rel="stylesheet">
     <style>
         ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #1a1b1e; }
-        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        ::-webkit-scrollbar-track { background: #05030a; }
+        ::-webkit-scrollbar-thumb { background: #1a103c; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #8b5cf6; }
         .fade-in { animation: fadeIn 0.2s ease-in-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
         .blink { animation: blinker 1s step-end infinite; }
@@ -42,6 +43,14 @@
         .thought-bubble { border-left: 3px solid #6366f1; background: rgba(99, 102, 241, 0.05); }
         .tool-use { border-left: 3px solid #f59e0b; background: rgba(245, 158, 11, 0.05); }
         .system-alert { border-left: 3px solid #ef4444; background: rgba(239, 68, 68, 0.05); }
+        
+        /* Unified Theme Borders Overrides */
+        .bg-card, nav, aside, hr {
+            border-color: rgba(139, 92, 246, 0.15) !important;
+        }
+        .bg-card {
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+        }
     </style>
 </head>
 <body class="bg-darkbg text-gray-100 font-sans h-screen flex flex-col overflow-hidden selection:bg-discord selection:text-white">

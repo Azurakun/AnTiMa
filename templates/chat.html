@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AnTiMa · Chat</title>
+    <meta name="description" content="Chat directly with AnTiMa, the sentient AI companion — powered by RAG memory and Gemini.">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* ── Design Tokens ── */
+        :root {
+            --bg: #080610;
+            --surface: rgba(16, 12, 32, 0.85);
+            --surface-2: rgba(22, 16, 44, 0.6);
+            --border: rgba(139, 92, 246, 0.18);
+            --border-hover: rgba(139, 92, 246, 0.4);
+            --accent: #8b5cf6;
+            --accent-dark: #6d28d9;
+            --accent-glow: rgba(139, 92, 246, 0.25);
+            --success: #10b981;
+            --danger: #ef4444;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --text-dim: #4b5563;
+            --bubble-bot: rgba(88, 56, 178, 0.35);
+            --bubble-user: rgba(30, 25, 55, 0.7);
+            --sidebar-w: 300px;
+            --radius: 14px;
+            --radius-sm: 8px;
+        }
+
+        /* ── Reset / Base ── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body { height: 100%; overflow: hidden; }
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: radial-gradient(ellipse at 30% 20%, #1a0f3a 0%, #04020e 70%);
+            color: var(--text);
+            display: flex;
+            align-items: stretch;
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #3b2e63; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+        /* ── LAYOUT ── */
+        #app {
+            display: flex;
+            width: 100%;
+            height: 100%;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* ── SIDEBAR ── */
+        #sidebar {
+            width: var(--sidebar-w);
+            min-width: var(--sidebar-w);
+            height: 100%;
+            background: rgba(6, 4, 16, 0.95);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0;
+            transition: transform 0.28s cubic-bezier(0.4,0,0.2,1);
+            z-index: 50;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+        }
+        .brand-icon {
+            width: 36px; height: 36px;
+            background: linear-gradient(135deg, var(--accent), #ec4899);
+            border-radius: 10px;
+            display: flex; align-items: center; justify-content: center;
+            flex-shrink: 0;
+            box-shadow: 0 0 16px rgba(139,92,246,0.3);
+        }
+        .brand-icon svg { width: 18px; height: 18px; color: white; }
+        .brand-text h1 { font-size: 15px; font-weight: 700; color: white; }
+        .brand-text p { font-size: 10px; font-weight: 600; color: var(--accent); text-transform: uppercase; letter-spacing: 0.08em; }
+
+        .sidebar-body {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            overflow-y: auto;
+        }
+
+        .section-label {
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+        }
+
+        .profile-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .avatar-wrap {
+            position: relative;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .avatar-wrap img {
+            width: 52px; height: 52px;
+            border-radius: 50%;
+            border: 2px solid var(--border);
+            object-fit: cover;
+            transition: opacity 0.2s;
+        }
+        .avatar-wrap:hover img { opacity: 0.7; }
+        .avatar-overlay {
+            position: absolute; inset: 0;
+            background: rgba(0,0,0,0.5);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            opacity: 0; transition: opacity 0.2s;
+        }
+        .avatar-overlay svg { width: 16px; height: 16px; color: white; }
+        .avatar-wrap:hover .avatar-overlay { opacity: 1; }
+
+        .nickname-input {
+            flex: 1;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            font-size: 13px;
+            color: var(--text);
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+        .nickname-input:focus { border-color: var(--accent); }
+
+        .info-card {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 14px;
+        }
+        .info-card-title {
+            display: flex; align-items: center; gap: 6px;
+            font-size: 12px; font-weight: 600; color: var(--accent);
+            margin-bottom: 8px;
+        }
+        .info-card-title svg { width: 14px; height: 14px; }
+        .info-card p { font-size: 11px; color: var(--text-muted); line-height: 1.6; }
+        .info-meta {
+            margin-top: 10px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            background: rgba(139,92,246,0.08);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .info-meta-row { display: flex; justify-content: space-between; color: var(--text-muted); }
+        .info-meta-row span:last-child { color: var(--text); }
+
+        .danger-label {
+            font-size: 10px; font-weight: 700; text-transform: uppercase;
+            letter-spacing: 0.1em; color: var(--danger); margin-bottom: 10px;
+        }
+        .btn-danger {
+            width: 100%;
+            background: rgba(239,68,68,0.08);
+            border: 1px solid rgba(239,68,68,0.25);
+            border-radius: var(--radius-sm);
+            color: var(--danger);
+            font-family: inherit;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 10px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 6px;
+            transition: background 0.2s;
+        }
+        .btn-danger:hover { background: rgba(239,68,68,0.15); }
+        .btn-danger svg { width: 13px; height: 13px; }
+
+        .sidebar-footer {
+            padding: 14px 20px;
+            border-top: 1px solid var(--border);
+            font-size: 11px;
+            color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
+            text-align: center;
+        }
+
+        /* ── MAIN CHAT PANEL ── */
+        #chat-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+
+        /* ── TOPBAR ── */
+        #topbar {
+            height: 56px;
+            padding: 0 20px;
+            border-bottom: 1px solid var(--border);
+            background: rgba(8, 6, 18, 0.8);
+            backdrop-filter: blur(20px);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 10px; }
+        .menu-btn {
+            display: none;
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 6px;
+            transition: color 0.2s;
+        }
+        .menu-btn:hover { color: var(--text); }
+        .menu-btn svg { width: 18px; height: 18px; display: block; }
+        .status-dot {
+            width: 9px; height: 9px; border-radius: 50%;
+            background: var(--success);
+            box-shadow: 0 0 8px var(--success);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .topbar-title { font-weight: 700; font-size: 15px; color: white; }
+        .topbar-badge {
+            font-size: 10px;
+            background: rgba(139,92,246,0.12);
+            border: 1px solid rgba(139,92,246,0.3);
+            color: var(--accent);
+            padding: 2px 10px;
+            border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* ── MESSAGES ── */
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .msg-row {
+            display: flex;
+            align-items: flex-end;
+            gap: 10px;
+            animation: fadeUp 0.25s ease forwards;
+        }
+        .msg-row.user { flex-direction: row-reverse; }
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(10px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+
+        .msg-avatar {
+            width: 34px; height: 34px; border-radius: 10px;
+            object-fit: cover; flex-shrink: 0;
+            border: 1px solid var(--border);
+        }
+        .msg-bubble {
+            max-width: min(520px, 78%);
+            padding: 12px 16px;
+            border-radius: 16px;
+            font-size: 13.5px;
+            line-height: 1.65;
+        }
+        .msg-bubble.bot {
+            background: var(--bubble-bot);
+            border: 1px solid rgba(139,92,246,0.25);
+            border-bottom-left-radius: 4px;
+            color: var(--text);
+        }
+        .msg-bubble.user {
+            background: var(--bubble-user);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-bottom-right-radius: 4px;
+            color: #cbd5e1;
+        }
+        .msg-time {
+            font-size: 10px;
+            color: var(--text-dim);
+            text-align: right;
+            margin-top: 6px;
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .msg-bubble.user .msg-time { text-align: left; }
+        .msg-gif { margin-top: 10px; border-radius: 10px; max-width: 220px; border: 1px solid var(--border); }
+
+        /* Markdown in bubbles */
+        .msg-bubble p { margin-bottom: 8px; }
+        .msg-bubble p:last-child { margin-bottom: 0; }
+        .msg-bubble strong { color: white; }
+        .msg-bubble code {
+            background: rgba(0,0,0,0.4);
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+        }
+        .msg-bubble pre {
+            background: rgba(0,0,0,0.45);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            overflow-x: auto;
+            margin: 8px 0;
+        }
+        .msg-bubble pre code { background: none; padding: 0; }
+        .msg-bubble a { color: var(--accent); }
+
+        /* Typing indicator bubble */
+        .typing-bubble {
+            display: flex; align-items: center; gap: 5px;
+            padding: 12px 16px;
+            background: var(--bubble-bot);
+            border: 1px solid rgba(139,92,246,0.25);
+            border-radius: 16px;
+            border-bottom-left-radius: 4px;
+            width: fit-content;
+        }
+        .typing-dot {
+            width: 7px; height: 7px;
+            background: rgba(139,92,246,0.7);
+            border-radius: 50%;
+            animation: dotBounce 1.4s infinite ease-in-out both;
+        }
+        .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+        .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes dotBounce { 0%,80%,100% { transform: scale(0); } 40% { transform: scale(1); } }
+
+        /* System notice */
+        .system-notice {
+            display: flex; justify-content: center;
+        }
+        .system-notice-inner {
+            font-size: 11px;
+            background: rgba(139,92,246,0.07);
+            border: 1px solid var(--border);
+            color: #a78bfa;
+            padding: 8px 18px;
+            border-radius: 20px;
+            text-align: center;
+            max-width: 440px;
+            line-height: 1.5;
+        }
+
+        /* ── ATTACHMENT PREVIEW ── */
+        #attachment-bar {
+            display: none;
+            padding: 10px 20px;
+            border-top: 1px solid var(--border);
+            background: rgba(139,92,246,0.04);
+            align-items: center;
+            gap: 12px;
+        }
+        #attachment-bar.visible { display: flex; }
+        .attach-thumb {
+            width: 48px; height: 48px;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 1px solid var(--border);
+        }
+        .attach-meta { flex: 1; min-width: 0; }
+        .attach-name { font-size: 12px; font-weight: 600; color: white; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .attach-size { font-size: 11px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+        .attach-remove {
+            background: var(--danger);
+            border: none;
+            color: white;
+            border-radius: 50%;
+            width: 22px; height: 22px;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+        .attach-remove svg { width: 11px; height: 11px; }
+
+        /* ── INPUT BAR ── */
+        #input-bar {
+            padding: 14px 20px;
+            border-top: 1px solid var(--border);
+            background: rgba(8, 6, 18, 0.7);
+            backdrop-filter: blur(20px);
+            flex-shrink: 0;
+        }
+        .input-form {
+            display: flex;
+            align-items: flex-end;
+            gap: 10px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .input-wrap {
+            flex: 1;
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            background: rgba(16, 12, 32, 0.6);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 6px 10px;
+            transition: border-color 0.2s;
+        }
+        .input-wrap:focus-within { border-color: var(--accent); }
+        .img-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 8px;
+            flex-shrink: 0;
+            transition: color 0.2s, background 0.2s;
+        }
+        .img-btn:hover { color: var(--accent); background: rgba(139,92,246,0.1); }
+        .img-btn svg { width: 18px; height: 18px; display: block; }
+        #msg-input {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 13.5px;
+            line-height: 1.5;
+            resize: none;
+            outline: none;
+            padding: 6px 8px;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        #msg-input::placeholder { color: var(--text-dim); }
+        .send-btn {
+            width: 42px; height: 42px;
+            background: var(--accent);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer;
+            flex-shrink: 0;
+            box-shadow: 0 4px 14px rgba(139,92,246,0.3);
+            transition: background 0.2s, transform 0.1s;
+        }
+        .send-btn:hover { background: var(--accent-dark); transform: scale(1.05); }
+        .send-btn:active { transform: scale(0.95); }
+        .send-btn svg { width: 16px; height: 16px; }
+
+        /* ── MOBILE OVERLAY ── */
+        #overlay {
+            display: none;
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.65);
+            z-index: 45;
+        }
+        #overlay.visible { display: block; }
+
+        /* ── RESPONSIVE ── */
+        @media (max-width: 768px) {
+            #sidebar {
+                position: fixed;
+                top: 0; left: 0; bottom: 0;
+                transform: translateX(-100%);
+                box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+            }
+            #sidebar.open { transform: translateX(0); }
+            .menu-btn { display: flex; }
+            .topbar-badge { display: none; }
+            #messages { padding: 16px 12px; }
+            #input-bar { padding: 10px 12px; }
+            .msg-bubble { max-width: 88%; font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+
+    <!-- ══ SIDEBAR ══ -->
+    <aside id="sidebar">
+        <div class="sidebar-header">
+            <a href="/" class="brand">
+                <div class="brand-icon"><i data-lucide="bot"></i></div>
+                <div class="brand-text">
+                    <h1>AnTiMa</h1>
+                    <p>Sentient Entity</p>
+                </div>
+            </a>
+            <a href="/" style="color:var(--text-muted); display:flex; padding:6px; border-radius:8px; border:1px solid var(--border); transition:color .2s; text-decoration:none;" onmouseenter="this.style.color='white'" onmouseleave="this.style.color='var(--text-muted)'">
+                <i data-lucide="home" style="width:16px;height:16px;"></i>
+            </a>
+        </div>
+
+        <div class="sidebar-body">
+            <!-- Profile -->
+            <div>
+                <div class="section-label">Your Profile</div>
+                <div class="profile-row">
+                    <div class="avatar-wrap" onclick="document.getElementById('avatar-file').click()">
+                        <img id="user-avatar" src="https://api.dicebear.com/7.x/pixel-art/svg?seed=Vant" alt="Avatar">
+                        <div class="avatar-overlay"><i data-lucide="camera"></i></div>
+                        <input type="file" id="avatar-file" accept="image/*" class="" style="display:none" onchange="uploadAvatar(event)">
+                    </div>
+                    <input type="text" id="nickname" class="nickname-input" value="Adventurer" placeholder="Your name" onchange="saveNickname()">
+                </div>
+            </div>
+
+            <!-- Bot Info -->
+            <div class="info-card">
+                <div class="info-card-title"><i data-lucide="sparkles"></i> AnTiMa Matrix</div>
+                <p>sentient digital companion — chats like a discord poweruser, opinionated, splits thoughts, holds per-user memories.</p>
+                <div class="info-meta">
+                    <div class="info-meta-row"><span>Provider</span><span>Gemini</span></div>
+                    <div class="info-meta-row"><span>Memory</span><span>RAG Active</span></div>
+                    <div class="info-meta-row"><span>Tools</span><span>Search · Vision</span></div>
+                </div>
+            </div>
+
+            <!-- Danger -->
+            <div>
+                <div class="danger-label">Memory Control</div>
+                <button class="btn-danger" onclick="clearMemories()">
+                    <i data-lucide="trash-2"></i>
+                    Wipe Chat &amp; Memories
+                </button>
+            </div>
+        </div>
+
+        <div class="sidebar-footer">
+            Session · <span id="uid-display">—</span>
+        </div>
+    </aside>
+
+    <!-- ══ MAIN ══ -->
+    <div id="chat-main">
+
+        <!-- Topbar -->
+        <header id="topbar">
+            <div class="topbar-left">
+                <button class="menu-btn" id="menu-btn" onclick="openSidebar()">
+                    <i data-lucide="menu"></i>
+                </button>
+                <div class="status-dot"></div>
+                <span class="topbar-title">AnTiMa Chat</span>
+            </div>
+            <div class="topbar-badge">⬡ WebGuild Room</div>
+        </header>
+
+        <!-- Messages -->
+        <div id="messages">
+            <div class="system-notice">
+                <div class="system-notice-inner">
+                    ✦ <strong>Channel Open</strong> — Talk to AnTiMa. Send text or attach an image. She remembers you.
+                </div>
+            </div>
+        </div>
+
+        <!-- Attachment bar -->
+        <div id="attachment-bar">
+            <div style="position:relative">
+                <img id="attach-preview" class="attach-thumb" src="" alt="">
+                <button class="attach-remove" onclick="clearAttachment()"><i data-lucide="x"></i></button>
+            </div>
+            <div class="attach-meta">
+                <div class="attach-name" id="attach-name">file.png</div>
+                <div class="attach-size" id="attach-size">0 KB</div>
+            </div>
+        </div>
+
+        <!-- Input -->
+        <div id="input-bar">
+            <form class="input-form" onsubmit="sendMessage(event)">
+                <div class="input-wrap">
+                    <button type="button" class="img-btn" onclick="document.getElementById('img-file').click()">
+                        <i data-lucide="image-plus"></i>
+                    </button>
+                    <input type="file" id="img-file" accept="image/*" style="display:none" onchange="previewAttachment(event)">
+                    <textarea id="msg-input" rows="1" placeholder="Type a message…" onkeydown="handleKey(event)" oninput="autoGrow()"></textarea>
+                </div>
+                <button type="submit" class="send-btn"><i data-lucide="send-horizontal"></i></button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Mobile overlay -->
+<div id="overlay" onclick="closeSidebar()"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────
+let userId = localStorage.getItem('atm_uid');
+if (!userId) {
+    userId = Math.floor(1e14 + Math.random() * 9e14).toString();
+    localStorage.setItem('atm_uid', userId);
+}
+let nickname  = localStorage.getItem('atm_nick') || 'Adventurer';
+let avatarSrc = localStorage.getItem('atm_avatar') || 'https://api.dicebear.com/7.x/pixel-art/svg?seed=Vant';
+let attachB64 = null, attachMime = null;
+
+// Apply stored
+document.getElementById('uid-display').textContent = userId.slice(-6);
+document.getElementById('nickname').value = nickname;
+document.getElementById('user-avatar').src = avatarSrc;
+
+// ── Profile ────────────────────────────────────────────────────────────
+function saveNickname() {
+    nickname = document.getElementById('nickname').value.trim() || 'Adventurer';
+    localStorage.setItem('atm_nick', nickname);
+}
+function uploadAvatar(e) {
+    const file = e.target.files[0]; if (!file) return;
+    const r = new FileReader();
+    r.onload = ev => {
+        avatarSrc = ev.target.result;
+        localStorage.setItem('atm_avatar', avatarSrc);
+        document.getElementById('user-avatar').src = avatarSrc;
+        document.querySelectorAll('.user-msg-avatar').forEach(i => i.src = avatarSrc);
+    };
+    r.readAsDataURL(file);
+}
+
+// ── Sidebar ────────────────────────────────────────────────────────────
+function openSidebar()  { document.getElementById('sidebar').classList.add('open'); document.getElementById('overlay').classList.add('visible'); }
+function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); document.getElementById('overlay').classList.remove('visible'); }
+
+// ── Attachment ─────────────────────────────────────────────────────────
+function previewAttachment(e) {
+    const file = e.target.files[0]; if (!file) return;
+    attachMime = file.type;
+    const r = new FileReader();
+    r.onload = ev => {
+        attachB64 = ev.target.result;
+        document.getElementById('attach-preview').src = attachB64;
+        document.getElementById('attach-name').textContent = file.name;
+        document.getElementById('attach-size').textContent = (file.size/1024).toFixed(1) + ' KB';
+        document.getElementById('attachment-bar').classList.add('visible');
+    };
+    r.readAsDataURL(file);
+}
+function clearAttachment() {
+    attachB64 = null; attachMime = null;
+    document.getElementById('img-file').value = '';
+    document.getElementById('attachment-bar').classList.remove('visible');
+}
+
+// ── Textarea ───────────────────────────────────────────────────────────
+function autoGrow() {
+    const t = document.getElementById('msg-input');
+    t.style.height = 'auto';
+    t.style.height = Math.min(t.scrollHeight, 120) + 'px';
+}
+function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); document.querySelector('.input-form').dispatchEvent(new Event('submit')); }
+}
+
+// ── Messages ───────────────────────────────────────────────────────────
+const feed = document.getElementById('messages');
+const BOT_AVATAR = 'https://api.dicebear.com/7.x/identicon/svg?seed=AnTiMa';
+
+function scrollBottom() { feed.scrollTop = feed.scrollHeight; }
+
+function addMessage(role, html, gifUrl, ts) {
+    const isBot = role !== 'user';
+    const time  = ts ? new Date(ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    const row   = document.createElement('div');
+    row.className = 'msg-row' + (isBot ? '' : ' user');
+
+    const gifHtml = gifUrl ? `<img class="msg-gif" src="${gifUrl}" alt="gif">` : '';
+
+    row.innerHTML = `
+        <img class="msg-avatar ${isBot ? '' : 'user-msg-avatar'}" src="${isBot ? BOT_AVATAR : avatarSrc}" alt="avatar">
+        <div class="msg-bubble ${isBot ? 'bot' : 'user'}">
+            ${html}
+            ${gifHtml}
+            <div class="msg-time">${time}</div>
+        </div>`;
+    feed.appendChild(row);
+    scrollBottom();
+    lucide.createIcons();
+    return row;
+}
+
+function addTyping() {
+    const row = document.createElement('div');
+    row.className = 'msg-row'; row.id = 'typing-row';
+    row.innerHTML = `
+        <img class="msg-avatar" src="${BOT_AVATAR}" alt="avatar">
+        <div class="typing-bubble">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+        </div>`;
+    feed.appendChild(row);
+    scrollBottom();
+    return row;
+}
+function removeTyping() { const r = document.getElementById('typing-row'); if (r) r.remove(); }
+
+// ── Split response delay ───────────────────────────────────────────────
+async function showSplitResponse(text, gifUrl, ts) {
+    const parts = text.split('|||').map(p => p.trim()).filter(Boolean);
+    for (let i = 0; i < parts.length; i++) {
+        const indicator = addTyping();
+        const delay = Math.min(parts[i].length * 18, 2400) + 600;
+        await new Promise(r => setTimeout(r, delay));
+        indicator.remove();
+        addMessage('assistant', marked.parse(parts[i]), i === parts.length-1 ? gifUrl : null, i === parts.length-1 ? ts : null);
+    }
+}
+
+// ── Send message ───────────────────────────────────────────────────────
+async function sendMessage(e) {
+    e.preventDefault();
+    const input   = document.getElementById('msg-input');
+    const text    = input.value.trim();
+    if (!text && !attachB64) return;
+
+    addMessage('user', marked.parse(text || '[Image attached]'));
+    const payload = { user_id: userId, user_name: nickname, message: text, image_base64: attachB64, mime_type: attachMime };
+    input.value = ''; autoGrow(); clearAttachment();
+
+    const typing = addTyping();
+    try {
+        const res  = await fetch('/api/chat/message', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        typing.remove();
+        if (!res.ok) throw new Error(res.status);
+        const data = await res.json();
+        await showSplitResponse(data.content, data.gif_url, data.timestamp);
+    } catch(err) {
+        typing.remove();
+        addMessage('assistant', '<strong>⚠️ Connection error</strong> — could not reach AnTiMa. Check server status.');
+    }
+}
+
+// ── Clear memories ─────────────────────────────────────────────────────
+async function clearMemories() {
+    if (!confirm('Delete all chat history and personal memories for this session?\n\nThis cannot be undone.')) return;
+    try {
+        const res = await fetch(`/api/chat/clear?user_id=${userId}`, {method:'POST'});
+        if (res.ok) {
+            // Clear all messages except the first notice
+            const msgs = feed.querySelectorAll('.msg-row');
+            msgs.forEach(m => m.remove());
+            addMessage('assistant', marked.parse('🧹 wiped. starting clean.'));
+        }
+    } catch { alert('Failed to clear.'); }
+}
+
+// ── Load history ───────────────────────────────────────────────────────
+async function loadHistory() {
+    try {
+        const res  = await fetch(`/api/chat/history?user_id=${userId}`);
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+            data.forEach(m => addMessage(m.role, marked.parse(m.content || ''), m.gif_url, m.timestamp));
+        } else {
+            const greet = `um, hi ${nickname}... ||| i noticed you were around ||| hope you're having a good day (◡‿◡ *)`;
+            await showSplitResponse(greet, null, null);
+        }
+    } catch { addMessage('assistant', 'uh oh — couldn\'t load history. is the server running?'); }
+}
+
+lucide.createIcons();
+loadHistory();
+</script>
+</body>
+</html>
