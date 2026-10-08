@@ -1,9 +1,12 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+import asyncio
 import logging
 import datetime
 import random
+from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 from utils.danbooru_api import get_random_danbooru_image
 from utils.db import anime_gacha_users_collection, anime_gacha_inventory_collection
 
@@ -48,24 +51,7 @@ class GachaView(discord.ui.View):
             await interaction.response.send_message("You already claimed this!", ephemeral=True)
             return
 
-        # Check for duplicates
-        existing = anime_gacha_inventory_collection.find_one({
-            "user_id": interaction.user.id,
-            "image_id": self.image_data['id']
-        })
-
-        if existing:
-            # Duplicate mechanic: Convert to coins
-            refund = 25
-            anime_gacha_users_collection.update_one(
-                {"user_id": interaction.user.id},
-                {"$inc": {"credits": refund}}
-            )
-            await interaction.response.send_message(f"You already own **{self.image_data['character']}**! Converted to {refund} 🪙.", ephemeral=True)
-            self.stop()
-            return
-
-        # Save to inventory
+        # Save to inventory. The unique (user_id, image_id) index rejects duplicates atomically.
         doc = {
             "user_id": interaction.user.id,
             "image_id": self.image_data['id'],
@@ -75,9 +61,21 @@ class GachaView(discord.ui.View):
             "stars": self.image_data['stars'],
             "claimed_at": datetime.datetime.utcnow()
         }
-        anime_gacha_inventory_collection.insert_one(doc)
-
         self.claimed = True
+        try:
+            await asyncio.to_thread(anime_gacha_inventory_collection.insert_one, doc)
+        except DuplicateKeyError:
+            # Duplicate mechanic: Convert to coins
+            refund = 25
+            await asyncio.to_thread(
+                anime_gacha_users_collection.update_one,
+                {"user_id": interaction.user.id},
+                {"$inc": {"credits": refund}}
+            )
+            await interaction.response.send_message(f"You already own **{self.image_data['character']}**! Converted to {refund} 🪙.", ephemeral=True)
+            self.stop()
+            return
+
         button.label = "Claimed!"
         button.disabled = True
         button.style = discord.ButtonStyle.secondary
@@ -97,45 +95,42 @@ class AnimeCog(commands.Cog):
         self.bot = bot
 
     async def get_user_profile(self, user_id: int):
-        profile = anime_gacha_users_collection.find_one({"user_id": user_id})
-        if not profile:
-            profile = {
-                "user_id": user_id,
-                "credits": 500, # Starting bonus
-                "last_daily": None,
-                "pulls": 0
-            }
-            anime_gacha_users_collection.insert_one(profile)
-        return profile
+        # Upsert so two concurrent first-time commands cannot both create a profile.
+        return await asyncio.to_thread(
+            anime_gacha_users_collection.find_one_and_update,
+            {"user_id": user_id},
+            {"$setOnInsert": {"credits": 500, "last_daily": None, "pulls": 0}},  # 500 = starting bonus
+            upsert=True,
+            return_document=ReturnDocument.AFTER
+        )
 
     @app_commands.command(name="daily", description="Claim your daily gacha credits (1000 🪙)")
     async def daily(self, interaction: discord.Interaction):
         user_id = interaction.user.id
         profile = await self.get_user_profile(user_id)
-        
+
         now = datetime.datetime.utcnow()
-        last_daily = profile.get("last_daily")
+        cooldown = datetime.timedelta(hours=24)
 
-        if last_daily:
-            diff = now - last_daily
-            if diff.total_seconds() < 86400: # 24 hours
-                wait_time = datetime.timedelta(seconds=86400 - diff.total_seconds())
-                hours, remainder = divmod(wait_time.seconds, 3600)
-                minutes, _ = divmod(remainder, 60)
-                await interaction.response.send_message(f"⏳ Please wait **{hours}h {minutes}m** for your next daily reward.", ephemeral=True)
-                return
-
-        anime_gacha_users_collection.update_one(
-            {"user_id": user_id},
-            {
-                "$inc": {"credits": DAILY_REWARD},
-                "$set": {"last_daily": now}
-            }
+        # Claim only if the cooldown has passed, in one atomic update (prevents double claims).
+        updated = await asyncio.to_thread(
+            anime_gacha_users_collection.find_one_and_update,
+            {"user_id": user_id, "$or": [{"last_daily": None}, {"last_daily": {"$lte": now - cooldown}}]},
+            {"$inc": {"credits": DAILY_REWARD}, "$set": {"last_daily": now}},
+            return_document=ReturnDocument.AFTER
         )
-        
+
+        if not updated:
+            last_daily = profile.get("last_daily") or now
+            wait_time = max(datetime.timedelta(0), last_daily + cooldown - now)
+            hours, remainder = divmod(int(wait_time.total_seconds()), 3600)
+            minutes, _ = divmod(remainder, 60)
+            await interaction.response.send_message(f"⏳ Please wait **{hours}h {minutes}m** for your next daily reward.", ephemeral=True)
+            return
+
         embed = discord.Embed(
             title="Daily Reward Claimed!",
-            description=f"You received **{DAILY_REWARD}** 🪙 Credits!\nCurrent Balance: **{profile['credits'] + DAILY_REWARD}** 🪙",
+            description=f"You received **{DAILY_REWARD}** 🪙 Credits!\nCurrent Balance: **{updated['credits']}** 🪙",
             color=discord.Color.green()
         )
         await interaction.response.send_message(embed=embed)
@@ -150,7 +145,15 @@ class AnimeCog(commands.Cog):
         
         profile = await self.get_user_profile(user.id)
 
-        if profile['credits'] < PULL_COST:
+        # Deduct cost only if the balance covers it, in one atomic update (prevents overspending).
+        charged = await asyncio.to_thread(
+            anime_gacha_users_collection.find_one_and_update,
+            {"user_id": user.id, "credits": {"$gte": PULL_COST}},
+            {"$inc": {"credits": -PULL_COST, "pulls": 1}},
+            return_document=ReturnDocument.AFTER
+        )
+
+        if not charged:
             msg = f"🚫 You need **{PULL_COST}** 🪙 to pull! You have **{profile['credits']}** 🪙.\nUse `/daily` to get more."
             if isinstance(ctx, discord.Interaction):
                 await ctx.followup.send(msg, ephemeral=True)
@@ -158,18 +161,12 @@ class AnimeCog(commands.Cog):
                 await ctx.send(msg)
             return
 
-        # Deduct Cost
-        anime_gacha_users_collection.update_one(
-            {"user_id": user.id},
-            {"$inc": {"credits": -PULL_COST, "pulls": 1}}
-        )
-
         # Fetch Image
         result = await get_random_danbooru_image(gender_tag)
         
         if not result or not result.get('image_url'):
             # Refund on failure
-            anime_gacha_users_collection.update_one({"user_id": user.id}, {"$inc": {"credits": PULL_COST}})
+            await asyncio.to_thread(anime_gacha_users_collection.update_one, {"user_id": user.id}, {"$inc": {"credits": PULL_COST, "pulls": -1}})
             msg = "⚠️ Failed to find a character. Credits refunded."
             if isinstance(ctx, discord.Interaction):
                 await ctx.followup.send(msg, ephemeral=True)
@@ -195,7 +192,7 @@ class AnimeCog(commands.Cog):
         embed.add_field(name="🎨 Artist", value=result.get('artist', 'Unknown'), inline=True)
         embed.add_field(name="💎 Rarity", value=f"{rarity_name} ({result['fav_count']} ❤️)", inline=True)
         
-        embed.set_footer(text=f"Pull Cost: {PULL_COST}🪙 | Remaining: {profile['credits'] - PULL_COST}🪙")
+        embed.set_footer(text=f"Pull Cost: {PULL_COST}🪙 | Remaining: {charged['credits']}🪙")
 
         view = GachaView(user.id, result, self.bot)
         

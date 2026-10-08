@@ -63,6 +63,13 @@ class AnTiMaBot(commands.Bot):
 bot = AnTiMaBot()
 
 async def run_bot():
+    # TOKEN is accepted for older .env files.
+    token = os.getenv("DISCORD_TOKEN") or os.getenv("TOKEN")
+    if not token or token.startswith("YOUR_"):
+        sys.exit("❌ DISCORD_TOKEN is not set. Copy .env.example to .env and fill it in.")
+    if not os.getenv("DASHBOARD_PASSWORD"):
+        logger.warning("DASHBOARD_PASSWORD is not set: the admin dashboard is disabled (web chat/RPG still work).")
+
     init_db()
     
     print("🌐 Launching Dashboard with Gunicorn...")
@@ -72,7 +79,7 @@ async def run_bot():
     port = os.getenv("PORT", "8000")
 
     # Command to run Gunicorn
-    # -w 2: Two worker processes
+    # -w 1: Single worker process (see below)
     # -k uvicorn.workers.UvicornWorker: Use Uvicorn for FastAPI support
     # --bind 0.0.0.0:PORT: Bind to the external interface and assigned port
 
@@ -91,7 +98,7 @@ async def run_bot():
         gunicorn_cmd = [
             "gunicorn", 
             "dashboard:app", 
-            "-w", "2", 
+            "-w", "1",  # One worker: the web RPG engine keeps per-process session state
             "-k", "uvicorn.workers.UvicornWorker", 
             "--bind", f"0.0.0.0:{port}",
             "--access-logfile", "-", 
@@ -103,7 +110,7 @@ async def run_bot():
     
     try:
         async with bot:
-            await bot.start(os.getenv("DISCORD_TOKEN"))
+            await bot.start(token)
     except KeyboardInterrupt:
         pass
     finally:

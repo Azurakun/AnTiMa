@@ -254,12 +254,30 @@ def get_client() -> AsyncOpenAI:
 # ---------------------------------------------------------------------------
 # Embedding Helper
 # ---------------------------------------------------------------------------
+# Every stored vector records the model that produced it ("embed_model"), because
+# vectors from different models are not comparable even when their lengths match.
+# See utils/vector_search.py for how mixed-model memories are searched.
+
 FALLBACK_EMBED_DIM = 256
+LOCAL_EMBED_MODEL = "local-ngram-256"
+GEMINI_EMBED_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+EMBED_INPUT_CHARS = 2000
+
+# Models used by older versions of the bot, recognised by vector length for documents
+# saved before "embed_model" was recorded.
+_LEGACY_MODELS_BY_DIM = {
+    256: LOCAL_EMBED_MODEL,
+    768: "text-embedding-004",       # Shut down by Google in Jan 2026
+    1536: "text-embedding-3-small",
+}
+
+_embed_clients: dict[str, AsyncOpenAI] = {}
+
 
 def fallback_embed_text_sync(text: str) -> list[float]:
     """Pure-Python n-gram hash embedding fallback."""
     import hashlib, math
-    text = text.lower()[:2000]
+    text = text.lower()[:EMBED_INPUT_CHARS]
     vec = [0.0] * FALLBACK_EMBED_DIM
     for i in range(len(text) - 2):
         gram = text[i:i+3]
@@ -271,49 +289,78 @@ def fallback_embed_text_sync(text: str) -> list[float]:
     return vec
 
 
+def infer_embed_model(doc: dict, vector_key: str = "vector") -> str | None:
+    """Returns the model that produced a stored vector (explicit, or guessed for legacy docs)."""
+    if doc.get("embed_model"):
+        return doc["embed_model"]
+    vec = doc.get(vector_key)
+    return _LEGACY_MODELS_BY_DIM.get(len(vec)) if vec else None
+
+
+def _usable_key(name: str) -> str | None:
+    key = os.environ.get(name)
+    return key if key and not key.startswith("YOUR_") else None
+
+
+def _embed_backends() -> list[tuple[str, str, str | None]]:
+    """(model, api_key, base_url) for each API embedding backend, in preference order."""
+    backends = []
+    gemini_key = _usable_key("GEMINI_API_KEY")
+    if gemini_key:
+        backends.append((os.environ.get("EMBED_MODEL", "gemini-embedding-001"), gemini_key, GEMINI_EMBED_BASE_URL))
+    openai_key = _usable_key("OPENAI_API_KEY")
+    if openai_key:
+        backends.append(("text-embedding-3-small", openai_key, None))
+    return backends
+
+
+async def _embed_with_backend(texts: list[str], model: str, api_key: str, base_url: str | None) -> list[list[float]]:
+    cache_key = f"{base_url}|{api_key}"
+    client = _embed_clients.get(cache_key)
+    if client is None:
+        client = AsyncOpenAI(api_key=api_key, base_url=base_url, max_retries=1)
+        _embed_clients[cache_key] = client
+    response = await client.embeddings.create(model=model, input=[t[:EMBED_INPUT_CHARS] for t in texts])
+    vectors = [d.embedding for d in sorted(response.data, key=lambda d: d.index)]
+    if len(vectors) != len(texts):
+        raise ValueError(f"{model} returned {len(vectors)} embeddings for {len(texts)} inputs")
+    return vectors
+
+
+async def embed_texts(texts: list[str], model: str | None = None) -> tuple[list[list[float]], str]:
+    """
+    Embeds a batch of texts. Returns (vectors, model_name).
+
+    With model=None, uses the first API backend that works and falls back to the
+    local n-gram embedding. With a model name, uses exactly that model and raises
+    if it is unavailable (used to re-embed old memories into the current space).
+    """
+    texts = [t if t and t.strip() else " " for t in texts]
+    if model == LOCAL_EMBED_MODEL:
+        return [await asyncio.to_thread(fallback_embed_text_sync, t) for t in texts], LOCAL_EMBED_MODEL
+
+    for backend_model, api_key, base_url in _embed_backends():
+        if model and backend_model != model:
+            continue
+        try:
+            return await _embed_with_backend(texts, backend_model, api_key, base_url), backend_model
+        except Exception as e:
+            logger.warning(f"[Embedding] {backend_model} failed: {e}")
+            if model:
+                raise
+
+    if model:
+        raise RuntimeError(f"Embedding model {model} is not available")
+    return [await asyncio.to_thread(fallback_embed_text_sync, t) for t in texts], LOCAL_EMBED_MODEL
+
+
+async def embed(text: str) -> tuple[list[float], str]:
+    """Embeds one text. Returns (vector, model_name)."""
+    vectors, model = await embed_texts([text])
+    return vectors[0], model
+
+
 async def get_embedding(text: str) -> list[float]:
-    """
-    Retrieves vector embedding for given text using Gemini / OpenAI API,
-    falling back to local n-gram hash vector if API calls fail or offline.
-    """
-    if not text or not text.strip():
-        return [0.0] * FALLBACK_EMBED_DIM
-
-    try:
-        gemini_key = os.environ.get("GEMINI_API_KEY")
-        if gemini_key and not gemini_key.startswith("YOUR_"):
-            embed_client = AsyncOpenAI(
-                api_key=gemini_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                max_retries=1
-            )
-            response = await embed_client.embeddings.create(
-                model="text-embedding-004",
-                input=text[:2000]
-            )
-            if response and response.data:
-                return response.data[0].embedding
-
-        openai_key = os.environ.get("OPENAI_API_KEY")
-        if openai_key and not openai_key.startswith("YOUR_"):
-            embed_client = AsyncOpenAI(api_key=openai_key, max_retries=1)
-            response = await embed_client.embeddings.create(
-                model="text-embedding-3-small",
-                input=text[:2000]
-            )
-            if response and response.data:
-                return response.data[0].embedding
-
-        client = get_client()
-        response = await client.embeddings.create(
-            model="text-embedding-004",
-            input=text[:2000]
-        )
-        if response and response.data:
-            return response.data[0].embedding
-
-    except Exception as e:
-        logger.debug(f"[Embedding Fallback] {e}")
-
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, fallback_embed_text_sync, text)
+    """Backwards-compatible wrapper: returns only the vector. Prefer embed() so the model can be stored."""
+    vector, _ = await embed(text)
+    return vector

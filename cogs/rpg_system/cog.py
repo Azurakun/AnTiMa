@@ -3,6 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 from utils.ai_client import get_client  # Ensures GEMINI_API_KEY is validated at startup
+import asyncio
 import uuid
 from datetime import datetime
 
@@ -48,16 +49,19 @@ class RPGAdventureCog(commands.Cog):
     @tasks.loop(seconds=10)
     async def cleanup_tasks(self):
         try:
-            for session in rpg_sessions_collection.find({"delete_requested": True}):
+            pending = await asyncio.to_thread(lambda: list(rpg_sessions_collection.find({"delete_requested": True}, {"thread_id": 1})))
+            for session in pending:
                 tid = session['thread_id']
                 try: 
                     ch = self.bot.get_channel(tid) or await self.bot.fetch_channel(tid)
                     if ch: await ch.delete()
                 except: pass
                 
-                rpg_sessions_collection.delete_one({"thread_id": tid})
-                rpg_world_state_collection.delete_one({"thread_id": tid})
-                db.rpg_debug_terminal.delete_many({"thread_id": str(tid)})
+                def _purge(tid=tid):
+                    rpg_sessions_collection.delete_one({"thread_id": tid})
+                    rpg_world_state_collection.delete_one({"thread_id": tid})
+                    db.rpg_debug_terminal.delete_many({"thread_id": str(tid)})
+                await asyncio.to_thread(_purge)
                 
                 if tid in self.engine.active_sessions: 
                     del self.engine.active_sessions[tid]
@@ -66,10 +70,16 @@ class RPGAdventureCog(commands.Cog):
     @tasks.loop(seconds=3)
     async def web_poller(self):
         try:
-            actions = list(web_actions_collection.find({"type": "create_rpg_web", "status": "pending"}))
-            for action in actions:
+            while True:
+                # Claim atomically so an action is never processed twice.
+                action = await asyncio.to_thread(
+                    web_actions_collection.find_one_and_update,
+                    {"type": "create_rpg_web", "status": "pending"},
+                    {"$set": {"status": "processing"}}
+                )
+                if not action:
+                    break
                 try:
-                    web_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "processing"}})
                     guild = self.bot.get_guild(action["guild_id"])
                     user = guild.get_member(action["user_id"]) if guild else None
                     
@@ -88,11 +98,11 @@ class RPGAdventureCog(commands.Cog):
                             scenario_name=data["scenario"], story_mode=data["story_mode"],
                             custom_title=data["title"], manual_guild_id=guild.id, manual_user=user
                         )
-                        web_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "completed"}})
+                        await asyncio.to_thread(web_actions_collection.update_one, {"_id": action["_id"]}, {"$set": {"status": "completed"}})
                     else:
-                        web_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "failed", "reason": "User/Guild not found"}})
+                        await asyncio.to_thread(web_actions_collection.update_one, {"_id": action["_id"]}, {"$set": {"status": "failed", "reason": "User/Guild not found"}})
                 except Exception as e:
-                    web_actions_collection.update_one({"_id": action["_id"]}, {"$set": {"status": "error", "error": str(e)}})
+                    await asyncio.to_thread(web_actions_collection.update_one, {"_id": action["_id"]}, {"$set": {"status": "error", "error": str(e)}})
         except Exception as e: print(f"Poller Error: {e}")
 
     # --- CALLBACKS ---
@@ -180,9 +190,15 @@ class RPGAdventureCog(commands.Cog):
     @rpg_group.command(name="rewind", description="Rewind story to a specific turn ID.")
     async def rpg_rewind(self, interaction: discord.Interaction, turn_id: int):
         if not isinstance(interaction.channel, discord.Thread): return
-        
+
+        session = await asyncio.to_thread(rpg_sessions_collection.find_one, {"thread_id": interaction.channel.id}, {"owner_id": 1})
+        if not session:
+            return await interaction.response.send_message("No adventure found in this thread.", ephemeral=True)
+        if interaction.user.id != session.get("owner_id"):
+            return await interaction.response.send_message("Only the session owner (the one who started the game) can rewind the story.", ephemeral=True)
+
         await interaction.response.send_message(f"⏳ **Rewinding to Turn {turn_id}...**", ephemeral=True)
-        deleted_turns, rewind_ts = self.memory_manager.trim_history(interaction.channel.id, turn_id)
+        deleted_turns, rewind_ts = await asyncio.to_thread(self.memory_manager.trim_history, interaction.channel.id, turn_id)
         
         if rewind_ts:
             await self.memory_manager.purge_memories(interaction.channel.id, rewind_ts, from_turn_id=turn_id)
@@ -241,7 +257,12 @@ class RPGAdventureCog(commands.Cog):
     @rpg_group.command(name="mode", description="Switch Game Mode.")
     @app_commands.choices(mode=[app_commands.Choice(name="Standard", value="standard"), app_commands.Choice(name="Story", value="story")])
     async def rpg_mode(self, interaction: discord.Interaction, mode: str):
-        rpg_sessions_collection.update_one({"thread_id": interaction.channel.id}, {"$set": {"story_mode": (mode=="story")}})
+        session = await asyncio.to_thread(rpg_sessions_collection.find_one, {"thread_id": interaction.channel.id}, {"owner_id": 1})
+        if not session:
+            return await interaction.response.send_message("No adventure found in this thread.", ephemeral=True)
+        if interaction.user.id != session.get("owner_id"):
+            return await interaction.response.send_message("Only the session owner can change the game mode.", ephemeral=True)
+        await asyncio.to_thread(rpg_sessions_collection.update_one, {"thread_id": interaction.channel.id}, {"$set": {"story_mode": (mode=="story")}})
         await interaction.response.send_message(f"Mode set to: **{mode.upper()}**")
 
     @rpg_group.command(name="uimode", description="Switch between button-based or text-based UI.")

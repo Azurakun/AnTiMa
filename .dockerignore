@@ -1,4 +1,7 @@
+.git/
+.github/
 .venv/
+venv/
 __pycache__/
 .env
 *.pyc
@@ -9,7 +12,8 @@ build/
 .DS_Store
 logs/
 *.log
-tempCodeRunnerFile.py
-debug_*.py
-test_*.py
-restore_game.py
+.pytest_cache/
+.ruff_cache/
+tests/
+scripts/
+requirements-dev.txt

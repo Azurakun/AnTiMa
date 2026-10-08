@@ -17,9 +17,12 @@ from utils.db import search_debug_collection
 warnings.filterwarnings("ignore", category=RuntimeWarning, module="duckduckgo_search")
 
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS  # Current package name (requirements.txt)
 except ImportError:
-    DDGS = None
+    try:
+        from duckduckgo_search import DDGS  # Old package name
+    except ImportError:
+        DDGS = None
 
 logger = logging.getLogger(__name__)
 
