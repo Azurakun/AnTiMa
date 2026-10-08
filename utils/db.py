@@ -5,7 +5,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MONGO_URI = os.getenv("MONGO_URI")
+# MONGO_URL is accepted for older .env files.
+MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGO_URL")
 DB_NAME = "antima_db"
 
 if not MONGO_URI:
@@ -73,8 +74,11 @@ def init_db():
         # 6. Gacha System
         anime_gacha_users_collection.create_index("user_id", unique=True)
         anime_gacha_inventory_collection.create_index([("user_id", 1), ("image_id", 1)], unique=True)
+
+        # 7. Web setup/persona tokens: auto-delete a day after issue (the dashboard rejects them after 2h)
+        rpg_web_tokens_collection.create_index("created_at", expireAfterSeconds=24 * 60 * 60)
         
         print("[OK] Database Indexes Verified.")
         
     except Exception as e:
-        print(f"[ERROR] MongoDB Connection/Indexing Failed: {e}")
+        print(f"[ERROR] MongoDB Connection/Indexing Failed: {e}")

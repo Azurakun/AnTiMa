@@ -1,4 +1,5 @@
 .venv/
+venv/
 __pycache__/
 .env
 *.pyc
@@ -9,7 +10,6 @@ build/
 .DS_Store
 logs/
 *.log
+.pytest_cache/
+.ruff_cache/
 tempCodeRunnerFile.py
-debug_*.py
-test_*.py
-restore_game.py

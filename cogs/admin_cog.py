@@ -4,7 +4,9 @@ from discord import app_commands
 from discord.ext import commands
 from utils.db import rpg_world_state_collection
 from utils.ai_client import reload_provider, AI_PROVIDER, MAIN_MODEL, FAST_MODEL, _PROVIDERS
+import asyncio
 import json
+import re
 
 async def send_discohook_message(interaction: discord.Interaction, data: dict, target_channel: discord.TextChannel, responded: bool = False):
     async def send_reply(msg):
@@ -234,15 +236,27 @@ class AdminCog(commands.Cog, name="Admin"):
         await interaction.response.defer(ephemeral=True)
         
         try:
-            # MongoDB Update: Set status='background' for all NPCs where role does NOT contain 'companion' or 'party'
-            result = rpg_world_state_collection.update_many(
-                {"thread_id": interaction.channel_id},
-                {"$set": {"npcs.$[elem].status": "background"}},
-                array_filters=[{"elem.attributes.role": {"$not": {"$regex": "companion|party", "$options": "i"}}}]
-            )
-            
-            if result.modified_count > 0:
-                msg = f"✅ **Success:** Reset {result.modified_count} NPCs to background status.\n📉 **Context Bloat:** Reduced.\n🚀 **Next Turn:** Should be much faster."
+            # NPCs are stored as a dict keyed by name, so find the non-party ones here and $set each one.
+            world = await asyncio.to_thread(rpg_world_state_collection.find_one, {"thread_id": interaction.channel_id}, {"npcs": 1})
+            npcs = (world or {}).get("npcs", {}) or {}
+            to_reset = [
+                key for key, npc in npcs.items()
+                if isinstance(npc, dict)
+                and npc.get("status") != "background"
+                and not re.search(r"companion|party", str((npc.get("attributes") or {}).get("role", "")), re.I)
+            ]
+
+            modified = 0
+            if to_reset:
+                result = await asyncio.to_thread(
+                    rpg_world_state_collection.update_one,
+                    {"thread_id": interaction.channel_id},
+                    {"$set": {f"npcs.{key}.status": "background" for key in to_reset}}
+                )
+                modified = len(to_reset) if result.modified_count else 0
+
+            if modified > 0:
+                msg = f"✅ **Success:** Reset {modified} NPCs to background status.\n📉 **Context Bloat:** Reduced.\n🚀 **Next Turn:** Should be much faster."
             else:
                 msg = "ℹ️ **No changes made.** Population was already optimized or no Matching NPCs found."
                 

@@ -236,7 +236,7 @@ class RPGEngine:
 
     async def process_turn(self, channel, prompt, user=None, is_reroll=False, message_id=None):
         client = get_client()
-        session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
+        session_db = await asyncio.to_thread(rpg_sessions_collection.find_one, {"thread_id": channel.id})
         if not session_db:
             return
 
@@ -259,7 +259,7 @@ class RPGEngine:
             current_turn_id = session_db.get("total_turns", 0) + 1
 
             # --- HUD (State Injection) ---
-            world_data = rpg_world_state_collection.find_one({"thread_id": channel.id}) or {}
+            world_data = (await asyncio.to_thread(rpg_world_state_collection.find_one, {"thread_id": channel.id})) or {}
             players = session_db.get("player_stats", {})
             p_data = list(players.values())[0] if players else {}
             hp_str = f"{p_data.get('hp', 0)}/{p_data.get('max_hp', 100)}"
@@ -422,7 +422,8 @@ class RPGEngine:
                     proposed_actions=proposed_actions, user=user
                 )
 
-                self.memory_manager.save_turn(
+                await asyncio.to_thread(
+                    self.memory_manager.save_turn,
                     channel.id, user.name if user else "System", prompt, text_content,
                     user_message_id=message_id, bot_message_id=bot_msg_ids, current_turn_id=current_turn_id
                 )
@@ -520,7 +521,7 @@ class RPGEngine:
                 scan_tasks.append(current_chunk)
 
             player_name = "Player"
-            session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
+            session_db = await asyncio.to_thread(rpg_sessions_collection.find_one, {"thread_id": channel.id})
             if session_db and session_db.get("player_stats"):
                 player_name = list(session_db["player_stats"].values())[0].get("name", "Player")
 
@@ -570,12 +571,12 @@ class RPGEngine:
                 if "age" in args: args["age"] = sanitize_age(args["age"])
                 allowed_keys = {"category", "name", "details", "status", "attributes", "memory_add", "age"}
                 clean_args = {k: v for k, v in args.items() if k in allowed_keys}
-                result = tools.update_world_entity(str(channel.id), **clean_args)
+                result = await asyncio.to_thread(tools.update_world_entity, str(channel.id), **clean_args)
                 if "Updated" in result and "(Key:" in result:
                     result += " (NOTE: Use this canonical name in the narrative)."
                 return result
 
-            if fn_name == "grant_item_to_player": return tools.grant_item_to_player(**args)
+            if fn_name == "grant_item_to_player": return await asyncio.to_thread(tools.grant_item_to_player, **args)
             if fn_name == "modify_player_stats":
                 args.pop('thread_id', None)
                 return "Story Mode" if story_mode else tools.modify_player_stats(str(channel.id), **args)
@@ -585,13 +586,13 @@ class RPGEngine:
                 if not res:
                     return f"Memory Recall Failed: No records found regarding '{q}'."
                 return f"Memory Recall Results for '{q}':\n" + "\n".join([f"- {m}" for m in res])
-            if fn_name == "update_journal": return tools.update_journal(str(channel.id), **args)
-            if fn_name == "update_environment": return tools.update_environment(str(channel.id), **args)
+            if fn_name == "update_journal": return await asyncio.to_thread(tools.update_journal, str(channel.id), **args)
+            if fn_name == "update_environment": return await asyncio.to_thread(tools.update_environment, str(channel.id), **args)
             if fn_name == "manage_story_log":
                 args.pop('thread_id', None)
                 allowed_keys = {"action", "note", "status"}
                 clean_args = {k: v for k, v in args.items() if k in allowed_keys}
-                return tools.manage_story_log(str(channel.id), **clean_args)
+                return await asyncio.to_thread(tools.manage_story_log, str(channel.id), **clean_args)
             return f"Error: Unknown tool {fn_name}"
         except Exception as e:
             return f"Tool Error: {e}"
@@ -610,7 +611,7 @@ class RPGEngine:
 
             view_to_send = None
             if is_last:
-                session_db = rpg_sessions_collection.find_one({"thread_id": channel.id})
+                session_db = await asyncio.to_thread(rpg_sessions_collection.find_one, {"thread_id": channel.id})
                 ui_mode = session_db.get("ui_mode", "buttons") if session_db else "buttons"
 
                 if ui_mode == "buttons" and proposed_actions and user:
@@ -633,7 +634,7 @@ class RPGEngine:
     async def _run_scribe(self, thread_id, text, player_name, active_npcs=None):
         try:
             client = get_client()
-            world_data = rpg_world_state_collection.find_one({"thread_id": int(thread_id)}) or {}
+            world_data = (await asyncio.to_thread(rpg_world_state_collection.find_one, {"thread_id": int(thread_id)})) or {}
             existing = list(world_data.get("npcs", {}).keys()) + list(world_data.get("locations", {}).keys())
             known_str = ", ".join(existing) if existing else "None."
             active_str = ", ".join(active_npcs) if active_npcs else "Unknown (Infer from text)"
@@ -671,13 +672,13 @@ class RPGEngine:
                                 args["age"] = sanitize_age(args["age"])
                             allowed_keys = {"category", "name", "details", "status", "attributes", "memory_add", "age"}
                             clean_args = {k: v for k, v in args.items() if k in allowed_keys}
-                            tools.update_world_entity(str(thread_id), **clean_args)
+                            await asyncio.to_thread(tools.update_world_entity, str(thread_id), **clean_args)
 
                         elif fn_name == "manage_story_log":
                             args.pop('thread_id', None)
                             allowed_keys = {"action", "note", "status"}
                             clean_args = {k: v for k, v in args.items() if k in allowed_keys}
-                            tools.manage_story_log(str(thread_id), **clean_args)
+                            await asyncio.to_thread(tools.manage_story_log, str(thread_id), **clean_args)
                     except Exception as e:
                         RPGLogger.log(thread_id, "error", f"Scribe Tool Error: {e}")
 
@@ -702,7 +703,7 @@ class RPGEngine:
             owner = manual_user
             respond = None
 
-        config = ai_config_collection.find_one({"_id": str(guild_id)})
+        config = await asyncio.to_thread(ai_config_collection.find_one, {"_id": str(guild_id)})
         if not config:
             if respond: await respond("Configuration not found for this guild.")
             return
@@ -742,7 +743,7 @@ class RPGEngine:
             "created_at": datetime.utcnow(), "last_active": datetime.utcnow(), "active": True,
             "delete_requested": False, "story_mode": story_mode, "total_turns": 0
         }
-        rpg_sessions_collection.insert_one(session_data)
+        await asyncio.to_thread(rpg_sessions_collection.insert_one, session_data)
 
         if respond:
             await respond(f"✅ Adventure **{title}** created! Check {thread.mention}")

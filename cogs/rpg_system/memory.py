@@ -1,8 +1,6 @@
 # cogs/rpg_system/memory.py
 import asyncio
-import math
 import re
-import hashlib
 from datetime import datetime, timezone
 
 from utils.db import (
@@ -12,75 +10,34 @@ from utils.db import (
     rpg_inventory_collection
 )
 from utils.timezone_manager import get_local_time
+from utils.ai_client import embed
+from utils.vector_search import cosine_similarity, rank_documents
 from . import prompts
-
-# ---------------------------------------------------------------------------
-# Pure-Python n-gram hash embedding — zero pip dependencies, no conflicts.
-# Uses character 3-grams hashed into a 256-dim space and L2-normalised.
-# Cosine similarity works well for short English text (RPG memories).
-# Embedding dimension: 256
-# ---------------------------------------------------------------------------
-EMBED_DIM = 256
-
-def _embed_text_sync(text: str) -> list[float]:
-    """Embeds text using character 3-gram hashing into a 256-dim vector."""
-    text = text.lower()[:2000]
-    vec = [0.0] * EMBED_DIM
-    for i in range(len(text) - 2):
-        gram = text[i:i+3]
-        h = int(hashlib.md5(gram.encode()).hexdigest(), 16) % EMBED_DIM
-        vec[h] += 1.0
-    # L2 normalise
-    magnitude = math.sqrt(sum(x * x for x in vec))
-    if magnitude > 0:
-        vec = [x / magnitude for x in vec]
-    return vec
-
 
 class RPGContextManager:
     def __init__(self, model_unused=None):
         # model parameter kept for API compatibility — no longer used
         self.model = None
         self.max_tokens = 1_000_000
-        self.embed_dim = EMBED_DIM
         self.HISTORY_TOKEN_BUDGET = 2500
 
     def _cosine_similarity(self, v1, v2):
-        if not v1 or not v2 or len(v1) != len(v2):
-            return 0.0
-        dot_product = sum(a * b for a, b in zip(v1, v2))
-        magnitude1 = math.sqrt(sum(a * a for a in v1))
-        magnitude2 = math.sqrt(sum(b * b for b in v2))
-        if magnitude1 == 0 or magnitude2 == 0:
-            return 0.0
-        return dot_product / (magnitude1 * magnitude2)
-
-    async def _get_embedding(self, text: str) -> list[float] | None:
-        """Gets semantic embedding via utils.ai_client (with fallback to local n-gram)."""
-        try:
-            from utils.ai_client import get_embedding
-            return await get_embedding(text)
-        except Exception as e:
-            print(f"[RPG Embed Error] {e}")
-            loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _embed_text_sync, text)
-
+        return cosine_similarity(v1, v2)
 
     async def store_memory(self, thread_id, text, metadata=None):
-        vector = await self._get_embedding(text)
-        if not vector:
-            return
+        vector, model = await embed(text)
         doc = {
             "thread_id": int(thread_id),
             "text": text,
             "vector": vector,
+            "embed_model": model,
             "timestamp": datetime.utcnow(),
             "metadata": metadata or {}
         }
-        rpg_vector_memory_collection.insert_one(doc)
+        await asyncio.to_thread(rpg_vector_memory_collection.insert_one, doc)
 
     async def clear_thread_vectors(self, thread_id):
-        rpg_vector_memory_collection.delete_many({"thread_id": int(thread_id)})
+        await asyncio.to_thread(rpg_vector_memory_collection.delete_many, {"thread_id": int(thread_id)})
 
     async def purge_memories(self, thread_id, cutoff_timestamp, from_turn_id=None):
         query = {"thread_id": int(thread_id)}
@@ -96,7 +53,7 @@ class RPGContextManager:
 
         if conditions:
             query["$or"] = conditions
-            rpg_vector_memory_collection.delete_many(query)
+            await asyncio.to_thread(rpg_vector_memory_collection.delete_many, query)
 
     async def purge_memories_since(self, thread_id, cutoff_timestamp):
         await self.purge_memories(thread_id, cutoff_timestamp)
@@ -122,19 +79,13 @@ class RPGContextManager:
         return count
 
     async def retrieve_relevant_memories(self, thread_id, query_text, limit=5, threshold=0.60):
-        query_vector = await self._get_embedding(query_text)
-        if not query_vector:
-            return []
-
-        candidates = list(rpg_vector_memory_collection.find({"thread_id": int(thread_id)}))
-        results = []
-        for mem in candidates:
-            score = self._cosine_similarity(query_vector, mem['vector'])
-            if score >= threshold:
-                results.append((score, mem['text']))
-
-        results.sort(key=lambda x: x[0], reverse=True)
-        return [r[1] for r in results[:limit]]
+        candidates = await asyncio.to_thread(
+            lambda: list(rpg_vector_memory_collection.find({"thread_id": int(thread_id)}))
+        )
+        ranked = await rank_documents(query_text, candidates, text_key="text",
+                                      collection=rpg_vector_memory_collection,
+                                      threshold=threshold, limit=limit)
+        return [doc["text"] for _, doc in ranked]
 
     def save_turn(self, thread_id, user_name, user_input, ai_output,
                   user_message_id=None, bot_message_id=None, current_turn_id=None):
@@ -419,8 +370,8 @@ class RPGContextManager:
         if logger: logger(thread_id, "system", "Building Memory Context...")
 
         lore = session_data.get("lore", "Standard Fantasy Setting")
-        player_context = self._format_player_profiles(session_data)
-        world_sheet, world_debug = self._format_world_sheet(thread_id, current_user_input)
+        player_context = await asyncio.to_thread(self._format_player_profiles, session_data)
+        world_sheet, world_debug = await asyncio.to_thread(self._format_world_sheet, thread_id, current_user_input)
 
         history = session_data.get("turn_history", [])
         text_log_reversed = []
