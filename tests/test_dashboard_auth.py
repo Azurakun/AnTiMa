@@ -1,3 +1,5 @@
+import secrets
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -5,9 +7,13 @@ import dashboard
 from utils import web_auth
 
 
+# Generated per run so no credential-looking literal lives in the repo.
+ADMIN_PW = secrets.token_urlsafe(16)
+
+
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "s3cret")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", ADMIN_PW)
     return TestClient(dashboard.app)
 
 
@@ -27,11 +33,11 @@ def test_admin_page_redirects_to_login(client):
 
 
 def test_login_flow(client):
-    bad = client.post("/login", data={"password": "nope"}, follow_redirects=False)
+    bad = client.post("/login", data={"password": ADMIN_PW + "-wrong"}, follow_redirects=False)
     assert bad.status_code == 303 and "error" in bad.headers["location"]
     assert web_auth.ADMIN_COOKIE not in client.cookies
 
-    good = client.post("/login", data={"password": "s3cret"}, follow_redirects=False)
+    good = client.post("/login", data={"password": ADMIN_PW}, follow_redirects=False)
     assert good.status_code == 303 and good.headers["location"] == "/"
     assert web_auth.is_admin_cookie(client.cookies.get(web_auth.ADMIN_COOKIE))
 

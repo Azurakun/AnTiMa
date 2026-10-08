@@ -1,3 +1,4 @@
+import secrets
 import time
 
 import pytest
@@ -31,20 +32,21 @@ def test_admin_cookie_requires_password(monkeypatch):
     monkeypatch.delenv("DASHBOARD_PASSWORD", raising=False)
     cookie = web_auth.make_admin_cookie()
     assert not web_auth.is_admin_cookie(cookie)
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", secrets.token_urlsafe(16))
     assert web_auth.is_admin_cookie(cookie)
     assert not web_auth.is_admin_cookie(web_auth.make_user_cookie(1))
 
 
 def test_check_admin_password(monkeypatch):
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "correct horse")
-    assert web_auth.check_admin_password("correct horse")
-    assert not web_auth.check_admin_password("wrong")
+    pw = secrets.token_urlsafe(16)
+    monkeypatch.setenv("DASHBOARD_PASSWORD", pw)
+    assert web_auth.check_admin_password(pw)
+    assert not web_auth.check_admin_password(pw + "x")
     assert not web_auth.check_admin_password("")
 
 
 def test_user_cookie_is_not_admin(monkeypatch):
-    monkeypatch.setenv("DASHBOARD_PASSWORD", "pw")
+    monkeypatch.setenv("DASHBOARD_PASSWORD", secrets.token_urlsafe(16))
     assert web_auth.user_id_from_cookie(web_auth.make_admin_cookie()) is None
 
 
