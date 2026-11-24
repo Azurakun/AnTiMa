@@ -1,26 +1,16 @@
 # cogs/ai_chat/memory_handler.py
 import logging
-import math
+import asyncio
 from datetime import datetime, timezone
 from utils.db import (
     ai_personal_memories_collection,
     ai_global_memories_collection,
     ai_hybrid_memories_collection
 )
-from utils.ai_client import get_embedding
+from utils.ai_client import embed
+from utils.vector_search import rank_documents
 
 logger = logging.getLogger(__name__)
-
-
-def _cosine_similarity(v1, v2):
-    if not v1 or not v2 or len(v1) != len(v2):
-        return 0.0
-    dot_product = sum(a * b for a, b in zip(v1, v2))
-    magnitude1 = math.sqrt(sum(a * a for a in v1))
-    magnitude2 = math.sqrt(sum(b * b for b in v2))
-    if magnitude1 == 0 or magnitude2 == 0:
-        return 0.0
-    return dot_product / (magnitude1 * magnitude2)
 
 
 async def load_user_memories(user_id: int, guild_id: int, query_text: str = "", limit: int = 5) -> str:
@@ -29,32 +19,25 @@ async def load_user_memories(user_id: int, guild_id: int, query_text: str = "", 
         memories_set = set()
         
         # 1. Direct recent personal memories
-        cursor = ai_personal_memories_collection.find(
-            {"user_id": user_id, "guild_id": int(guild_id)}
-        ).sort("timestamp", -1).limit(limit)
-        for m in list(cursor):
+        recent = await asyncio.to_thread(lambda: list(
+            ai_personal_memories_collection.find({"user_id": user_id, "guild_id": int(guild_id)})
+            .sort("timestamp", -1).limit(limit)
+        ))
+        for m in recent:
             mem_text = m.get("memory")
             if mem_text and mem_text != "[Corrupted Memory]":
                 memories_set.add(mem_text)
 
         # 2. Vector hybrid memory search
         if query_text:
-            query_vector = await get_embedding(query_text)
-            if query_vector:
-                candidates = list(ai_hybrid_memories_collection.find(
-                    {"user_id": user_id, "guild_id": int(guild_id)}
-                ))
-                scored = []
-                for doc in candidates:
-                    vec = doc.get("vector")
-                    if vec:
-                        score = _cosine_similarity(query_vector, vec)
-                        if score >= 0.15:
-                            scored.append((score, doc.get("memory")))
-                scored.sort(key=lambda x: x[0], reverse=True)
-                for _, text in scored[:limit]:
-                    if text:
-                        memories_set.add(text)
+            candidates = await asyncio.to_thread(lambda: list(
+                ai_hybrid_memories_collection.find({"user_id": user_id, "guild_id": int(guild_id)})
+            ))
+            ranked = await rank_documents(query_text, candidates, text_key="memory",
+                                          collection=ai_hybrid_memories_collection,
+                                          threshold=0.15, limit=limit)
+            for _, doc in ranked:
+                memories_set.add(doc["memory"])
 
         if not memories_set:
             return ""
@@ -68,8 +51,9 @@ async def load_user_memories(user_id: int, guild_id: int, query_text: str = "", 
 async def load_global_memories(limit: int = 5) -> str:
     """Loads general/global facts the bot has learned."""
     try:
-        cursor = ai_global_memories_collection.find({}).sort("timestamp", -1).limit(limit)
-        memories = list(cursor)
+        memories = await asyncio.to_thread(lambda: list(
+            ai_global_memories_collection.find({}).sort("timestamp", -1).limit(limit)
+        ))
         if not memories:
             return ""
         return "\n".join([f"- {m.get('memory', '[Corrupted Memory]')}" for m in memories])
@@ -133,17 +117,18 @@ async def summarize_and_save_memory(model, user, guild_id, conversation_history,
                 global_fact = line.replace("Global Fact:", "").strip()
 
         if user_fact:
-            vector = await get_embedding(user_fact)
-            ai_hybrid_memories_collection.insert_one({
+            vector, embed_model = await embed(user_fact)
+            await asyncio.to_thread(ai_hybrid_memories_collection.insert_one, {
                 "user_id": user.id,
                 "guild_id": int(guild_id),
                 "channel_id": int(channel_id) if channel_id else 0,
                 "memory": user_fact,
                 "relational": relational_triple,
                 "vector": vector,
+                "embed_model": embed_model,
                 "timestamp": datetime.now(timezone.utc)
             })
-            ai_personal_memories_collection.insert_one({
+            await asyncio.to_thread(ai_personal_memories_collection.insert_one, {
                 "user_id": user.id,
                 "guild_id": int(guild_id),
                 "memory": user_fact,
@@ -152,7 +137,7 @@ async def summarize_and_save_memory(model, user, guild_id, conversation_history,
             logger.info(f"Saved hybrid memory for user {user.name} in guild {guild_id}.")
 
         if global_fact:
-            ai_global_memories_collection.insert_one({
+            await asyncio.to_thread(ai_global_memories_collection.insert_one, {
                 "memory": global_fact,
                 "timestamp": datetime.now(timezone.utc)
             })

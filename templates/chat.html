@@ -621,9 +621,16 @@
 
 <script>
 // ── State ──────────────────────────────────────────────────────────────
-let userId = localStorage.getItem('atm_uid');
-if (!userId) {
-    userId = Math.floor(1e14 + Math.random() * 9e14).toString();
+// Identity is issued by the server as an HttpOnly cookie. A browser that still
+// has an old localStorage ID claims it once so its history carries over.
+let userId = null;
+async function ensureIdentity() {
+    const res = await fetch('/api/web/identity', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ legacy_id: localStorage.getItem('atm_uid') })
+    });
+    const data = await res.json();
+    userId = data.user_id;
     localStorage.setItem('atm_uid', userId);
 }
 let nickname  = localStorage.getItem('atm_nick') || 'Adventurer';
@@ -631,7 +638,6 @@ let avatarSrc = localStorage.getItem('atm_avatar') || 'https://api.dicebear.com/
 let attachB64 = null, attachMime = null;
 
 // Apply stored
-document.getElementById('uid-display').textContent = userId.slice(-6);
 document.getElementById('nickname').value = nickname;
 document.getElementById('user-avatar').src = avatarSrc;
 
@@ -794,7 +800,10 @@ async function loadHistory() {
 }
 
 lucide.createIcons();
-loadHistory();
+ensureIdentity().then(() => {
+    document.getElementById('uid-display').textContent = userId.slice(-6);
+    loadHistory();
+});
 </script>
 </body>
 </html>

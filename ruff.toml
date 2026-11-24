@@ -1,0 +1,7 @@
+# Baseline lint run in CI: syntax errors and undefined names only.
+# Widen "select" gradually as the codebase is cleaned up.
+target-version = "py311"
+extend-exclude = ["scripts"]
+
+[lint]
+select = ["E9", "F63", "F7", "F82"]

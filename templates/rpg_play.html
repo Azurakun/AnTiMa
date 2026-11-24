@@ -769,9 +769,16 @@
 
 <script>
 // ── State ──────────────────────────────────────────────────────────────
-let userId = localStorage.getItem('atm_uid');
-if (!userId) {
-    userId = Math.floor(1e14 + Math.random() * 9e14).toString();
+// Identity is issued by the server as an HttpOnly cookie. A browser that still
+// has an old localStorage ID claims it once so its history carries over.
+let userId = null;
+async function ensureIdentity() {
+    const res = await fetch('/api/web/identity', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ legacy_id: localStorage.getItem('atm_uid') })
+    });
+    const data = await res.json();
+    userId = data.user_id;
     localStorage.setItem('atm_uid', userId);
 }
 let config = null;
@@ -1275,7 +1282,7 @@ document.head.appendChild(dotStyle);
 // ── Boot ───────────────────────────────────────────────────────────────
 lucide.createIcons();
 loadConfig();
-loadCampaigns();
+ensureIdentity().then(loadCampaigns);
 </script>
 </body>
 </html>

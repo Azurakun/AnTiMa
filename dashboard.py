@@ -1,6 +1,6 @@
 # dashboard.py
 from fastapi import FastAPI, WebSocket, Request, HTTPException, Response
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from fastapi.encoders import jsonable_encoder
@@ -14,7 +14,9 @@ import uuid
 import random
 import re
 import traceback
-from datetime import datetime
+import html
+from urllib.parse import parse_qs
+from datetime import datetime, timedelta
 from collections import namedtuple
 
 from utils.db import (
@@ -38,22 +40,27 @@ from cogs.ai_chat.prompts import SYSTEM_PROMPT
 from cogs.ai_chat.memory_handler import load_user_memories, load_global_memories, summarize_and_save_memory
 from cogs.rpg_system.web_engine import WebRPGEngine
 from cogs.rpg_system import prompts, tools
+from utils import web_auth
 
 web_chat_sessions_collection = db["web_chat_sessions"]
+web_identities_collection = db["web_identities"]  # Claimed web user IDs (one per browser identity)
 WebUserMock = namedtuple("WebUserMock", ["id", "name"])
 web_rpg_engine = WebRPGEngine()
 
 # --- WEB DATA MODELS ---
 
+# NOTE: user_id fields below are accepted for backwards compatibility but ignored;
+# the identity always comes from the signed atm_uid cookie.
+
 class WebChatMessageRequest(BaseModel):
-    user_id: str
+    user_id: str | None = None
     user_name: str
     message: str
     image_base64: str | None = None
     mime_type: str | None = None
 
 class WebRPGCreateRequest(BaseModel):
-    user_id: str
+    user_id: str | None = None
     user_name: str
     title: str
     scenario: str
@@ -63,13 +70,119 @@ class WebRPGCreateRequest(BaseModel):
 
 class WebRPGTurnRequest(BaseModel):
     thread_id: str
-    user_id: str
+    user_id: str | None = None
     user_name: str
     prompt: str
     is_reroll: bool = False
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+# Setup/persona links issued by the bot stay valid for this long.
+WEB_TOKEN_TTL = timedelta(hours=2)
+
+# --- AUTH ---
+
+def _is_https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+
+@app.middleware("http")
+async def require_admin(request: Request, call_next):
+    if web_auth.is_admin_path(request.url.path) and not web_auth.is_admin_cookie(request.cookies.get(web_auth.ADMIN_COOKIE)):
+        if request.method == "GET" and not request.url.path.startswith("/api/"):
+            return RedirectResponse("/login", status_code=303)
+        return JSONResponse({"error": "Admin login required"}, status_code=401)
+    return await call_next(request)
+
+LOGIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AnTiMa Admin Login</title>
+<style>body{{font-family:system-ui,sans-serif;background:#0f1117;color:#e6e6e6;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}}
+form{{background:#1a1d27;padding:2rem;border-radius:12px;width:min(320px,90vw)}}input,button{{width:100%;box-sizing:border-box;padding:.7rem;margin-top:.8rem;border-radius:8px;border:1px solid #333;background:#0f1117;color:inherit}}
+button{{background:#5865f2;border:none;cursor:pointer}}.err{{color:#ff6b6b;margin-top:.8rem}}</style></head>
+<body><form method="post" action="/login"><h2>AnTiMa Dashboard</h2>{body}</form></body></html>"""
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(error: str | None = None):
+    if not web_auth.admin_password():
+        body = "<p>The admin dashboard is disabled. Set <code>DASHBOARD_PASSWORD</code> in your environment and restart.</p>"
+        return HTMLResponse(LOGIN_PAGE.format(body=body), status_code=503)
+    err = f'<div class="err">{html.escape(error)}</div>' if error else ""
+    body = f'<input type="password" name="password" placeholder="Password" autofocus required><button type="submit">Log in</button>{err}'
+    return HTMLResponse(LOGIN_PAGE.format(body=body))
+
+@app.post("/login")
+async def login_submit(request: Request):
+    form = parse_qs((await request.body()).decode(errors="ignore"))
+    password = (form.get("password") or [""])[0]
+    if not web_auth.check_admin_password(password):
+        await asyncio.sleep(1)  # Slow down brute force attempts
+        return RedirectResponse("/login?error=Wrong+password", status_code=303)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(web_auth.ADMIN_COOKIE, web_auth.make_admin_cookie(), max_age=web_auth.ADMIN_SESSION_SECONDS,
+                    httponly=True, samesite="lax", secure=_is_https(request))
+    return resp
+
+@app.post("/logout")
+async def logout():
+    resp = RedirectResponse("/login", status_code=303)
+    resp.delete_cookie(web_auth.ADMIN_COOKIE)
+    return resp
+
+@app.get("/healthz")
+async def healthz():
+    return JSONResponse({"status": "ok"})
+
+def get_web_uid(request: Request) -> int:
+    """Returns the caller's server-issued web user ID, or raises 401."""
+    uid = web_auth.user_id_from_cookie(request.cookies.get(web_auth.USER_COOKIE))
+    if uid is None:
+        raise HTTPException(status_code=401, detail="No web identity. Reload the page.")
+    return uid
+
+def _claim_web_id(uid: int) -> bool:
+    """Atomically claims a web user ID. Returns False if someone already holds it."""
+    from pymongo.errors import DuplicateKeyError
+    try:
+        web_identities_collection.insert_one({"_id": uid, "created_at": datetime.utcnow()})
+        return True
+    except DuplicateKeyError:
+        return False
+
+class IdentityRequest(BaseModel):
+    legacy_id: str | None = None
+
+@app.post("/api/web/identity")
+async def web_identity(req: IdentityRequest, request: Request, response: Response):
+    """
+    Issues (or confirms) the caller's web identity cookie.
+    A browser that still has a pre-cookie localStorage ID can claim it once, so
+    existing chat history and campaigns carry over; afterwards nobody else can.
+    """
+    uid = web_auth.user_id_from_cookie(request.cookies.get(web_auth.USER_COOKIE))
+    if uid is None:
+        if web_auth.is_legacy_web_user_id(req.legacy_id) and await run_sync_db(_claim_web_id, int(req.legacy_id)):
+            uid = int(req.legacy_id)
+        else:
+            while True:
+                candidate = web_auth.new_web_user_id()
+                if await run_sync_db(_claim_web_id, candidate):
+                    uid = candidate
+                    break
+        response.set_cookie(web_auth.USER_COOKIE, web_auth.make_user_cookie(uid), max_age=web_auth.USER_SESSION_SECONDS,
+                            httponly=True, samesite="lax", secure=_is_https(request))
+    return {"user_id": str(uid)}
+
+async def _load_owned_web_session(thread_id: int, uid: int) -> dict:
+    """Loads a web RPG session the caller plays in, or raises 404."""
+    session = await run_sync_db(lambda: rpg_sessions_collection.find_one({"thread_id": thread_id}))
+    if not session or not session.get("is_web") or uid not in session.get("players", []):
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return session
+
+def _valid_web_token(token: str, **extra) -> dict | None:
+    """Finds an unexpired setup/persona token issued by the bot."""
+    query = {"token": token, "created_at": {"$gte": datetime.utcnow() - WEB_TOKEN_TTL}, **extra}
+    return rpg_web_tokens_collection.find_one(query)
 
 # --- ASYNC DATABASE HELPER ---
 async def run_sync_db(func, *args, **kwargs):
@@ -428,7 +541,7 @@ async def action_restart():
 @app.post("/api/rpg/delete/{thread_id}")
 async def delete_rpg_session(thread_id: str):
     try:
-        rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {"$set": {"delete_requested": True}})
+        await run_sync_db(lambda: rpg_sessions_collection.update_one({"thread_id": int(thread_id)}, {"$set": {"delete_requested": True}}))
         return JSONResponse({"status": "Marked for deletion"})
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -601,7 +714,7 @@ async def stream_rpg_logs(thread_id: str):
 
 @app.get("/rpg/setup", response_class=HTMLResponse)
 async def rpg_setup_page(request: Request, token: str):
-    token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token, "status": "pending"}))
+    token_doc = await run_sync_db(lambda: _valid_web_token(token, status="pending"))
     if not token_doc:
         return HTMLResponse("<h1>Invalid or Expired Link</h1>", status_code=404)
     user_id = token_doc["user_id"]
@@ -613,7 +726,7 @@ async def rpg_setup_page(request: Request, token: str):
 
 @app.get("/rpg/personas", response_class=HTMLResponse)
 async def rpg_personas_page(request: Request, token: str):
-    token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token, "status": "pending"}))
+    token_doc = await run_sync_db(lambda: _valid_web_token(token, status="pending"))
     if not token_doc:
         return HTMLResponse("<h1>Invalid Link</h1>", status_code=404)
     user_id = token_doc["user_id"]
@@ -623,7 +736,7 @@ async def rpg_personas_page(request: Request, token: str):
 
 @app.post("/api/rpg/persona/save")
 async def save_persona(data: PersonaModel):
-    token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": data.token}))
+    token_doc = await run_sync_db(lambda: _valid_web_token(data.token, status="pending"))
     if not token_doc: raise HTTPException(403, "Invalid Token")
     user_id = token_doc["user_id"]
     if data.id:
@@ -647,7 +760,7 @@ async def save_persona(data: PersonaModel):
 
 @app.delete("/api/rpg/persona/delete/{persona_id}")
 async def delete_persona(persona_id: str, token: str):
-    token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one({"token": token}))
+    token_doc = await run_sync_db(lambda: _valid_web_token(token, status="pending"))
     if not token_doc: raise HTTPException(403, "Invalid Token")
     res = await run_sync_db(lambda: user_personas_collection.delete_one({"id": persona_id, "user_id": token_doc["user_id"]}))
     if res.deleted_count == 0: return JSONResponse({"error": "Persona not found"}, status_code=404)
@@ -656,7 +769,8 @@ async def delete_persona(persona_id: str, token: str):
 @app.post("/api/rpg/submit")
 async def submit_rpg_setup(data: RPGSetupData):
     token_doc = await run_sync_db(lambda: rpg_web_tokens_collection.find_one_and_update(
-        {"token": data.token, "status": "pending"}, {"$set": {"status": "submitted"}}
+        {"token": data.token, "status": "pending", "created_at": {"$gte": datetime.utcnow() - WEB_TOKEN_TTL}},
+        {"$set": {"status": "submitted"}}
     ))
     if not token_doc: raise HTTPException(status_code=400, detail="Invalid token.")
     if data.character.get("save_as_persona"):
@@ -693,9 +807,9 @@ async def get_chat_page(request: Request):
     return templates.TemplateResponse(request=request, name="chat.html")
 
 @app.get("/api/chat/history")
-async def get_chat_history(user_id: str):
+async def get_chat_history(request: Request):
+    uid = get_web_uid(request)
     try:
-        uid = int(user_id)
         session = await run_sync_db(lambda: web_chat_sessions_collection.find_one({"user_id": uid}))
         if not session:
             return JSONResponse([])
@@ -709,9 +823,9 @@ async def get_chat_history(user_id: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/chat/clear")
-async def clear_chat(user_id: str):
+async def clear_chat(request: Request):
+    uid = get_web_uid(request)
     try:
-        uid = int(user_id)
         await run_sync_db(lambda: web_chat_sessions_collection.delete_one({"user_id": uid}))
         await run_sync_db(lambda: ai_personal_memories_collection.delete_many({"user_id": uid, "guild_id": 999999}))
         return JSONResponse({"status": "cleared"})
@@ -719,9 +833,9 @@ async def clear_chat(user_id: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/chat/message")
-async def send_chat_message(req: WebChatMessageRequest):
+async def send_chat_message(req: WebChatMessageRequest, request: Request):
+    uid = get_web_uid(request)
     try:
-        uid = int(req.user_id)
         session = await run_sync_db(lambda: web_chat_sessions_collection.find_one({"user_id": uid}))
         if not session:
             session = {
@@ -824,9 +938,9 @@ async def get_rpg_play_page(request: Request):
     return templates.TemplateResponse(request=request, name="rpg_play.html")
 
 @app.get("/api/web_rpg/campaigns")
-async def get_web_campaigns(user_id: str):
+async def get_web_campaigns(request: Request):
+    uid = get_web_uid(request)
     try:
-        uid = int(user_id)
         cursor = await run_sync_db(lambda: list(rpg_sessions_collection.find({"players": uid, "is_web": True}).sort("last_active", -1)))
         campaigns = []
         for doc in cursor:
@@ -854,9 +968,9 @@ async def get_rpg_config():
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/web_rpg/create")
-async def create_web_campaign(req: WebRPGCreateRequest):
+async def create_web_campaign(req: WebRPGCreateRequest, request: Request):
+    uid = get_web_uid(request)
     try:
-        uid = int(req.user_id)
         thread_id = random.randint(10**17, 9 * 10**17)
         c = req.character
         profile = {
@@ -941,14 +1055,12 @@ async def create_web_campaign(req: WebRPGCreateRequest):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.get("/api/web_rpg/session/{thread_id}")
-async def get_web_rpg_session(thread_id: str, user_id: str):
+async def get_web_rpg_session(thread_id: str, request: Request):
+    uid = get_web_uid(request)
     try:
         tid = int(thread_id)
-        uid = int(user_id)
-        session = await run_sync_db(lambda: rpg_sessions_collection.find_one({"thread_id": tid}))
-        if not session:
-            return JSONResponse({"error": "Campaign not found."}, status_code=404)
-            
+        session = await _load_owned_web_session(tid, uid)
+
         world = await run_sync_db(lambda: rpg_world_state_collection.find_one({"thread_id": tid})) or {}
         inv = await run_sync_db(lambda: rpg_inventory_collection.find_one({"user_id": uid}))
         
@@ -988,16 +1100,19 @@ async def get_web_rpg_session(thread_id: str, user_id: str):
             },
             "inventory": inv.get("items", []) if inv else []
         }))
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/web_rpg/turn")
-async def send_web_rpg_turn(req: WebRPGTurnRequest):
+async def send_web_rpg_turn(req: WebRPGTurnRequest, request: Request):
+    uid = get_web_uid(request)
     try:
         tid = int(req.thread_id)
-        uid = int(req.user_id)
-        
+        await _load_owned_web_session(tid, uid)
+
         turn_result = await web_rpg_engine.process_web_turn(
             thread_id=tid,
             prompt=req.prompt,
@@ -1012,29 +1127,43 @@ async def send_web_rpg_turn(req: WebRPGTurnRequest):
         ))
         
         return JSONResponse(jsonable_encoder(turn_result))
+    except HTTPException:
+        raise
     except Exception as e:
         traceback.print_exc()
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/web_rpg/rewind")
-async def rewind_web_campaign(thread_id: str, turn_id: int):
+async def rewind_web_campaign(thread_id: str, turn_id: int, request: Request):
+    uid = get_web_uid(request)
     try:
         tid = int(thread_id)
+        session = await _load_owned_web_session(tid, uid)
+        if session.get("owner_id") != uid:
+            return JSONResponse({"error": "Only the campaign owner can rewind."}, status_code=403)
         deleted_turns, rewind_ts = await run_sync_db(web_rpg_engine.memory_manager.trim_history, tid, int(turn_id))
         
         if rewind_ts:
             await web_rpg_engine.memory_manager.purge_memories(tid, rewind_ts, from_turn_id=int(turn_id))
             
         return JSONResponse({"status": "success", "turn_id": turn_id})
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.post("/api/web_rpg/end")
-async def end_web_campaign(thread_id: str):
+async def end_web_campaign(thread_id: str, request: Request):
+    uid = get_web_uid(request)
     try:
         tid = int(thread_id)
+        session = await _load_owned_web_session(tid, uid)
+        if session.get("owner_id") != uid:
+            return JSONResponse({"error": "Only the campaign owner can end it."}, status_code=403)
         await run_sync_db(lambda: rpg_sessions_collection.update_one({"thread_id": tid}, {"$set": {"active": False}}))
         return JSONResponse({"status": "archived"})
+    except HTTPException:
+        raise
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1053,10 +1182,10 @@ async def update_bot_config(data: ConfigRequest):
         if data.group_chat: update_fields["group_chat_enabled"] = (data.group_chat == "allow")
         if data.rpg_channel_id: update_fields["rpg_channel_id"] = int(data.rpg_channel_id)
         if not update_fields: return JSONResponse({"error": "No valid fields"}, status_code=400)
-        ai_config_collection.update_one({"_id": str(data.guild_id)}, {"$set": update_fields}, upsert=True)
-        live_activity_collection.insert_one({
+        await run_sync_db(lambda: ai_config_collection.update_one({"_id": str(data.guild_id)}, {"$set": update_fields}, upsert=True))
+        await run_sync_db(lambda: live_activity_collection.insert_one({
             "user": "Dashboard Admin", "guild": f"ID: {data.guild_id}", "action": "Updated Config", "timestamp": datetime.utcnow()
-        })
+        }))
         return JSONResponse({"status": "Configuration updated"})
     except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1067,15 +1196,19 @@ async def reload_chat_module():
             "type": "reload_chat", "guild_id": "global", "status": "pending", 
             "created_at": datetime.utcnow(), "source": "dashboard"
         }
-        web_actions_collection.insert_one(action_doc)
-        live_activity_collection.insert_one({
+        await run_sync_db(lambda: web_actions_collection.insert_one(action_doc))
+        await run_sync_db(lambda: live_activity_collection.insert_one({
             "user": "Dashboard Admin", "guild": "Global", "action": "Triggered Reload", "timestamp": datetime.utcnow()
-        })
+        }))
         return JSONResponse({"status": "Reload signal sent."})
     except Exception as e: return JSONResponse({"error": str(e)}, status_code=500)
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    # HTTP middleware does not cover websockets, so check the admin session here.
+    if not web_auth.is_admin_cookie(websocket.cookies.get(web_auth.ADMIN_COOKIE)):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     try:
         while True:

@@ -1,9 +1,9 @@
 # AnTiMa - The Interactive AI Discord Bot
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Discord.py-3.0-7289DA?style=for-the-badge&logo=discord&logoColor=white" alt="Discord.py">
+  <img src="https://img.shields.io/badge/Discord.py-2.7-7289DA?style=for-the-badge&logo=discord&logoColor=white" alt="Discord.py">
   <img src="https://img.shields.io/badge/Python-3.11+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
-  <img src="https://img.shields.io/badge/Google-Gemini_AI-4285F4?style=for-the-badge&logo=google&logoColor=white" alt="Gemini AI">
+  <img src="https://img.shields.io/badge/AI-Gemini_|_Groq_|_OpenRouter_|_DeepSeek_|_Ollama-4285F4?style=for-the-badge" alt="AI providers">
 </p>
 
 **AnTiMa** is not just another Discord bot; it's a fully interactive companion for your server, powered by Google's Gemini AI. With a customizable personality, a deep and engaging RPG system, and a suite of powerful moderation and utility tools, AnTiMa is designed to bring your community to life. It also features a web-based dashboard for easy management.
@@ -87,6 +87,7 @@ A powerful web-based interface for managing the bot and viewing stats.
 -   **RPG Management**: Create and manage RPG sessions, characters, and worlds.
 -   **Configuration**: Configure bot settings directly from the web.
 -   **Log Viewer**: View live bot logs for debugging.
+-   **Login**: The admin pages (`/`) are protected by `DASHBOARD_PASSWORD`. If it is not set, they are disabled. Public pages (`/chat`, `/play`, and the setup links the bot sends) give each browser its own signed identity cookie.
 
 ---
 
@@ -124,7 +125,9 @@ Follow these instructions to get a copy of the bot up and running on your own ma
     ```env
     DISCORD_TOKEN="YOUR_DISCORD_BOT_TOKEN_HERE"
     GEMINI_API_KEY="YOUR_GEMINI_API_KEY_HERE"
-    MONGO_URL="YOUR_MONGODB_CONNECTION_STRING_HERE"
+    MONGO_URI="YOUR_MONGODB_CONNECTION_STRING_HERE"
+    DASHBOARD_PASSWORD="A_LONG_RANDOM_PASSWORD"
+    DASHBOARD_SECRET_KEY="A_RANDOM_SECRET"   # python -c "import secrets; print(secrets.token_hex(32))"
     ```
 
 4.  **Run the bot:**
@@ -133,7 +136,17 @@ Follow these instructions to get a copy of the bot up and running on your own ma
     python main.py
     ```
 
-    Your bot should now be online, and the web dashboard should be accessible at `http://localhost:8000`.
+    Your bot should now be online, and the web dashboard should be accessible at `http://localhost:8000` (log in with `DASHBOARD_PASSWORD`).
+
+    With Docker, run `docker compose up -d --build` instead; it starts MongoDB for you.
+
+### Development
+
+```bash
+pip install -r requirements-dev.txt
+ruff check .
+pytest
+```
 
 ---
 
