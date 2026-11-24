@@ -148,6 +148,7 @@ class RPGContextManager:
         )
 
     async def archive_old_turns(self, thread_id, session_data):
+        """Moves the oldest turns into searchable memory. Returns True if it changed turn_history."""
         history = session_data.get("turn_history", [])
         if len(history) > 40:
             to_archive = history[:5]
@@ -185,10 +186,13 @@ class RPGContextManager:
                 summary,
                 metadata={"type": "archived_history", "max_turn_id": max_turn}
             )
-            rpg_sessions_collection.update_one(
+            await asyncio.to_thread(
+                rpg_sessions_collection.update_one,
                 {"thread_id": int(thread_id)},
                 {"$set": {"turn_history": remaining}}
             )
+            return True
+        return False
 
     async def generate_suggested_options(self, narrative_text: str) -> list[str]:
         try:

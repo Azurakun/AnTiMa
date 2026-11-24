@@ -138,9 +138,7 @@ class RPGAdventureCog(commands.Cog):
             prompt = last.get("input", "Continue")
             msg_id = last.get("user_message_id")
 
-        if thread_id in self.engine.active_sessions: 
-            del self.engine.active_sessions[thread_id]
-            
+        # Keep the thread's turn state so the reroll reuses the original dice result.
         await self.engine.process_turn(interaction.channel, prompt, is_reroll=True, message_id=msg_id)
 
     # --- COMMANDS ---

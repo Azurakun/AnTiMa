@@ -53,7 +53,9 @@ _PROVIDERS = {
         "base_url": "https://openrouter.ai/api/v1",
         "env_key": "OPENROUTER_API_KEY",
         "main_model": "meta-llama/llama-3.3-70b-instruct:free",
-        "fast_model": "meta-llama/llama-3.1-8b-instruct:free",
+        # Background work (RPG Scribe, summaries, suggested actions) needs reliable tool calling,
+        # which the free 8B model lacks. DeepSeek V3.2 is paid (~$0.27/$0.40 per 1M tokens).
+        "fast_model": "deepseek/deepseek-v3.2",
         "max_retries": 0,
         "rate_limit": (15, 60.0),  # 15 requests per 60 seconds (safety margin below 20)
     },
